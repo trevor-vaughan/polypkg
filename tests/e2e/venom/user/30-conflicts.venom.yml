@@ -1,0 +1,83 @@
+name: Conflicts and alternatives
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  home: '/tmp/u30'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: init the sandbox
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: installing two providers of widget registers alternatives
+    steps:
+      - type: exec
+        script: '{{.px}} install tool-a tool-b'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} alternatives list widget'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "tool-a"
+          - result.systemout ShouldContainSubstring "tool-b"
+
+  - name: alternatives set selects a specific provider
+    steps:
+      - type: exec
+        script: '{{.px}} alternatives set widget tool-b'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} alternatives list widget'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "tool-b"
+
+  - name: alternatives auto restores automatic selection
+    steps:
+      - type: exec
+        script: '{{.px}} alternatives auto widget'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: installing a hard conflict is rejected
+    steps:
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} install breaker'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "conflict"
+
+  - name: unlink removes the bridged command and link restores it
+    steps:
+      # tool-a's widget was auto-bridged into ~/.local/bin by apply. Exercise the
+      # explicit user-scope bridge verbs with observable effect.
+      - type: exec
+        script: '[ -e {{.home}}/.local/bin/widget ] && echo PRESENT || echo MISSING'
+        assertions:
+          - result.systemout ShouldContainSubstring "PRESENT"
+      - type: exec
+        script: '{{.px}} unlink'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '[ -e {{.home}}/.local/bin/widget ] && echo PRESENT || echo GONE'
+        assertions:
+          - result.systemout ShouldContainSubstring "GONE"
+      - type: exec
+        script: '{{.px}} link'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '[ -e {{.home}}/.local/bin/widget ] && echo BACK || echo MISSING'
+        assertions:
+          - result.systemout ShouldContainSubstring "BACK"

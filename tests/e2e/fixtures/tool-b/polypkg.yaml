@@ -1,0 +1,22 @@
+schema: polypkg.package/v1
+name: tool-b
+version: 1.0.0
+description: Second provider of the widget alternative (priority 20)
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/tool-b/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/widget
+      dest: $ACTIVE/tool-b/bin/widget
+      policy: symlink
+  - phase: post-place
+    action: alternatives
+    params:
+      name: widget
+      source: $ACTIVE/tool-b/bin/widget
+      priority: 20

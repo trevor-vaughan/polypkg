@@ -1,0 +1,74 @@
+volumes:
+  repo-pub: {}
+  repo-keys: {}
+
+networks:
+  e2e: {}
+
+services:
+  publisher:
+    image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
+    user: "1000:0"
+    networks: [e2e]
+    environment:
+      POLYPKG_REPO_KEY_PASSWORD: test-pw
+    volumes:
+      - repo-pub:/repo:z
+      - repo-keys:/keys:z
+      - ./venom:/e2e/venom:ro,z
+      - ./fixtures:/e2e/fixtures:ro,z
+      - ../../.test-output/e2e:/out:z
+    working_dir: /e2e
+    # venom writes its reports 0600 owned by the runner's mapped (sub)uid, which
+    # the host cannot read. chmod them host-readable on exit (the runner owns
+    # them); the trap fires before the shell exits so it runs even on failure,
+    # and the shell's exit status stays venom's so a failing suite still fails.
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/publish 2>/dev/null || true' EXIT; venom run /e2e/venom/publish --output-dir /out/${DISTRO:-centos}/publish"]
+
+  repo-server:
+    image: docker.io/library/python:3.12-slim
+    networks: [e2e]
+    volumes:
+      - repo-pub:/srv/repo:ro,z
+    command: ["python3", "-m", "http.server", "8080", "--directory", "/srv/repo/public"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8080/trust_root.pub') else sys.exit(1)"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  runner-user:
+    image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
+    user: "1000:0"
+    depends_on:
+      repo-server:
+        condition: service_healthy
+    networks: [e2e]
+    environment:
+      POLYPKG_REPO_KEY_PASSWORD: test-pw
+    volumes:
+      - repo-pub:/repo:z
+      - repo-keys:/keys:z
+      - ./venom:/e2e/venom:ro,z
+      - ./fixtures:/e2e/fixtures:ro,z
+      - ../../.test-output/e2e:/out:z
+    working_dir: /e2e
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/user 2>/dev/null || true' EXIT; venom run /e2e/venom/user --output-dir /out/${DISTRO:-centos}/user"]
+
+  runner-system:
+    image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
+    user: "0:0"
+    depends_on:
+      repo-server:
+        condition: service_healthy
+    networks: [e2e]
+    environment:
+      POLYPKG_REPO_KEY_PASSWORD: test-pw
+    volumes:
+      - repo-pub:/repo:z
+      - repo-keys:/keys:z
+      - ./venom:/e2e/venom:ro,z
+      - ./fixtures:/e2e/fixtures:ro,z
+      - ../../.test-output/e2e:/out:z
+    working_dir: /e2e
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/system 2>/dev/null || true' EXIT; venom run /e2e/venom/system --output-dir /out/${DISTRO:-centos}/system"]

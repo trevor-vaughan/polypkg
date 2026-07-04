@@ -1,0 +1,16 @@
+schema: polypkg.spec/v1
+name: with-hello
+scopes:
+  user:
+    substrate: store
+    prefix: $XDG_DATA_HOME/polypkg
+sources:
+  order: [native]
+  native:
+    type: polypkg-native
+    url: file://FIXTURE_REPO  # template, replaced by test
+    trust_root: TRUST_ROOT     # template, replaced by test
+packages:
+  user:
+    hello:
+      version: "=1.0.0"

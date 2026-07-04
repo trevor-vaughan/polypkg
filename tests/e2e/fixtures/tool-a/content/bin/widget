@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "widget from tool-a"

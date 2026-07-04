@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/profile-v1.json",
+  "type": "object",
+  "required": ["schema", "name", "scopes", "sources"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "polypkg.spec/v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "scopes": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/scope" },
+      "minProperties": 1
+    },
+    "sources": {
+      "type": "object",
+      "required": ["order"],
+      "properties": {
+        "order": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": { "$ref": "#/$defs/source" }
+    },
+    "variants": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "packages": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-zA-Z0-9_-]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[a-zA-Z0-9_-]+$" },
+        "additionalProperties": { "$ref": "#/$defs/packageRef" }
+      }
+    },
+    "starlark": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": { "type": "integer", "minimum": 1 },
+        "timeout": { "type": "string", "minLength": 1 },
+        "max_memory_bytes": { "type": "integer", "minimum": 1 },
+        "max_output_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 1 },
+        "age": { "type": "string", "minLength": 1 }
+      }
+    },
+    "recommends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install"],
+      "properties": {
+        "install": { "type": "boolean" }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy"],
+      "properties": {
+        "policy": { "type": "string", "enum": ["warn", "require", "off"] }
+      }
+    }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "required": ["substrate"],
+      "additionalProperties": false,
+      "properties": {
+        "substrate": { "type": "string" },
+        "prefix": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["type", "url", "trust_root"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "trust_root": { "type": "string", "minLength": 1 },
+        "trust_doc": { "type": "string", "minLength": 1 }
+      }
+    },
+    "packageRef": {
+      "type": "object",
+      "required": ["version"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    }
+  }
+}

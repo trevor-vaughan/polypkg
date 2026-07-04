@@ -1,0 +1,59 @@
+version: 2
+
+project_name: polypkg
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: polypkg
+    main: ./cmd/polypkg
+    binary: polypkg
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/trevor-vaughan/polypkg/internal/cli.Version={{ .Version }}
+      - -X github.com/trevor-vaughan/polypkg/internal/cli.Commit={{ .ShortCommit }}
+      - -X github.com/trevor-vaughan/polypkg/internal/cli.Date={{ .Date }}
+
+archives:
+  - id: polypkg
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^ci"
+      - "^chore"
+      - "^style"

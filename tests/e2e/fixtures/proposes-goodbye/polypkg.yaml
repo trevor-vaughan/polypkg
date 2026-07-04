@@ -1,0 +1,18 @@
+schema: polypkg.package/v1
+name: proposes-goodbye
+version: 1.0.0
+description: Declares a suggested relation on goodbye (suggests-advertised-not-installed subject)
+suggests:
+  - name: goodbye
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/proposes-goodbye/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/proposer
+      dest: $ACTIVE/proposes-goodbye/bin/proposer
+      policy: symlink

@@ -1,0 +1,4 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions: [ : bad

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/status-v1.json",
+  "type": "object",
+  "required": ["schema", "retained"],
+  "additionalProperties": false,
+  "properties": {
+    "schema":  { "type": "string", "const": "polypkg.status/v1" },
+    "current": {
+      "type": "object",
+      "required": ["generation"],
+      "additionalProperties": false,
+      "properties": {
+        "generation":  { "type": "integer", "minimum": 1 },
+        "profile":     { "type": "string" },
+        "applied_at":  { "type": "string" }
+      }
+    },
+    "retained": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "committed_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id":             { "type": "integer", "minimum": 1 },
+          "committed_at":   { "type": "string" },
+          "pinned":         { "type": "boolean" },
+          "pinned_reason":  { "type": "string" },
+          "is_current":     { "type": "boolean" },
+          "bytes_on_disk":  { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "drift":      { "type": "array", "items": { "type": "object" } },
+    "gc_preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "would_remove": { "type": "array", "items": { "type": "integer" } },
+        "would_keep":   { "type": "array", "items": { "type": "integer" } }
+      }
+    }
+  }
+}

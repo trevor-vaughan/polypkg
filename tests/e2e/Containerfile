@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+
+# Global ARGs used in FROM lines must be declared before any FROM so they are
+# in scope for every stage's base-image reference.
+ARG GO_IMAGE=docker.io/library/golang:1.26.4
+ARG BASE_IMAGE=quay.io/centos/centos:stream10
+
+# --- builder: static polypkg + venom -------------------------------------
+FROM ${GO_IMAGE} AS builder
+ARG VENOM_VERSION=v1.3.0
+ENV GOTOOLCHAIN=auto
+WORKDIR /src
+# Install venom BEFORE copying the source so its (large, slow) build layer is
+# cached independently of polypkg source changes — it depends only on the pin.
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ovh/venom/cmd/venom@${VENOM_VERSION}
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# CGO-free so the binary runs on glibc (CentOS/Ubuntu) AND musl (Alpine).
+RUN CGO_ENABLED=0 go build -trimpath -o /out/polypkg ./cmd/polypkg
+
+# --- runtime: matrix base ------------------------------------------------
+FROM ${BASE_IMAGE}
+COPY --from=builder /out/polypkg /usr/local/bin/polypkg
+COPY --from=builder /out/venom   /usr/local/bin/venom
+WORKDIR /e2e
+# Smoke the static binaries at build time so a broken (e.g. CGO) build fails the
+# image build, not a test 10 minutes later. The venom suites and fixtures are
+# bind-mounted at runtime (see compose.yaml), not baked in, so editing a suite
+# needs no image rebuild.
+RUN /usr/local/bin/polypkg --version && /usr/local/bin/venom version
+# Non-root identity for the user-scope runner; runner-system overrides to root.
+# The useradd||adduser fallback covers shadow-utils (CentOS/Ubuntu) vs busybox (Alpine).
+RUN install -d -m 0755 /home/polypkg \
+    && ( useradd -u 1000 -d /home/polypkg polypkg 2>/dev/null \
+         || adduser -u 1000 -h /home/polypkg -D polypkg 2>/dev/null || true ) \
+    && chown -R 1000:0 /home/polypkg
+# Default to the unprivileged runner identity (least privilege). compose pins
+# `user:` per service — 1000:0 for the user/publish runners, 0:0 for the
+# system-scope runner — so this default is the documented non-root fallback.
+USER 1000

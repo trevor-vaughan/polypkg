@@ -1,0 +1,15 @@
+schema: polypkg.spec/v1
+name: install-hello-system
+scopes:
+  system:
+    substrate: store
+sources:
+  order: [native]
+  native:
+    type: polypkg-native
+    url: FIXTURE_REPO_URL
+    trust_root: FIXTURE_TRUST_ROOT
+packages:
+  system:
+    hello:
+      version: "=1.0.0"

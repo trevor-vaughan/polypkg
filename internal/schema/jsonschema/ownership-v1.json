@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/ownership-v1.json",
+  "type": "object",
+  "required": ["schema", "scope", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.ownership/v1" },
+    "scope": { "type": "string", "enum": ["system", "user"] },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "package", "version", "action", "expected", "drift_policy", "stat"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "package": { "type": "string", "minLength": 1 },
+          "version": { "type": "string" },
+          "action": { "type": "string", "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime"] },
+          "expected": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file_type": { "type": "string", "enum": ["regular", "symlink", "dir", "ghost", "state"] },
+              "content_hash": { "type": "string" },
+              "source_hash": { "type": "string" },
+              "target": { "type": "string" },
+              "mode": { "type": "string" },
+              "priority": { "type": "integer" },
+              "master": { "type": "string" }
+            }
+          },
+          "drift_policy": {
+            "type": "string",
+            "enum": ["notify_heal", "silent_heal", "refuse", "notify_preserve", "unmanaged", "state"]
+          },
+          "stat": {
+            "type": "object",
+            "required": ["size", "mtime_ns", "inode"],
+            "additionalProperties": false,
+            "properties": {
+              "size": { "type": "integer" },
+              "mtime_ns": { "type": "integer" },
+              "inode": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

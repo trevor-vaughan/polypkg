@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/cli-result-v1.json",
+  "type": "object",
+  "required": ["schema", "command", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "schema":  { "type": "string", "const": "polypkg.cli-result/v1" },
+    "command": { "type": "string", "minLength": 1 },
+    "status":  { "type": "string", "enum": ["ok", "error"] },
+    "data":    { "type": "object" },
+    "error":   { "type": "string" }
+  }
+}

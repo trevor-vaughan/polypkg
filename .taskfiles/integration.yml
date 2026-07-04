@@ -1,0 +1,125 @@
+version: '3'
+
+vars:
+  COMPOSE: 'podman-compose -f {{.ROOT_DIR}}/tests/e2e/compose.yaml'
+  OUT_DIR: '{{.ROOT_DIR}}/.test-output/e2e'
+  DISTRO: '{{.DISTRO | default "centos"}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: |
+      task --list 2>/dev/null
+
+  build:
+    desc: 'Build the runner image for DISTRO (centos|ubuntu|alpine)'
+    cmd: |
+      case "{{.DISTRO}}" in
+        centos) BASE=quay.io/centos/centos:stream10 ;;
+        ubuntu) BASE=docker.io/library/ubuntu:24.04 ;;
+        alpine) BASE=docker.io/library/alpine:3.21 ;;
+        *) echo "unknown DISTRO {{.DISTRO}}" >&2; exit 1 ;;
+      esac
+      podman build -f {{.ROOT_DIR}}/tests/e2e/Containerfile \
+        --build-arg BASE_IMAGE="$BASE" \
+        -t polypkg-e2e:{{.DISTRO}} {{.ROOT_DIR}}
+
+  # Create the per-scope venom output dir world-writable: rootless podman maps
+  # the runner's uid (1000 or 0) to a host subuid that does not own .test-output,
+  # so the bind-mounted /out must be writable by any mapped uid. The dirs are
+  # gitignored test output, and files land world-readable so the host can read
+  # and `task clean` can remove them. Each scope (publish|user|system) writes to
+  # its OWN subdir so a full `run` retains all three sets of results instead of
+  # the last scope clobbering the prior ones.
+  _outdir:
+    internal: true
+    requires:
+      vars: [SCOPE]
+    cmds:
+      # Wipe only THIS scope's subdir: a prior run leaves venom.log owned by the
+      # container's mapped subuid, which the host cannot chmod (only unlink, via
+      # the parent dir it owns). Recreate empty, then make the dir chain we own
+      # world-writable so the mapped runner uid (1000 or 0) can write into it.
+      - 'rm -rf {{.OUT_DIR}}/{{.DISTRO}}/{{.SCOPE}}'
+      - 'mkdir -p {{.OUT_DIR}}/{{.DISTRO}}/{{.SCOPE}}'
+      - 'chmod 0777 {{.OUT_DIR}} {{.OUT_DIR}}/{{.DISTRO}} {{.OUT_DIR}}/{{.DISTRO}}/{{.SCOPE}}'
+
+  publish:
+    desc: 'Build & publish the serial-1 signed repo into the shared volume'
+    env:
+      RUNNER_IMAGE: 'polypkg-e2e:{{.DISTRO}}'
+      DISTRO: '{{.DISTRO}}'
+    cmds:
+      - task: _outdir
+        vars: {DISTRO: '{{.DISTRO}}', SCOPE: publish}
+      - '{{.COMPOSE}} run --rm publisher'
+
+  up:
+    desc: 'Start the repo-server and wait until it serves the trust root'
+    env:
+      RUNNER_IMAGE: 'polypkg-e2e:{{.DISTRO}}'
+      DISTRO: '{{.DISTRO}}'
+    cmds:
+      - '{{.COMPOSE}} up -d repo-server'
+      - '{{.COMPOSE}} exec -T repo-server sh -s -- http://localhost:8080/trust_root.pub < {{.ROOT_DIR}}/tests/e2e/scripts/wait-http.sh'
+
+  user:
+    desc: 'Run the user-scope (non-root) venom suites'
+    env:
+      RUNNER_IMAGE: 'polypkg-e2e:{{.DISTRO}}'
+      DISTRO: '{{.DISTRO}}'
+    cmds:
+      - task: _outdir
+        vars: {DISTRO: '{{.DISTRO}}', SCOPE: user}
+      - '{{.COMPOSE}} run --rm runner-user'
+
+  system:
+    desc: 'Run the system-scope (real-root FHS) venom suites'
+    env:
+      RUNNER_IMAGE: 'polypkg-e2e:{{.DISTRO}}'
+      DISTRO: '{{.DISTRO}}'
+    cmds:
+      - task: _outdir
+        vars: {DISTRO: '{{.DISTRO}}', SCOPE: system}
+      - '{{.COMPOSE}} run --rm runner-system'
+
+  down:
+    desc: 'Tear down compose services and volumes — DESTRUCTIVE (named volumes only)'
+    env:
+      DISTRO: '{{.DISTRO}}'
+    cmd: '{{.COMPOSE}} down -v'
+
+  lsm-report:
+    desc: 'Log the host LSM enforcement state (permissive vs enforcing)'
+    cmd: 'sh {{.ROOT_DIR}}/tests/e2e/scripts/lsm-report.sh'
+
+  run:
+    desc: 'Full single-distro run: build -> publish -> up -> user -> system -> down (var DISTRO)'
+    cmds:
+      # Clean any leftover services/volumes from a prior (possibly manual) run so
+      # the publisher starts against an empty repo; the deferred down handles the
+      # tail. Ignore failure when nothing is up.
+      - task: down
+        vars: {DISTRO: '{{.DISTRO}}'}
+      - task: lsm-report
+      - task: build
+        vars: {DISTRO: '{{.DISTRO}}'}
+      - task: publish
+        vars: {DISTRO: '{{.DISTRO}}'}
+      - task: up
+        vars: {DISTRO: '{{.DISTRO}}'}
+      - defer: {task: down, vars: {DISTRO: '{{.DISTRO}}'}}
+      - task: user
+        vars: {DISTRO: '{{.DISTRO}}'}
+      - task: system
+        vars: {DISTRO: '{{.DISTRO}}'}
+
+  matrix:
+    desc: 'Run the full distro matrix: centos, ubuntu, alpine'
+    cmds:
+      - task: run
+        vars: {DISTRO: centos}
+      - task: run
+        vars: {DISTRO: ubuntu}
+      - task: run
+        vars: {DISTRO: alpine}

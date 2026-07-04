@@ -1,0 +1,19 @@
+abi <abi/3.0>,
+include <tunables/global>
+
+profile polypkg_consumer flags=(enforce) {
+  include <abstractions/base>
+  # The consumer runs `cat` and READS the bridged target, whose real file lives
+  # under /var/lib/polypkg (reached via the /usr/local/bin/widget symlink).
+  /usr/bin/cat rix,
+  /usr/local/bin/widget r,
+  /var/lib/polypkg/** r,
+}
+
+profile polypkg_consumer_narrow flags=(enforce) {
+  include <abstractions/base>
+  # Only the FHS bin path — NOT the /var/lib resident. Reading the bridged target
+  # resolves to /var/lib and must be denied.
+  /usr/bin/cat rix,
+  /usr/local/bin/** r,
+}
