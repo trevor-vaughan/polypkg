@@ -1,0 +1,15 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions:
+  - phase: post-place
+    action: install
+    params:
+      src: "$ACTIVE/hello/src"
+      dest: "$ACTIVE/hello/bin/hello"
+      policy: teleport
+      bogus: "x"
+  - phase: post-place
+    action: install
+    params:
+      src: "$ACTIVE/hello/src"

@@ -1,0 +1,7 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions:
+  - phase: post-place
+    action: path
+    params: { name: "bad name", source: "$ACTIVE/hello/bin" }

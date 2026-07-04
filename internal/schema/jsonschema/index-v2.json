@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/index-v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "expires", "packages"],
+  "properties": {
+    "schema": { "const": "polypkg.index/v2" },
+    "expires": { "type": "string", "format": "date-time" },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/entry" }
+      }
+    }
+  },
+  "$defs": {
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate_type", "artifact", "content_hash"],
+      "properties": {
+        "predicate_type": { "type": "string", "minLength": 1 },
+        "artifact":       { "type": "string", "minLength": 1 },
+        "content_hash":   { "type": "string", "pattern": "^blake3:[0-9a-f]+$" },
+        "kind":           { "type": "string", "enum": ["native-jcs", "carried-opaque"] },
+        "format":         { "type": "string", "enum": ["polypkg-sarif", "polypkg-link", "slsa-provenance", "spdx", "cyclonedx", "in-toto-generic", "sigstore-bundle"] },
+        "subject_scope":  { "type": "string", "pattern": "^(artifact|content:.+)$" },
+        "subject_digests": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "content_hash", "artifact"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "content_hash": { "type": "string", "pattern": "^blake3:[0-9a-f]+$" },
+        "artifact": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "attestations": { "type": "array", "items": { "$ref": "#/$defs/attestation" } },
+        "depends":     { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "recommends":  { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "suggests":    { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "provides":    { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "conflicts":   { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+        "obsoletes":   { "type": "array", "items": { "$ref": "#/$defs/relation" } }
+      }
+    }
+  }
+}

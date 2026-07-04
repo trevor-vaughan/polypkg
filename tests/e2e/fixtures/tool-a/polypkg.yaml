@@ -1,0 +1,22 @@
+schema: polypkg.package/v1
+name: tool-a
+version: 1.0.0
+description: First provider of the widget alternative (priority 30, the auto winner)
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/tool-a/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/widget
+      dest: $ACTIVE/tool-a/bin/widget
+      policy: symlink
+  - phase: post-place
+    action: alternatives
+    params:
+      name: widget
+      source: $ACTIVE/tool-a/bin/widget
+      priority: 30

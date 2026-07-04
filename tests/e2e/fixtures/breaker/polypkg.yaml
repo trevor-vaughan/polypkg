@@ -1,0 +1,7 @@
+schema: polypkg.package/v1
+name: breaker
+version: 1.0.0
+description: Declares a hard conflict with hello (conflict-rejection subject)
+conflicts:
+  - name: hello
+actions: []

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "source", "output", "key"],
+  "properties": {
+    "schema": { "const": "polypkg.repo/v1" },
+    "source": { "type": "string", "minLength": 1 },
+    "output": { "type": "string", "minLength": 1 },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kdf"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "kdf": { "enum": ["scrypt", "pbkdf2"] }
+      }
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source"],
+        "properties": { "source": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

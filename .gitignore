@@ -1,0 +1,35 @@
+# Binaries
+/polypkg
+/bin/
+/dist/
+# In-guest binaries built by `task vm:build` for the VM LSM tier
+/tests/vm/.bin/
+
+# Test output
+/.test-output/
+*.test
+
+# Task (taskfile.dev) local run cache
+/.task/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Never commit minisign private keys (test fixtures)
+internal/trust/testdata/*.key
+
+# Session handoff briefings (portable, not committed)
+.claude/
+
+# Superpowers planning docs are workspace-local and never committed
+docs/superpowers/
+
+# Local scratch workspace
+/workspace/

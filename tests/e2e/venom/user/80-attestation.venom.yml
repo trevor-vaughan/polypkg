@@ -1,0 +1,171 @@
+name: Attestation verification and policy gate
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  pub: '/repo/public'
+  fixtures: '/e2e/fixtures'
+  backup: '/tmp/att-backup'
+  noatt_keys: '/tmp/keys-noatt'
+  home: '/tmp/u80'
+  home_tamper: '/tmp/u80t'
+  home_recover: '/tmp/u80v'
+  home_require: '/tmp/u80r'
+  home_warn: '/tmp/u80w'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+  pxt: 'env HOME={{.home_tamper}} XDG_DATA_HOME={{.home_tamper}}/data XDG_CONFIG_HOME={{.home_tamper}}/cfg XDG_STATE_HOME={{.home_tamper}}/state XDG_CACHE_HOME={{.home_tamper}}/cache /usr/local/bin/polypkg'
+  pxv: 'env HOME={{.home_recover}} XDG_DATA_HOME={{.home_recover}}/data XDG_CONFIG_HOME={{.home_recover}}/cfg XDG_STATE_HOME={{.home_recover}}/state XDG_CACHE_HOME={{.home_recover}}/cache /usr/local/bin/polypkg'
+  pxr: 'env HOME={{.home_require}} XDG_DATA_HOME={{.home_require}}/data XDG_CONFIG_HOME={{.home_require}}/cfg XDG_STATE_HOME={{.home_require}}/state XDG_CACHE_HOME={{.home_require}}/cache /usr/local/bin/polypkg'
+  pxw: 'env HOME={{.home_warn}} XDG_DATA_HOME={{.home_warn}}/data XDG_CONFIG_HOME={{.home_warn}}/cfg XDG_STATE_HOME={{.home_warn}}/state XDG_CACHE_HOME={{.home_warn}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: install verifies the published attestation and records it
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        # The assertion string carries a literal "key: value" colon, so the
+        # whole assertion is single-quoted to keep YAML from splitting it.
+        script: '{{.px}} info hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "attestation: verified ("'
+      - type: exec
+        script: '{{.px}} status -vv'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "[attested]"
+
+  # Tamper refusal is exercised under the DEFAULT policy only. The full
+  # refuse-under-every-policy matrix lives in the unit tests at
+  # internal/planner/planner_attest_test.go; repeating it here would slow the
+  # suite without adding signal.
+  - name: a tampered attestation blob is refused under the default policy
+    steps:
+      - type: exec
+        script: '{{.pxt}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        # Corrupt every published attestation in place (a trailing byte breaks
+        # the minisign signature); keep pristine copies for the restore below.
+        script: |
+          set -e
+          rm -rf {{.backup}}
+          mkdir -p {{.backup}}
+          cp {{.pub}}/pool/*.att.json {{.backup}}/
+          for f in {{.pub}}/pool/*.att.json; do printf ' ' >> "$f"; done
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.pxt}} install hello'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "attestation signature for hello"
+      - type: exec
+        script: |
+          set -e
+          cp {{.backup}}/*.att.json {{.pub}}/pool/
+          rm -rf {{.backup}}
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        # Prove the failure above was the tamper: with the pristine blobs back,
+        # the same install succeeds. A FRESH sandbox is required — the tampered
+        # consumer's local cache still holds the corrupted blob it fetched.
+        script: |
+          set -e
+          {{.pxv}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user
+          {{.pxv}} install hello
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+
+  - name: policy require refuses a source published without attestations
+    steps:
+      - type: exec
+        # Build a second signed repo with --skip-attestations, rooted inside the
+        # served tree so the same repo-server exposes it under /noatt/public.
+        # Source name stays "native" — the consumer verifier binds the trust
+        # document to the profile's source name, which init hardcodes.
+        script: |
+          set -e
+          rm -rf {{.pub}}/noatt {{.noatt_keys}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo init {{.pub}}/noatt --source native --key-dir {{.noatt_keys}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo add {{.fixtures}}/hello --manifest {{.pub}}/noatt/polypkg-repo.yaml --key-dir {{.noatt_keys}} --skip-attestations
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'cat {{.pub}}/noatt/public/index.json'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "polypkg.index/v2"
+          - result.systemout ShouldNotContainSubstring "attestations"
+      - type: exec
+        script: '{{.pxr}} init --source-url {{.source_url}}/noatt/public --trust-root-file {{.pub}}/noatt/public/trust_root.pub --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          set -e
+          printf 'attestation:\n  policy: require\n' >> {{.home_require}}/cfg/polypkg/profile.yaml
+          cat {{.home_require}}/cfg/polypkg/profile.yaml
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "policy: require"'
+      - type: exec
+        script: '{{.pxr}} install hello'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "has no attestation"
+          - result.systemerr ShouldContainSubstring "require"
+
+  - name: policy warn installs the unattested package with a warning
+    steps:
+      - type: exec
+        script: '{{.pxw}} init --source-url {{.source_url}}/noatt/public --trust-root-file {{.pub}}/noatt/public/trust_root.pub --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          set -e
+          printf 'attestation:\n  policy: warn\n' >> {{.home_warn}}/cfg/polypkg/profile.yaml
+          cat {{.home_warn}}/cfg/polypkg/profile.yaml
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "policy: warn"'
+      - type: exec
+        script: '{{.pxw}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+          - result.systemerr ShouldContainSubstring "not attested"
+      - type: exec
+        script: '{{.pxw}} info hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "attestation: unattested (policy warn at install)"'
+
+  # Expired-metadata refusal is deliberately NOT tested here: D13 grants a
+  # 5-minute clock-skew tolerance, so a real binary cannot observe "expired"
+  # without sleeping out the skew window. The scenario lives in
+  # tests/integration/e2e_freshness_test.go, which drives the full CLI against
+  # a real published repo with the trust clock advanced deterministically.
+
+  - name: clean up the scratch repo so later suites see the pristine repo
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.pub}}/noatt {{.noatt_keys}}
+          ls {{.pub}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring "noatt"
+          - result.systemout ShouldContainSubstring "index.json"

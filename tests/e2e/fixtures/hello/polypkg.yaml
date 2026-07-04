@@ -1,0 +1,16 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+description: Minimal greeting command for E2E tests
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/hello/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/hello
+      dest: $ACTIVE/hello/bin/hello
+      policy: symlink

@@ -1,0 +1,87 @@
+version: '3'
+
+includes:
+  integration:
+    taskfile: .taskfiles/integration.yml
+  vm:
+    taskfile: .taskfiles/vm.yml
+
+vars:
+  BINARY: '{{.BINARY | default "polypkg"}}'
+  BUILD_DIR: '{{.BUILD_DIR | default "bin"}}'
+  GO: '{{.GO | default "go"}}'
+  TEST_DIR: '{{.TEST_DIR | default ".test-output"}}'
+  GOVULNCHECK_VERSION: '{{.GOVULNCHECK_VERSION | default "v1.3.0"}}'
+  FUZZTIME: '{{.FUZZTIME | default "60s"}}'
+  FUZZTARGET: '{{.FUZZTARGET | default "FuzzExtractTarZst"}}'
+  FUZZPKG: '{{.FUZZPKG | default "./internal/source/"}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: |
+      task --list 2>/dev/null
+
+  build:
+    desc: Build the polypkg binary into {{.BUILD_DIR}}/
+    cmd: '{{.GO}} build -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/polypkg'
+
+  test:
+    desc: Run the test suite with race detector and coverage profile
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage.out ./...'
+
+  test:fips:
+    desc: Run the test suite under Go's FIPS 140-3 module (GODEBUG=fips140=on)
+    env:
+      GODEBUG: fips140=on
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage-fips.out ./...'
+
+  lint:
+    desc: Run golangci-lint across all packages
+    cmd: golangci-lint run ./...
+
+  vuln:
+    desc: Scan for known vulnerabilities with govulncheck
+    cmd: '{{.GO}} run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...'
+
+  # fuzz runs the mutating fuzzer. Seed corpora also run as ordinary tests under
+  # `task test`; this target is for deeper exploration (local or scheduled CI).
+  # Override FUZZTARGET, FUZZTIME, or FUZZPKG to focus on a different target.
+  fuzz:
+    desc: Run the mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
+    cmd: "{{.GO}} test -run='^$' -fuzz={{.FUZZTARGET}} -fuzztime={{.FUZZTIME}} {{.FUZZPKG}}"
+
+  fmt:
+    desc: Format all Go source with go fmt
+    cmd: '{{.GO}} fmt ./...'
+
+  check:
+    desc: Run all quality gates
+    deps: [lint, test]
+
+  test:integration:
+    desc: 'Alias for integration:matrix (container-based E2E across the distro matrix)'
+    cmds:
+      - task: integration:matrix
+
+  # Opt-in VM-based LSM-enforcement tier (boots guests under QEMU/TCG). Not part
+  # of `check` or any default chain. Override DISTRO (centos|ubuntu|all).
+  test:vm:
+    desc: 'Alias for vm:deps + vm:run — opt-in VM LSM tier (var DISTRO, default all)'
+    cmds:
+      - task: vm:deps
+      - task: vm:run
+        vars: {DISTRO: '{{.DISTRO | default "all"}}'}
+
+  clean:
+    desc: Remove build artifacts and test output
+    cmd: rm -rf {{.BUILD_DIR}} {{.TEST_DIR}}
+
+  install:
+    desc: Build and install the binary into ~/.local/bin
+    deps: [build]
+    cmd: install -m 0755 {{.BUILD_DIR}}/{{.BINARY}} "$HOME/.local/bin/{{.BINARY}}"

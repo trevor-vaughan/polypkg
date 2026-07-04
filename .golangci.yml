@@ -1,0 +1,65 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.26"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+    - gosec
+    - bodyclose
+    - errorlint
+    - gocritic
+    - misspell
+    - nakedret
+    - prealloc
+    - unconvert
+    - unparam
+
+  settings:
+    revive:
+      severity: warning
+      rules:
+        - name: var-declaration
+        - name: exported
+        - name: package-comments
+        - name: indent-error-flow
+        - name: blank-imports
+        - name: superfluous-else
+        - name: range-val-in-closure
+    errcheck:
+      # The fmt print family's write errors (to stdout/stderr/cobra buffers)
+      # are not meaningfully actionable; excluding them keeps CLI and test
+      # output code clean. errcheck still flags all other unchecked errors.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+    gosec:
+      excludes:
+        - G104  # errcheck handles this
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam   # too noisy for value receivers
+
+  exclusions:
+    rules:
+      # Test helpers are parameterized for reuse across scenarios (e.g. a
+      # constant source name or an always-nil revocation list today that
+      # later suites vary), so unparam's "always receives" findings are noise.
+      - path: _test\.go
+        linters: [gosec, errcheck, gocritic, unparam]

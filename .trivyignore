@@ -1,0 +1,12 @@
+# DS-0026 (HEALTHCHECK): not applicable to tests/e2e/Containerfile. That image
+# is a one-shot test runner — compose invokes `command: ["venom", "run", ...]`
+# and the container exits when the suite finishes (see tests/e2e/compose.yaml).
+# A Docker HEALTHCHECK only has meaning for long-running services; adding one to
+# a one-shot runner would be misleading no-op config, so the finding is ignored
+# rather than silenced with a meaningless probe.
+#
+# This is a .trivyignore entry rather than an inline `#trivy:ignore:` comment
+# because DS-0026 is a line-less, whole-image check (missing instruction): its
+# finding carries no source line for an inline directive to attach to, so inline
+# ignores do not suppress it in trivy 0.71.x.
+DS-0026
