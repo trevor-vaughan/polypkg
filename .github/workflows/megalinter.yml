@@ -14,19 +14,19 @@ jobs:
     name: MegaLinter
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Run shared MegaLinter policy
         id: megalint
-        uses: trevor-vaughan/megalint-config@8b5ce2be9e617c78a137a7b3b6cea2a9f74856c4 # v0.3.0
+        uses: trevor-vaughan/megalint-config@746f09e193ab51aeb786751196155b1501ad3b21 # v0.3.0
         with:
           validate-all-codebase: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload MegaLinter SARIF
         if: always() && steps.megalint.outputs.sarif-has-results == 'true'
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         with:
           sarif_file: ${{ steps.megalint.outputs.sarif-file }}
