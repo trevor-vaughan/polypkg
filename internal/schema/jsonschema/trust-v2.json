@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/trust-v2.json",
+  "type": "object",
+  "required": ["schema", "source", "serial", "expires", "keys"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.trust/v2" },
+    "source": { "type": "string", "minLength": 1 },
+    "serial": { "type": "integer", "minimum": 0 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires": { "type": "string", "format": "date-time" },
+    "keys": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/key" } },
+    "revoked": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-f]{16}$" } }
+  },
+  "$defs": {
+    "key": {
+      "type": "object",
+      "required": ["id", "pubkey", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+        "pubkey": { "type": "string", "minLength": 1 },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "enum": ["index", "artifact", "attestation"] }
+        }
+      }
+    }
+  }
+}

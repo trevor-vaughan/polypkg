@@ -1,0 +1,129 @@
+name: Republish integrity and extract-store hygiene
+# Continues from the live repo and consumer sandbox that 90-author-journey
+# left under {{.scratch}} (the vars here MUST stay identical to that suite's).
+# A same-version republish (serial 2) must not rewrite the pinned generation's
+# history: gen 1 keeps serving the original payload — through its own files
+# and through rollback — while a fresh install serves the revision. Finally
+# the content-addressed extract store must sweep the stale dir (and only it)
+# once nothing references it and it has aged past the 1-hour grace window.
+vars:
+  scratch: '/tmp/aj'
+  src: '/tmp/aj/hello'
+  repo: '/tmp/aj/repo'
+  keys: '/tmp/aj/keys'
+  keypw: '/tmp/aj/keypw'
+  chome: '/tmp/aj/consumer'
+  extract: '/tmp/aj/consumer/state/polypkg/pkg-extract'
+  pxa: 'env HOME={{.chome}} XDG_DATA_HOME={{.chome}}/data XDG_CONFIG_HOME={{.chome}}/cfg XDG_STATE_HOME={{.chome}}/state XDG_CACHE_HOME={{.chome}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: pin generation 1 and republish revised content at serial 2
+    steps:
+      - type: exec
+        script: '{{.pxa}} generation pin 1'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "pinned generation 1"
+      - type: exec
+        # Same name, same version, different content: the anti-history-rewrite
+        # scenario a plain version bump can never exercise.
+        script: |
+          set -e
+          printf '#!/bin/sh\necho "Hello, world! REVISED"\n' > {{.src}}/content/bin/hello
+          /usr/local/bin/polypkg repo build --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}} --key-password-file {{.keypw}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "(serial 2)"
+
+  - name: reinstall serves the revised payload
+    steps:
+      - type: exec
+        script: '{{.pxa}} remove hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 2"
+      - type: exec
+        script: '{{.pxa}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 3"
+      - type: exec
+        script: '{{.chome}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Hello, world! REVISED"
+
+  - name: pinned generation 1 content is untouched by the republish
+    steps:
+      - type: exec
+        # Resolve the generation's symlink into the extract store and inspect
+        # the real file. The sentinel keeps the pass condition grep-free of
+        # embedded quotes: grep hitting REVISED fails the step immediately.
+        script: |
+          f=$(readlink -f {{.chome}}/data/polypkg/generations/1/active/hello/bin/hello) || { echo GEN1_MISSING; exit 1; }
+          grep -q "Hello, world!" "$f" || { echo GEN1_WRONG_CONTENT; exit 1; }
+          grep -q REVISED "$f" && { echo GEN1_REWRITTEN; exit 1; }
+          echo GEN1_INTACT
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "GEN1_INTACT"
+
+  - name: rollback to generation 1 serves the original payload
+    steps:
+      - type: exec
+        script: '{{.pxa}} rollback --to 1'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "rolled back to generation 1"
+      - type: exec
+        # Gen 1's scaffold already carried the path action, so the command must
+        # still exist after rollback — and serve the ORIGINAL payload.
+        script: '{{.chome}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Hello, world!"
+          - result.systemout ShouldNotContainSubstring "REVISED"
+
+  - name: gc sweeps only the stale extract dir once unpinned and aged
+    steps:
+      - type: exec
+        script: '{{.pxa}} rollback --to 3'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "rolled back to generation 3"
+      - type: exec
+        script: '{{.pxa}} generation unpin 1'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "unpinned generation 1"
+      - type: exec
+        # Age every extract dir past the sweeper's 1-hour grace window with an
+        # absolute past mtime: `touch -t` is POSIX, so this works on busybox
+        # (alpine) as well as coreutils (centos/ubuntu), unlike -d '2 hours ago'.
+        script: |
+          set -e
+          for d in {{.extract}}/*; do touch -t 202001010000 "$d"; done
+          echo "PRE_COUNT=$(ls {{.extract}} | wc -l)"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "PRE_COUNT=2"
+      - type: exec
+        script: '{{.pxa}} gc --count 1 --age 0s'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "swept 1 stale extract dir"
+      - type: exec
+        script: |
+          ls {{.extract}}
+          echo "POST_COUNT=$(ls {{.extract}} | wc -l)"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "hello-1.0.0+"
+          - result.systemout ShouldContainSubstring "POST_COUNT=1"
+      - type: exec
+        # The surviving dir must be the live one: the linked command still runs
+        # and still serves the revision.
+        script: '{{.chome}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Hello, world! REVISED"

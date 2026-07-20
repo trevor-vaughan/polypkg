@@ -1,0 +1,69 @@
+name: Weak dependency (recommends) lifecycle
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  home: '/tmp/u56'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: init the sandbox
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: installing the recommender pulls in its recommended weak dependency
+    steps:
+      - type: exec
+        script: '{{.px}} install wants-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "wants-goodbye"
+          - result.systemout ShouldContainSubstring "goodbye"
+
+  - name: both the recommender and its weak dependency are placed
+    steps:
+      - type: exec
+        script: '{{.home}}/data/polypkg/active/wants-goodbye/bin/wanter'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "wanter 1.0.0"
+      - type: exec
+        script: '{{.home}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "goodbye 1.0.0"
+
+  - name: status -vv flags goodbye as a weak install recommended by wants-goodbye
+    steps:
+      - type: exec
+        script: '{{.px}} status -vv'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "goodbye"
+          - result.systemout ShouldContainSubstring "[weak]"
+          - result.systemout ShouldContainSubstring "wants-goodbye"
+
+  - name: removing the recommender from the profile drops the weak dependency
+    steps:
+      - type: exec
+        script: '{{.px}} remove wants-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring '"wants-goodbye"'
+          - result.systemout ShouldNotContainSubstring '"goodbye"'
+      - type: exec
+        script: '{{.home}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldNotEqual 0

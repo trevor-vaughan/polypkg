@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/pin-v1.json",
+  "type": "object",
+  "required": ["schema", "generation", "pinned_at", "pinned_by"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.pin/v1" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "pinned_at": { "type": "string", "format": "date-time" },
+    "pinned_by": { "type": "string", "minLength": 1 },
+    "pinned_reason": { "type": "string" }
+  }
+}

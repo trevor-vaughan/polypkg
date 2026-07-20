@@ -1,0 +1,17 @@
+# Exclude gitignored, regenerable build/test artifacts from grype's filesystem
+# scan. These are not project source and not the shipped deliverable:
+#
+#   dist/          - local GoReleaser SNAPSHOT output. Real releases are built
+#                    and attested in CI (.github/workflows/release.yml) from the
+#                    current, patched go.mod; a stale local snapshot is noise.
+#   tests/vm/.bin/ - the in-guest polypkg built by `task vm:build` plus the
+#                    pinned third-party `venom` tool. venom's embedded deps
+#                    (grpc, x/net, x/crypto, otel, ...) are fixed by its own
+#                    release cadence, not by this module.
+#
+# grype does not honor .gitignore, so it must be told here. The real dependency
+# surface (go.mod) is still scanned and is clean after the x/crypto/x/net/x/sys
+# bump.
+exclude:
+  - './dist/**'
+  - './tests/vm/.bin/**'

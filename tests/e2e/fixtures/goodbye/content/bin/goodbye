@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "goodbye 1.0.0"

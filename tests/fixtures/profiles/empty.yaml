@@ -1,0 +1,12 @@
+schema: polypkg.spec/v1
+name: empty
+scopes:
+  user:
+    substrate: store
+    prefix: $XDG_DATA_HOME/polypkg
+sources:
+  order: [native]
+  native:
+    type: polypkg-native
+    url: https://example.invalid/repo
+    trust_root: /tmp/key.pub

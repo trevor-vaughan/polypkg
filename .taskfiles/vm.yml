@@ -1,0 +1,55 @@
+version: '3'
+
+vars:
+  VM_DIR: '{{.ROOT_DIR}}/tests/vm'
+  VM_OUT: '{{.ROOT_DIR}}/.test-output/vm'
+  IMAGE_DIR: '{{.VM_OUT}}/images'
+  BIN_DIR: '{{.VM_DIR}}/.bin'
+  DISTRO: '{{.DISTRO | default "centos"}}'
+  VENOM_VERSION: '{{.VENOM_VERSION | default "v1.3.0"}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: |
+      task --list 2>/dev/null
+
+  deps:
+    desc: Install the QEMU/TCG toolchain and expose qemu-system-x86_64
+    cmds:
+      - sudo dnf install -y qemu-kvm-core qemu-img xorriso edk2-ovmf openssh-clients selinux-policy-devel checkpolicy
+      - sudo ln -sf /usr/libexec/qemu-kvm /usr/local/bin/qemu-system-x86_64
+      - qemu-system-x86_64 --version
+
+  build:
+    desc: Build static polypkg and venom binaries for in-guest use
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - CGO_ENABLED=0 go build -trimpath -o {{.BIN_DIR}}/polypkg {{.ROOT_DIR}}/cmd/polypkg
+      - CGO_ENABLED=0 GOBIN={{.BIN_DIR}} go install github.com/ovh/venom/cmd/venom@{{.VENOM_VERSION}}
+
+  confine:
+    desc: Compile the SELinux test policy module to a loadable .pp (host-side, refpolicy devel)
+    cmds:
+      - mkdir -p {{.BIN_DIR}}/se
+      - cp {{.VM_DIR}}/confine/polypkg_consumer.te {{.BIN_DIR}}/se/
+      # The refpolicy devel Makefile globs its working dir at parse time, so it
+      # must run from {{.BIN_DIR}}/se (where the .te now lives). Task's `dir:`
+      # does not pre-create a missing dir, so cd inside one shell step instead.
+      - cd {{.BIN_DIR}}/se && make -f /usr/share/selinux/devel/Makefile polypkg_consumer.pp
+      - cp {{.BIN_DIR}}/se/polypkg_consumer.pp {{.BIN_DIR}}/polypkg_consumer.pp
+    sources: ['{{.VM_DIR}}/confine/polypkg_consumer.te']
+    generates: ['{{.BIN_DIR}}/polypkg_consumer.pp']
+
+  run:
+    desc: Run the VM LSM-enforcement tier (DISTRO=centos|ubuntu|all)
+    deps: [build, confine]
+    cmd: go test -tags vm -timeout 40m -run 'TestLSM' {{.VM_DIR}}/... -v -args -distro={{.DISTRO}}
+    env:
+      VM_IMAGE_DIR: '{{.IMAGE_DIR}}'
+      VM_BIN_DIR: '{{.BIN_DIR}}'
+      VM_OUT_DIR: '{{.VM_OUT}}'
+
+  clean:
+    desc: Remove VM run artifacts (keeps cached base images)
+    cmd: rm -rf {{.VM_OUT}}/run {{.BIN_DIR}}

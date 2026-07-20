@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/package-v1.json",
+  "type": "object",
+  "required": ["schema", "name", "version", "actions"],
+  "additionalProperties": false,
+  "$defs": {
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name":    { "type": "string", "minLength": 1 },
+        "version": { "type": "string" }
+      }
+    }
+  },
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.package/v1" },
+    "name": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+    "version": { "type": "string" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "depends":     { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "recommends":  { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "suggests":    { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "provides":    { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "conflicts": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "obsoletes": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["phase", "action", "params"],
+        "additionalProperties": false,
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": ["pre-place", "post-place", "pre-activate", "post-activate", "pre-deactivate", "post-deactivate"]
+          },
+          "action": {
+            "type": "string",
+            "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime"]
+          },
+          "drift": {
+            "type": "string",
+            "enum": ["notify_heal", "silent_heal", "refuse", "notify_preserve"]
+          },
+          "params": { "type": "object" }
+        }
+      }
+    }
+  }
+}

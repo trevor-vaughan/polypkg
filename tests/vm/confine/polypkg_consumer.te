@@ -1,0 +1,36 @@
+policy_module(polypkg_consumer, 1.0)
+
+require {
+    type var_lib_t;
+}
+
+# Positive consumer: init-spawned domain that may run stock tools (cat/shell)
+# AND read polypkg data under /var/lib (var_lib_t).
+type polypkg_consumer_t;
+type polypkg_consumer_exec_t;
+init_daemon_domain(polypkg_consumer_t, polypkg_consumer_exec_t)
+corecmd_exec_bin(polypkg_consumer_t)
+corecmd_exec_shell(polypkg_consumer_t)
+libs_exec_ld_so(polypkg_consumer_t)
+# systemd-run with SELinuxContext= sets the exec context to this domain, then
+# execs /usr/bin/cat (bin_t). The kernel requires the domain to hold entrypoint
+# on its executable's type to begin executing in it; corecmd_exec_bin only grants
+# execute (no entrypoint), so without this the unit fails 203/EXEC before any
+# read decision is reached.
+allow polypkg_consumer_t bin_t:file entrypoint;
+allow polypkg_consumer_t var_lib_t:dir { search open read getattr };
+allow polypkg_consumer_t var_lib_t:file { open read getattr };
+allow polypkg_consumer_t var_lib_t:lnk_file { read getattr };
+
+# Negative consumer: identical EXCEPT no var_lib_t read — reading the bridged
+# /var/lib target must be denied.
+type polypkg_consumer_narrow_t;
+type polypkg_consumer_narrow_exec_t;
+init_daemon_domain(polypkg_consumer_narrow_t, polypkg_consumer_narrow_exec_t)
+corecmd_exec_bin(polypkg_consumer_narrow_t)
+corecmd_exec_shell(polypkg_consumer_narrow_t)
+libs_exec_ld_so(polypkg_consumer_narrow_t)
+# Same entrypoint need as the positive domain: the narrow consumer must also be
+# able to START /usr/bin/cat, so the test exercises the var_lib_t READ denial
+# rather than a spurious 203/EXEC. It deliberately has NO var_lib_t access.
+allow polypkg_consumer_narrow_t bin_t:file entrypoint;

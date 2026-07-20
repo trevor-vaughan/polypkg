@@ -1,0 +1,35 @@
+name: User-scope trust-on-first-use
+vars:
+  source_url: 'http://repo-server:8080'
+  troot_url: 'http://repo-server:8080/trust_root.pub'
+  home: '/tmp/u15'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: TOFU without --trust-root-yes refuses on a non-TTY
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --scope user </dev/null'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "not confirmed"
+
+  - name: TOFU with --trust-root-yes persists the downloaded key
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --trust-root-yes --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'find {{.home}}/cfg/polypkg -name "*.pub" | head -1'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring ".pub"
+
+  - name: install works against the TOFU-trusted source
+    steps:
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"

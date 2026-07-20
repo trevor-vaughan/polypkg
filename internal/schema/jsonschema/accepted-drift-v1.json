@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/accepted-drift-v1.json",
+  "type": "object",
+  "required": ["schema", "generation", "paths"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.accepted-drift/v1" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "paths": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["expected", "stat"],
+        "additionalProperties": false,
+        "properties": {
+          "expected": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file_type": { "type": "string", "enum": ["regular", "symlink", "dir"] },
+              "content_hash": { "type": "string" },
+              "target": { "type": "string" },
+              "mode": { "type": "string" }
+            }
+          },
+          "stat": {
+            "type": "object",
+            "required": ["size", "mtime_ns", "inode"],
+            "additionalProperties": false,
+            "properties": {
+              "size": { "type": "integer" },
+              "mtime_ns": { "type": "integer" },
+              "inode": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

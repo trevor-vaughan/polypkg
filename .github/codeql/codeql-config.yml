@@ -1,0 +1,11 @@
+name: "polypkg CodeQL config"
+
+queries:
+  - uses: security-and-quality
+
+# go/unused-result duplicates the project's errcheck policy, which deliberately
+# excludes the fmt.Fprint* family (see .golangci.yml). Filtering it here keeps
+# CodeQL from re-flagging those intentional unchecked writes.
+query-filters:
+  - exclude:
+      id: go/unused-result

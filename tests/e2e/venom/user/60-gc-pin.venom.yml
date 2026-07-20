@@ -1,0 +1,57 @@
+name: GC and pin retention
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  home: '/tmp/u60'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: build several generations
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          set -e
+          {{.px}} install hello
+          {{.px}} install goodbye
+          {{.px}} remove goodbye
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: pin the earliest generation
+    steps:
+      - type: exec
+        script: |
+          set -e
+          gen1=$(ls -1 {{.home}}/data/polypkg/generations | sort | head -1)
+          test -n "$gen1"   # fail loudly if no generation exists to pin
+          {{.px}} generation pin "$gen1" --reason "e2e retention"
+        assertions:
+          - result.code ShouldEqual 0
+          # assert polypkg's own output, not a string the test echoed itself
+          - result.systemout ShouldContainSubstring "pinned generation"
+      - type: exec
+        script: '{{.px}} status -v'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "[pinned"
+
+  - name: gc keeps the pinned generation while reaping unpinned old ones
+    steps:
+      - type: exec
+        script: '{{.px}} gc --count 1'
+        assertions:
+          - result.code ShouldEqual 0
+      # The pinned generation must still be listed as pinned after gc. status's
+      # own "[pinned:" marker is emitted only for a genuinely-pinned generation,
+      # so this fails if gc reaped it (the bug under test) — unlike a test -d on
+      # the "earliest remaining" generation, which could match a surviving
+      # unpinned one.
+      - type: exec
+        script: '{{.px}} status -v'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "[pinned"

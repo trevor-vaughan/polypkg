@@ -1,0 +1,85 @@
+name: Repo publish (producer)
+vars:
+  repo: '/repo'
+  keys: '/keys'
+  fixtures: '/e2e/fixtures'
+  px: '/usr/local/bin/polypkg'
+
+testcases:
+  - name: Scaffold the repository
+    steps:
+      - type: exec
+        script: '{{.px}} repo init {{.repo}} --source native --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'cat {{.repo}}/polypkg-repo.yaml'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring native
+          - result.systemout ShouldContainSubstring polypkg.repo/v1
+
+  - name: Add hello 1.0.0 publishes a signed artifact and index
+    steps:
+      - type: exec
+        script: '{{.px}} repo add {{.fixtures}}/hello --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'ls {{.repo}}/public'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "index.json"
+          - result.systemout ShouldContainSubstring "index.json.minisig"
+          - result.systemout ShouldContainSubstring "trust.json"
+          - result.systemout ShouldContainSubstring "trust_root.pub"
+          - result.systemout ShouldContainSubstring "pool"
+      - type: exec
+        # Artifacts are content-addressed under pool/ (blake3 filenames), so the
+        # human name is asserted via the signed index, not the blob filename.
+        script: 'ls {{.repo}}/public/pool'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring ".tar.zst"
+      - type: exec
+        script: 'cat {{.repo}}/public/index.json'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "hello"
+          - result.systemout ShouldContainSubstring "pool/"
+
+  - name: Add the remaining fixtures (serial bumps each time)
+    steps:
+      - type: exec
+        script: |
+          set -e
+          for p in goodbye tool-a tool-b breaker needs-hello wants-goodbye proposes-goodbye; do
+            {{.px}} repo add {{.fixtures}}/$p --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}
+          done
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: Trust document is at serial 8 after eight packages
+    steps:
+      - type: readfile
+        path: '{{.repo}}/public/trust.json'
+        assertions:
+          - result.contentjson.schema ShouldEqual "polypkg.trust/v2"
+          - result.contentjson.source ShouldEqual "native"
+          - result.contentjson.serial ShouldEqual 8
+
+  - name: repo status reports the published source
+    steps:
+      - type: exec
+        script: '{{.px}} repo status --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Up to date"
+
+  - name: repo key show prints the trust-root fingerprint
+    steps:
+      - type: exec
+        script: '{{.px}} repo key show --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring "PRIVATE"

@@ -1,0 +1,204 @@
+name: Genuine carried provenance installs builder-verified (2f-4)
+# Reads the deterministic provenancegen-minted served repo (read-only,
+# bind-mounted at /e2e/provenance-fixtures/genuine/public — see
+# tests/e2e/provenancegen and tests/e2e/compose.yaml's runner-user mount): a
+# single package, provpkg 1.0.0, carrying a builder-signed SLSA attestation
+# under the fixed builder key "builder-current". Two rows:
+#   1. an explicit allow-list naming that key installs and is surfaced as
+#      builder-verified in the full recorded state (info + status -vv).
+#   2. an EMPTY allow-list (source-governance trust, spec §10.7) still
+#      installs — the absence of an allow-list is not a refusal.
+# Each testcase uses its own HOME/XDG isolation so state never collides.
+vars:
+  pub: '/e2e/provenance-fixtures/genuine/public'
+  # builder-current's deterministic public key (ed25519), printed as
+  # allow_key= by `go run ./tests/e2e/provenancegen` — if the fixture seed
+  # ever changes this literal must be regenerated too.
+  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q='
+  home1: '/tmp/u98-allow'
+  px1: 'env HOME=/tmp/u98-allow XDG_DATA_HOME=/tmp/u98-allow/data XDG_CONFIG_HOME=/tmp/u98-allow/cfg XDG_STATE_HOME=/tmp/u98-allow/state XDG_CACHE_HOME=/tmp/u98-allow/cache /usr/local/bin/polypkg'
+  profile1: '/tmp/u98-allow/profile.yaml'
+  home2: '/tmp/u98-empty'
+  px2: 'env HOME=/tmp/u98-empty XDG_DATA_HOME=/tmp/u98-empty/data XDG_CONFIG_HOME=/tmp/u98-empty/cfg XDG_STATE_HOME=/tmp/u98-empty/state XDG_CACHE_HOME=/tmp/u98-empty/cache /usr/local/bin/polypkg'
+  profile2: '/tmp/u98-empty/profile.yaml'
+  pub_g4ma: '/e2e/provenance-fixtures/g4-multialgo/public'
+  home_g4ma: '/tmp/u98-g4ma'
+  px_g4ma: 'env HOME=/tmp/u98-g4ma XDG_DATA_HOME=/tmp/u98-g4ma/data XDG_CONFIG_HOME=/tmp/u98-g4ma/cfg XDG_STATE_HOME=/tmp/u98-g4ma/state XDG_CACHE_HOME=/tmp/u98-g4ma/cache /usr/local/bin/polypkg'
+  profile_g4ma: '/tmp/u98-g4ma/profile.yaml'
+  pub_g6: '/e2e/provenance-fixtures/g6-sigstore-genuine/public'
+  home_g6: '/tmp/u98-g6'
+  px_g6: 'env HOME=/tmp/u98-g6 XDG_DATA_HOME=/tmp/u98-g6/data XDG_CONFIG_HOME=/tmp/u98-g6/cfg XDG_STATE_HOME=/tmp/u98-g6/state XDG_CACHE_HOME=/tmp/u98-g6/cache /usr/local/bin/polypkg'
+  profile_g6: '/tmp/u98-g6/profile.yaml'
+
+testcases:
+  - name: explicit builder allow-list installs and is recorded builder-verified
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home1}}
+          mkdir -p {{.home1}}
+          cat > {{.profile1}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov98
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub}}
+              trust_root: {{.pub}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+                builders:
+                  allow:
+                    - key: {{.allow_key}}
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px1}} apply --scope user {{.profile1}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px1}} info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          # Single-quoted at the YAML level: the substring carries "attestation: "
+          # and "carried: " colons that would otherwise be read as YAML mapping
+          # indicators.
+          - 'result.systemout ShouldContainSubstring "attestation: verified ("'
+          - 'result.systemout ShouldContainSubstring "carried: https://slsa.dev/provenance/v1 — builder-verified [builder-current]"'
+      - type: exec
+        script: '{{.px1}} status -vv'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "[attested]"
+          - 'result.systemout ShouldContainSubstring "[carried: builder-verified]"'
+
+  - name: empty allow-list still installs under source-governance trust (edge, spec 10.7)
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home2}}
+          mkdir -p {{.home2}}
+          cat > {{.profile2}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov98empty
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub}}
+              trust_root: {{.pub}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px2}} apply --scope user {{.profile2}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+
+  # G4 positive/selection half (spec §11 / §5.3 "all-overlap-must-agree"): the
+  # carried SLSA subject offers BOTH sha256 and sha512 of content/bin/app, both
+  # matching the installed bytes, so it binds and installs builder-verified —
+  # proving the multi-algo agreement path is accepted, not spuriously refused.
+  # Reads the g4-multialgo fixture tree (see gen.BuildG4MultiAlgo).
+  - name: 'G4 positive - carried SLSA offering agreeing sha256+sha512 installs builder-verified'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g4ma}}
+          mkdir -p {{.home_g4ma}}
+          cat > {{.profile_g4ma}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov98g4ma
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g4ma}}
+              trust_root: {{.pub_g4ma}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+                builders:
+                  allow:
+                    - key: {{.allow_key}}
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g4ma}} apply --scope user {{.profile_g4ma}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px_g4ma}} info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "carried: https://slsa.dev/provenance/v1 — builder-verified [builder-current]"'
+
+  # G6 positive (spec §11 / §5.5 / §7): a genuine offline sigstore bundle carried
+  # as attestations/sigstore.json, whose SigstoreRoot is published in the served
+  # trust bundle's sigstore_roots, verifies OFFLINE (inclusion proof + Fulcio
+  # chain + Rekor key) and binds verified-offline with the recorded Fulcio SAN and
+  # issuer. verified-offline is an anchored tier, so it installs under
+  # require:[slsa] with NO builders.allow (an empty allow-list trusts the offline
+  # identity). `info --format json` is the only surface that renders the carried
+  # tier + certificate identity (see internal/cli/listinfo.go). Reads the
+  # g6-sigstore-genuine fixture (see gen.BuildG6SigstoreGenuine).
+  - name: 'G6 positive - genuine offline sigstore bundle installs verified-offline under require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g6}}
+          mkdir -p {{.home_g6}}
+          cat > {{.profile_g6}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov98g6
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g6}}
+              trust_root: {{.pub_g6}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g6}} apply --scope user {{.profile_g6}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px_g6}} --format json info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "tier"'
+          - 'result.systemout ShouldContainSubstring "verified-offline"'
+          - 'result.systemout ShouldContainSubstring "certificate_identity"'
+          - 'result.systemout ShouldContainSubstring "acme/ci/.github/workflows/release.yml"'

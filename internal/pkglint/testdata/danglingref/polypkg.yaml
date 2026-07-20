@@ -1,0 +1,7 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions:
+  - phase: post-place
+    action: install
+    params: { src: "$PKG/content/bin/missing", dest: "$ACTIVE/hello/bin/hello" }

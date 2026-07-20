@@ -1,0 +1,184 @@
+name: Weak dependency (recommends/suggests) policy controls
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  # Three isolated sandboxes so the policy cases never cross-contaminate each
+  # other or the lifecycle suite (56) that shares the recommends fixtures.
+  home_norec: '/tmp/u57norec'
+  home_profile: '/tmp/u57profile'
+  home_suggests: '/tmp/u57suggests'
+  norec: 'env HOME=/tmp/u57norec XDG_DATA_HOME=/tmp/u57norec/data XDG_CONFIG_HOME=/tmp/u57norec/cfg XDG_STATE_HOME=/tmp/u57norec/state XDG_CACHE_HOME=/tmp/u57norec/cache /usr/local/bin/polypkg'
+  profile_px: 'env HOME=/tmp/u57profile XDG_DATA_HOME=/tmp/u57profile/data XDG_CONFIG_HOME=/tmp/u57profile/cfg XDG_STATE_HOME=/tmp/u57profile/state XDG_CACHE_HOME=/tmp/u57profile/cache /usr/local/bin/polypkg'
+  suggests_px: 'env HOME=/tmp/u57suggests XDG_DATA_HOME=/tmp/u57suggests/data XDG_CONFIG_HOME=/tmp/u57suggests/cfg XDG_STATE_HOME=/tmp/u57suggests/state XDG_CACHE_HOME=/tmp/u57suggests/cache /usr/local/bin/polypkg'
+
+testcases:
+  # ---------------------------------------------------------------------------
+  # Test 1: `apply --no-recommends` suppresses the weak dependency for one run,
+  # then a plain `apply` restores it. This proves the per-run flag override
+  # against the real built binary, real flag, and real on-disk placement.
+  # ---------------------------------------------------------------------------
+  - name: install wants-goodbye pulls in its recommended weak dependency
+    steps:
+      - type: exec
+        script: '{{.norec}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.norec}} install wants-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.norec}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "wants-goodbye"
+          - result.systemout ShouldContainSubstring "goodbye"
+      - type: exec
+        script: '{{.home_norec}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "goodbye 1.0.0"
+
+  - name: apply --no-recommends drops goodbye for this run while keeping wants-goodbye
+    steps:
+      - type: exec
+        script: '{{.norec}} apply --no-recommends'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.norec}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring '"wants-goodbye"'
+          - result.systemout ShouldNotContainSubstring '"goodbye"'
+      - type: exec
+        script: '{{.home_norec}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldNotEqual 0
+      - type: exec
+        script: '{{.home_norec}}/data/polypkg/active/wants-goodbye/bin/wanter'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "wanter 1.0.0"
+
+  - name: a plain apply pulls the weak dependency back in
+    steps:
+      - type: exec
+        script: '{{.norec}} apply'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.norec}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring '"goodbye"'
+      - type: exec
+        script: '{{.home_norec}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "goodbye 1.0.0"
+
+  # ---------------------------------------------------------------------------
+  # Test 2: a profile-level `recommends.install: false` policy block suppresses
+  # the weak dependency persistently. We let `install` add wants-goodbye to the
+  # default profile, append the policy block to that same profile, then `apply`.
+  # ---------------------------------------------------------------------------
+  - name: install wants-goodbye then apply under a recommends.install false policy
+    steps:
+      - type: exec
+        script: '{{.profile_px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.profile_px}} install wants-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      # Append the policy block to the default profile init wrote, then re-apply.
+      - type: exec
+        script: |
+          set -e
+          printf 'recommends:\n  install: false\n' >> {{.home_profile}}/cfg/polypkg/profile.yaml
+        assertions:
+          - result.code ShouldEqual 0
+      - type: readfile
+        path: '{{.home_profile}}/cfg/polypkg/profile.yaml'
+        assertions:
+          # Prove the policy block landed. We assert on the single, whitespace-
+          # free token "recommends:" rather than the full "install: false" line:
+          # venom splits assertion arguments on whitespace and coerces a bare
+          # trailing "false" token to a typed bool, which breaks a literal
+          # compare. The init template's only "recommends" mention would be none
+          # — it ships no recommends key — so this token appearing proves the
+          # appended policy block is in the profile. The next testcase proves the
+          # policy is actually honored end to end.
+          - result.content ShouldContainSubstring "recommends:"
+      - type: exec
+        script: '{{.profile_px}} apply'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+
+  - name: the policy keeps wants-goodbye installed but suppresses goodbye
+    steps:
+      - type: exec
+        script: '{{.profile_px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring '"wants-goodbye"'
+          - result.systemout ShouldNotContainSubstring '"goodbye"'
+      - type: exec
+        script: '{{.home_profile}}/data/polypkg/active/wants-goodbye/bin/wanter'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "wanter 1.0.0"
+      - type: exec
+        script: '{{.home_profile}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldNotEqual 0
+
+  # ---------------------------------------------------------------------------
+  # Test 3: a `suggests` relation is advertised but never installed. The
+  # recommender installs cleanly and runs; `info` advertises the suggestion;
+  # the suggested package is absent from the store and never placed on disk.
+  # ---------------------------------------------------------------------------
+  - name: install proposes-goodbye places its own binary
+    steps:
+      - type: exec
+        script: '{{.suggests_px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.suggests_px}} install proposes-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+          - result.systemout ShouldContainSubstring "suggested (not installed)"
+          - result.systemout ShouldContainSubstring "goodbye"
+      - type: exec
+        script: '{{.home_suggests}}/data/polypkg/active/proposes-goodbye/bin/proposer'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "proposer 1.0.0"
+
+  - name: info advertises the suggested goodbye but it is never installed
+    steps:
+      - type: exec
+        script: '{{.suggests_px}} info proposes-goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "suggests:"
+          - result.systemout ShouldContainSubstring "goodbye"
+      - type: exec
+        script: '{{.suggests_px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring '"proposes-goodbye"'
+          - result.systemout ShouldNotContainSubstring '"goodbye"'
+      - type: exec
+        script: '{{.home_suggests}}/data/polypkg/active/goodbye/bin/goodbye'
+        assertions:
+          - result.code ShouldNotEqual 0

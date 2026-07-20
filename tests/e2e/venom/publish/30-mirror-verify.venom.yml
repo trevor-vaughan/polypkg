@@ -1,0 +1,78 @@
+name: Mirror bundle verify (export-bundle + mirror verify fail-closed)
+# Runs in the publisher service AFTER 00-publish/20-attestation-publish have built
+# /repo (signed index, trust doc, attestation pool). Exercises the 2e-2 offline-
+# mirror surface end to end: a signed export bundle verifies, and any post-export
+# tamper (content byte-flip, or a smuggled un-listed file) is refused by
+# `mirror verify`; the pristine bundle is then proven to still verify, so the
+# refusal is attributable to the tamper.
+vars:
+  px: '/usr/local/bin/polypkg'
+  repo: '/repo'
+  keys: '/keys'
+  bundle: '/tmp/mirror.tar'
+
+testcases:
+  - name: Export a signed mirror bundle from the built repo
+    steps:
+      - type: exec
+        script: '{{.px}} repo export-bundle --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}} -o {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Exported"
+      - type: exec
+        script: 'ls -l {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: mirror verify accepts the pristine bundle
+    steps:
+      - type: exec
+        script: '{{.px}} mirror verify {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "OK:"
+          - result.systemout ShouldContainSubstring "verified"
+
+  - name: A content byte-flip in a pool blob is refused (content hash mismatch)
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf /tmp/mv1 && mkdir -p /tmp/mv1
+          tar -xf {{.bundle}} -C /tmp/mv1
+          blob=$(find /tmp/mv1 -path '*pool*' -name '*.tar.zst' | head -1)
+          test -n "$blob"
+          printf 'X' | dd of="$blob" bs=1 seek=10 count=1 conv=notrunc 2>/dev/null
+          ( cd /tmp/mv1 && find . -type f | sed 's|^\./||' | sort | tar -cf /tmp/mirror-tampered.tar --no-recursion -T - )
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} mirror verify /tmp/mirror-tampered.tar'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "content hash mismatch"
+
+  - name: A smuggled un-listed file is refused (not covered by the signed manifest)
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf /tmp/mv2 && mkdir -p /tmp/mv2
+          tar -xf {{.bundle}} -C /tmp/mv2
+          echo evil > /tmp/mv2/pool/smuggled.txt
+          ( cd /tmp/mv2 && find . -type f | sed 's|^\./||' | sort | tar -cf /tmp/mirror-smuggled.tar --no-recursion -T - )
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} mirror verify /tmp/mirror-smuggled.tar'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "not covered by the signed manifest"
+
+  - name: The pristine bundle still verifies (refusals were caused by the tamper)
+    steps:
+      - type: exec
+        script: '{{.px}} mirror verify {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "OK:"

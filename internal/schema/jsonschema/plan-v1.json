@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/plan-v1.json",
+  "type": "object",
+  "required": ["schema", "profile", "exit"],
+  "additionalProperties": false,
+  "properties": {
+    "schema":   { "type": "string", "const": "polypkg.plan/v1" },
+    "profile":  { "type": "string", "minLength": 1 },
+    "current":  {
+      "type": "object",
+      "required": ["generation"],
+      "additionalProperties": false,
+      "properties": {
+        "generation":   { "type": "integer", "minimum": 1 },
+        "committed_at": { "type": "string" }
+      }
+    },
+    "packages":  { "type": "object" },
+    "ownership": { "type": "object" },
+    "drift":     { "type": "array", "items": { "type": "object" } },
+    "skipped_recommends": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "name":           { "type": "string" },
+          "version_range":  { "type": "string" },
+          "reason":         { "type": "string" },
+          "recommended_by": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "suggests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name":          { "type": "string" },
+          "version_range": { "type": "string" },
+          "suggested_by":  { "type": "string" }
+        }
+      }
+    },
+    "exit":      { "type": "integer", "enum": [0, 1, 2] }
+  }
+}

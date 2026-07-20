@@ -1,0 +1,18 @@
+schema: polypkg.package/v1
+name: wants-goodbye
+version: 1.0.0
+description: Declares a weak dependency on goodbye (recommends-lifecycle subject)
+recommends:
+  - name: goodbye
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/wants-goodbye/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/wanter
+      dest: $ACTIVE/wants-goodbye/bin/wanter
+      policy: symlink

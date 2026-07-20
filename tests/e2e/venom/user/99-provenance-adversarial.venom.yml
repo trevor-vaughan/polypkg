@@ -1,0 +1,670 @@
+name: Adversarial carried provenance (G-rows - spec §11 acceptance matrix)
+# Each testcase below is one G-row from the spec §11 acceptance matrix: a
+# tampered/adversarial fixture that MUST be refused despite superficially
+# reaching a verified tier. New G-rows (G2/G5/G9/G10) are appended here as
+# later tasks land their fixtures — this file is the adversarial counterpart
+# to 98-provenance-genuine.venom.yml's all-green rows.
+#
+# G1 (spec §11): a malicious publisher mints its own builder key
+# (builder-rogue), registers it in the (anchor-signed) trust bundle alongside
+# the legitimate builder-current, and signs the carried SLSA with it. The key
+# genuinely resolves against the bundle, so the attestation reaches the
+# builder-verified TIER — the forgery is not in the signature or the tier,
+# it is that the publisher, not the consumer, chose which builder to trust.
+# The consumer's builders.allow is the independent anchor: a NON-EMPTY
+# allow-list that does not name builder-rogue's key MUST refuse, even though
+# the same key IS registered in the bundle. Reads the g1-rogue fixture tree
+# (read-only, bind-mounted at /e2e/provenance-fixtures/g1-rogue/public — see
+# tests/e2e/provenancegen/gen.BuildG1Rogue).
+vars:
+  pub: '/e2e/provenance-fixtures/g1-rogue/public'
+  # builder-current's deterministic public key (ed25519), printed as
+  # allow_key= by `go run ./tests/e2e/provenancegen` — if the fixture seed
+  # ever changes this literal must be regenerated too.
+  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q='
+  home: '/tmp/u99-g1'
+  px: 'env HOME=/tmp/u99-g1 XDG_DATA_HOME=/tmp/u99-g1/data XDG_CONFIG_HOME=/tmp/u99-g1/cfg XDG_STATE_HOME=/tmp/u99-g1/state XDG_CACHE_HOME=/tmp/u99-g1/cache /usr/local/bin/polypkg'
+  profile: '/tmp/u99-g1/profile.yaml'
+  pub_g2: '/e2e/provenance-fixtures/g2-strip/public'
+  home_g2: '/tmp/u99-g2'
+  px_g2: 'env HOME=/tmp/u99-g2 XDG_DATA_HOME=/tmp/u99-g2/data XDG_CONFIG_HOME=/tmp/u99-g2/cfg XDG_STATE_HOME=/tmp/u99-g2/state XDG_CACHE_HOME=/tmp/u99-g2/cache /usr/local/bin/polypkg'
+  profile_g2: '/tmp/u99-g2/profile.yaml'
+  pub_g9: '/e2e/provenance-fixtures/g9-predicate/public'
+  home_g9: '/tmp/u99-g9'
+  px_g9: 'env HOME=/tmp/u99-g9 XDG_DATA_HOME=/tmp/u99-g9/data XDG_CONFIG_HOME=/tmp/u99-g9/cfg XDG_STATE_HOME=/tmp/u99-g9/state XDG_CACHE_HOME=/tmp/u99-g9/cache /usr/local/bin/polypkg'
+  profile_g9: '/tmp/u99-g9/profile.yaml'
+  pub_g5relabel: '/e2e/provenance-fixtures/g5-relabel/public'
+  home_g5relabel: '/tmp/u99-g5relabel'
+  px_g5relabel: 'env HOME=/tmp/u99-g5relabel XDG_DATA_HOME=/tmp/u99-g5relabel/data XDG_CONFIG_HOME=/tmp/u99-g5relabel/cfg XDG_STATE_HOME=/tmp/u99-g5relabel/state XDG_CACHE_HOME=/tmp/u99-g5relabel/cache /usr/local/bin/polypkg'
+  profile_g5relabel: '/tmp/u99-g5relabel/profile.yaml'
+  pub_g5mismatch: '/e2e/provenance-fixtures/g5-mismatch/public'
+  home_g5mismatch: '/tmp/u99-g5mismatch'
+  px_g5mismatch: 'env HOME=/tmp/u99-g5mismatch XDG_DATA_HOME=/tmp/u99-g5mismatch/data XDG_CONFIG_HOME=/tmp/u99-g5mismatch/cfg XDG_STATE_HOME=/tmp/u99-g5mismatch/state XDG_CACHE_HOME=/tmp/u99-g5mismatch/cache /usr/local/bin/polypkg'
+  profile_g5mismatch: '/tmp/u99-g5mismatch/profile.yaml'
+  pub_g10: '/e2e/provenance-fixtures/g10-dupkeys/public'
+  home_g10: '/tmp/u99-g10'
+  px_g10: 'env HOME=/tmp/u99-g10 XDG_DATA_HOME=/tmp/u99-g10/data XDG_CONFIG_HOME=/tmp/u99-g10/cfg XDG_STATE_HOME=/tmp/u99-g10/state XDG_CACHE_HOME=/tmp/u99-g10/cache /usr/local/bin/polypkg'
+  profile_g10: '/tmp/u99-g10/profile.yaml'
+  home_g10ok: '/tmp/u99-g10ok'
+  px_g10ok: 'env HOME=/tmp/u99-g10ok XDG_DATA_HOME=/tmp/u99-g10ok/data XDG_CONFIG_HOME=/tmp/u99-g10ok/cfg XDG_STATE_HOME=/tmp/u99-g10ok/state XDG_CACHE_HOME=/tmp/u99-g10ok/cache /usr/local/bin/polypkg'
+  profile_g10ok: '/tmp/u99-g10ok/profile.yaml'
+  pub_g4mismatch: '/e2e/provenance-fixtures/g4-mismatch/public'
+  home_g4mismatch: '/tmp/u99-g4mismatch'
+  px_g4mismatch: 'env HOME=/tmp/u99-g4mismatch XDG_DATA_HOME=/tmp/u99-g4mismatch/data XDG_CONFIG_HOME=/tmp/u99-g4mismatch/cfg XDG_STATE_HOME=/tmp/u99-g4mismatch/state XDG_CACHE_HOME=/tmp/u99-g4mismatch/cache /usr/local/bin/polypkg'
+  profile_g4mismatch: '/tmp/u99-g4mismatch/profile.yaml'
+  pub_g4sha1: '/e2e/provenance-fixtures/g4-sha1only/public'
+  home_g4sha1: '/tmp/u99-g4sha1'
+  px_g4sha1: 'env HOME=/tmp/u99-g4sha1 XDG_DATA_HOME=/tmp/u99-g4sha1/data XDG_CONFIG_HOME=/tmp/u99-g4sha1/cfg XDG_STATE_HOME=/tmp/u99-g4sha1/state XDG_CACHE_HOME=/tmp/u99-g4sha1/cache /usr/local/bin/polypkg'
+  profile_g4sha1: '/tmp/u99-g4sha1/profile.yaml'
+  pub_g4noov: '/e2e/provenance-fixtures/g4-nooverlap/public'
+  home_g4noov: '/tmp/u99-g4noov'
+  px_g4noov: 'env HOME=/tmp/u99-g4noov XDG_DATA_HOME=/tmp/u99-g4noov/data XDG_CONFIG_HOME=/tmp/u99-g4noov/cfg XDG_STATE_HOME=/tmp/u99-g4noov/state XDG_CACHE_HOME=/tmp/u99-g4noov/cache /usr/local/bin/polypkg'
+  profile_g4noov: '/tmp/u99-g4noov/profile.yaml'
+  pub_g7: '/e2e/provenance-fixtures/g7-install-refused/public'
+  home_g7: '/tmp/u99-g7'
+  px_g7: 'env HOME=/tmp/u99-g7 XDG_DATA_HOME=/tmp/u99-g7/data XDG_CONFIG_HOME=/tmp/u99-g7/cfg XDG_STATE_HOME=/tmp/u99-g7/state XDG_CACHE_HOME=/tmp/u99-g7/cache /usr/local/bin/polypkg'
+  profile_g7: '/tmp/u99-g7/profile.yaml'
+  pub_g6: '/e2e/provenance-fixtures/g6-no-inclusion-proof/public'
+  home_g6def: '/tmp/u99-g6def'
+  px_g6def: 'env HOME=/tmp/u99-g6def XDG_DATA_HOME=/tmp/u99-g6def/data XDG_CONFIG_HOME=/tmp/u99-g6def/cfg XDG_STATE_HOME=/tmp/u99-g6def/state XDG_CACHE_HOME=/tmp/u99-g6def/cache /usr/local/bin/polypkg'
+  profile_g6def: '/tmp/u99-g6def/profile.yaml'
+  home_g6req: '/tmp/u99-g6req'
+  px_g6req: 'env HOME=/tmp/u99-g6req XDG_DATA_HOME=/tmp/u99-g6req/data XDG_CONFIG_HOME=/tmp/u99-g6req/cfg XDG_STATE_HOME=/tmp/u99-g6req/state XDG_CACHE_HOME=/tmp/u99-g6req/cache /usr/local/bin/polypkg'
+  profile_g6req: '/tmp/u99-g6req/profile.yaml'
+
+testcases:
+  - name: 'G1 - rogue builder key registered in the bundle but not allow-listed is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home}}
+          mkdir -p {{.home}}
+          cat > {{.profile}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g1
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub}}
+              trust_root: {{.pub}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+                builders:
+                  allow:
+                    - key: {{.allow_key}}
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px}} apply --scope user {{.profile}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          # Single-quoted at the YAML level: the substring carries the
+          # predicate-type "https://..." colon that would otherwise be read
+          # as a YAML mapping indicator.
+          - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
+          - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'
+
+  # G9 (spec §11 / §10.3 F2): a malicious mirror leaves the carried SLSA
+  # envelope and its pool blob byte-for-byte untouched (still a genuine,
+  # builder-signed SLSA v1.0 statement) but rewrites the index.json
+  # AttestationRef's predicate_type to an unrelated URI and re-signs the
+  # index under the same anchor key, so the index itself still verifies —
+  # the forgery is the mislabeled predicate, not a broken signature or a
+  # missing attestation. This is tampering-class: the consumer's
+  # bindCarriedRefs cross-check (internal/planner/planner.go) treats the
+  # signed payload's predicateType as authoritative and hard-refuses when a
+  # positively declared index ref disagrees, under the DEFAULT policy — no
+  # require and no builders.allow needed, unlike G1/G2's require-gated
+  # refusals. Reads the g9-predicate fixture tree (read-only, bind-mounted at
+  # /e2e/provenance-fixtures/g9-predicate/public — see
+  # tests/e2e/provenancegen/gen.BuildG9PredicateMismatch).
+  - name: 'G9 - index predicate_type disagreeing with the signed payload is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g9}}
+          mkdir -p {{.home_g9}}
+          cat > {{.profile_g9}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g9
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g9}}
+              trust_root: {{.pub_g9}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g9}} apply --scope user {{.profile_g9}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          # Single-quoted at the YAML level: the substrings carry
+          # "https://..." colons that would otherwise be read as YAML mapping
+          # indicators. Checked as separate substrings (rather than one
+          # string spanning the quoted URIs) to avoid embedding literal
+          # quote characters inside venom's own quoted assertion value.
+          - 'result.systemerr ShouldContainSubstring "predicate type mismatch: index ref says"'
+          - 'result.systemerr ShouldContainSubstring "https://spdx.dev/Document"'
+          - 'result.systemerr ShouldContainSubstring "signed payload says"'
+          - 'result.systemerr ShouldContainSubstring "https://slsa.dev/provenance/v1"'
+
+  # G2 (spec §11): a malicious mirror strips the carried SLSA attestation from
+  # a repo that HAD it (the native SARIF ref is left in place) and re-signs
+  # the index under the same anchor key, so the index itself still verifies —
+  # the forgery is the missing predicate, not a broken signature. A consumer
+  # with require:[slsa] must refuse because the required predicate is
+  # genuinely absent. Reads the g2-strip fixture tree (read-only, bind-mounted
+  # at /e2e/provenance-fixtures/g2-strip/public — see
+  # tests/e2e/provenancegen/gen.BuildG2StripSLSA). No builders.allow is needed:
+  # the refusal is the require gate, independent of builder-key trust.
+  - name: 'G2 - carried SLSA stripped from a re-signed index is refused under require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g2}}
+          mkdir -p {{.home_g2}}
+          cat > {{.profile_g2}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g2
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g2}}
+              trust_root: {{.pub_g2}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g2}} apply --scope user {{.profile_g2}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          # Single-quoted at the YAML level: the substring carries the
+          # predicate-type "https://..." colon that would otherwise be read
+          # as a YAML mapping indicator.
+          - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
+          - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'
+
+  # G5 relabel (spec §11, positive half): the carried SLSA attestation's
+  # advisory subject NAME lies ("bin/app"), but its digest actually matches a
+  # DIFFERENT packed file (content/bin/other). repo build binds carried
+  # subjects BY DIGEST (the name is advisory only), so it binds bin/other and
+  # publishes without any tampering — this is not a refusal row. Installing
+  # and reading back the recorded carried binding proves the advisory label
+  # was never trusted for selection: the bound scope is content:bin/other, not
+  # the misleading bin/app. Reads the g5-relabel fixture tree (read-only,
+  # bind-mounted at /e2e/provenance-fixtures/g5-relabel/public — see
+  # tests/e2e/provenancegen/gen.BuildG5Relabel). `info` in JSON form is the
+  # only surface that renders subject_scope; the text form only summarizes
+  # predicate/tier/identity (see internal/cli/listinfo.go's
+  # carriedBindingSummary).
+  - name: 'G5 relabel - carried SLSA advisory name is misleading, install binds and records the real digest-matched file'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g5relabel}}
+          mkdir -p {{.home_g5relabel}}
+          cat > {{.profile_g5relabel}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g5relabel
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g5relabel}}
+              trust_root: {{.pub_g5relabel}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g5relabel}} apply --scope user {{.profile_g5relabel}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px_g5relabel}} --format json info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          # Two substrings rather than one spanning "subject_scope":"content:...":
+          # embedding literal JSON quote characters inside venom's own quoted
+          # assertion value is fragile to parse; checking the key and the
+          # digest-bound value separately is unambiguous and avoids it.
+          - 'result.systemout ShouldContainSubstring "subject_scope"'
+          - 'result.systemout ShouldContainSubstring "content:bin/other"'
+
+  # G5 mismatch (spec §11, refusal half): a malicious mirror swaps the carried
+  # SLSA pool blob for one whose subject digest matches NO packed file
+  # (neither content/bin/app nor any other packed content), re-signing the
+  # swapped blob's transport signature so the built-in publish-time refusal
+  # (repo build's bindCarried, which would otherwise reject an unbound carried
+  # attestation) cannot apply here — the tree was published genuinely, then
+  # tampered after the fact. The consumer's install-time digest re-bind
+  # (internal/planner/planner.go's bindCarriedRefs) independently re-derives
+  # that the digest matches nothing extracted and fails closed under the
+  # DEFAULT policy — no require and no builders.allow needed. Reads the
+  # g5-mismatch fixture tree (read-only, bind-mounted at
+  # /e2e/provenance-fixtures/g5-mismatch/public — see
+  # tests/e2e/provenancegen/gen.BuildG5Mismatch).
+  - name: 'G5 mismatch - carried SLSA subject digest matching no packed file is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g5mismatch}}
+          mkdir -p {{.home_g5mismatch}}
+          cat > {{.profile_g5mismatch}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g5mismatch
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g5mismatch}}
+              trust_root: {{.pub_g5mismatch}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g5mismatch}} apply --scope user {{.profile_g5mismatch}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
+          - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
+
+  # G10 (spec §11 / §7 / internal/attest/dsse.go): a malicious mirror swaps the
+  # carried SLSA pool blob for one whose JSON is byte-identical to the
+  # genuine, builder-signed envelope except for a single spliced-in duplicate
+  # top-level "payloadType" key — a parser-differential vector (a lenient
+  # parser could bind different bytes than the ones the signature covers).
+  # attest.VerifyBuilderSignature's rejectDuplicateKeys refuses to guess which
+  # value the signature covers and reports the envelope structurally invalid;
+  # the planner's install-time cross-check (bindCarriedRefs) treats that the
+  # same as an unverifiable signature and fails the binding CLOSED to
+  # verified-transport-only rather than hard-erroring itself — like G1/G2,
+  # this alone does not refuse a DEFAULT (unrequired) install. A consumer that
+  # REQUIRES the SLSA predicate does refuse, because a verified-transport-only
+  # binding is not an anchored tier the require gate accepts. Reads the
+  # g10-dupkeys fixture tree (read-only, bind-mounted at
+  # /e2e/provenance-fixtures/g10-dupkeys/public — see
+  # tests/e2e/provenancegen/gen.BuildG10DupKeys).
+  - name: 'G10 - carried SLSA envelope with a duplicate JSON key is refused under require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g10}}
+          mkdir -p {{.home_g10}}
+          cat > {{.profile_g10}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g10
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g10}}
+              trust_root: {{.pub_g10}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g10}} apply --scope user {{.profile_g10}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          # Single-quoted at the YAML level: the substring carries the
+          # predicate-type "https://..." colon that would otherwise be read
+          # as a YAML mapping indicator.
+          - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
+          - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'
+
+  # G10 (positive half): the SAME dup-key envelope from the row above, applied
+  # WITHOUT require/builders.allow, to prove the observable effect of the
+  # duplicate-key rejection directly rather than only its require-gated
+  # refusal (which is textually identical to G1/G2's refusal and does not by
+  # itself distinguish G10's failure mode). Under the DEFAULT policy the
+  # install proceeds (dup-key detection alone does not refuse), but the
+  # planner's install-time cross-check (bindCarriedRefs) cannot verify the
+  # builder signature over ambiguous bytes and records the carried SLSA
+  # binding at verified-transport-only with no builder key id, instead of
+  # builder-verified — the same "fails closed to transport-only" behavior
+  # documented above. `info` in JSON form is the only surface that renders
+  # the carried tier (see the G5-relabel testcase above and
+  # internal/cli/listinfo.go's carriedBindingSummary). Uses a distinct
+  # HOME/XDG dir ({{.home_g10ok}}) so it does not collide with the
+  # require-gated refusal case above.
+  - name: 'G10 relabel - carried SLSA envelope with a duplicate JSON key downgrades to verified-transport-only without require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g10ok}}
+          mkdir -p {{.home_g10ok}}
+          cat > {{.profile_g10ok}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g10ok
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g10}}
+              trust_root: {{.pub_g10}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g10ok}} apply --scope user {{.profile_g10ok}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px_g10ok}} --format json info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          # Two substrings rather than one spanning the "tier":"..." pair:
+          # embedding literal JSON quote characters inside venom's own quoted
+          # assertion value is fragile to parse; checking the key and the
+          # downgraded value separately is unambiguous and avoids it. Also
+          # assert the anchored tier string is absent, proving the dup-key
+          # envelope was NOT accepted as builder-verified.
+          - 'result.systemout ShouldContainSubstring "tier"'
+          - 'result.systemout ShouldContainSubstring "verified-transport-only"'
+          - 'result.systemout ShouldNotContainSubstring "builder-verified"'
+
+  # G4 mismatch (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # pool blob for one whose subject sha256 matches content/bin/app but whose
+  # sha512 is the hash of DIFFERENT bytes, re-signing the swapped blob's
+  # transport signature. attest.MatchSubjectDigests recomputes BOTH overlapping
+  # algorithms and rejects on the sha512 disagreement (all-overlap-must-agree),
+  # so the install-time digest re-bind (bindCarriedRefs) binds nothing and
+  # refuses under the DEFAULT policy — no require needed. Reads the g4-mismatch
+  # fixture tree (see gen.BuildG4MismatchAlgo).
+  - name: 'G4 mismatch - carried SLSA with a matching sha256 but disagreeing sha512 is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g4mismatch}}
+          mkdir -p {{.home_g4mismatch}}
+          cat > {{.profile_g4mismatch}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g4mismatch
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g4mismatch}}
+              trust_root: {{.pub_g4mismatch}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g4mismatch}} apply --scope user {{.profile_g4mismatch}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
+          - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
+
+  # G4 sha1-only (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # pool blob for one whose subject offers ONLY sha1 — a broken, forbidden
+  # algorithm attest.MatchSubjectDigests rejects on mere presence (a downgrade
+  # vector). No subject binds at or above the sha256 floor, so the install-time
+  # digest re-bind (bindCarriedRefs) refuses under the DEFAULT policy. Reads the
+  # g4-sha1only fixture tree (see gen.BuildG4Sha1Only).
+  - name: 'G4 sha1-only - carried SLSA offering only the forbidden weak sha1 is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g4sha1}}
+          mkdir -p {{.home_g4sha1}}
+          cat > {{.profile_g4sha1}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g4sha1
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g4sha1}}
+              trust_root: {{.pub_g4sha1}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g4sha1}} apply --scope user {{.profile_g4sha1}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
+          - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
+
+  # G4 no-overlap (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # pool blob for one whose subject offers ONLY sha3-512 — an algorithm polypkg
+  # can neither recompute nor forbids, so attest.MatchSubjectDigests finds
+  # nothing at or above the sha256 floor to verify and the subject is
+  # unbindable. The install-time digest re-bind (bindCarriedRefs) refuses under
+  # the DEFAULT policy. Reads the g4-nooverlap fixture tree (see
+  # gen.BuildG4NoOverlap).
+  - name: 'G4 no-overlap - carried SLSA offering only an uncomputable algorithm is refused'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g4noov}}
+          mkdir -p {{.home_g4noov}}
+          cat > {{.profile_g4noov}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g4noov
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g4noov}}
+              trust_root: {{.pub_g4noov}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g4noov}} apply --scope user {{.profile_g4noov}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
+          - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
+
+  # G7 (spec §11 / P6 two-point binding): an attacker holding the publisher/anchor
+  # key publishes a genuine tree, then substitutes the packed content/bin/app
+  # bytes, re-packs the artifact tarball, recomputes its blake3, re-signs the
+  # artifact transport signature, STRIPS the anchor-signed native artifact-binding
+  # attestations (SARIF + polypkg-link, which that attacker can forge or remove),
+  # retargets the index's package artifact ref, and re-signs the index — so the
+  # artifact transport signature AND the index content hash both still verify. The
+  # BUILDER-signed carried SLSA attestation (minted over the ORIGINAL bytes) cannot
+  # be forged and remains, so the consumer's install-time re-bind (bindCarriedRefs)
+  # re-derives its subject digest against the actually-installed substituted bytes,
+  # matches nothing, and hard-refuses under the DEFAULT policy — no require and no
+  # builders.allow needed. Reads the g7-install-refused fixture tree (read-only,
+  # bind-mounted at /e2e/provenance-fixtures/g7-install-refused/public — see
+  # tests/e2e/provenancegen/gen.BuildG7InstallRefused). The three ShouldNotContain
+  # assertions are the CONTROL: "signature verification failed"/"hash mismatch"
+  # absent proves the artifact transport + content hash still verify (the refusal
+  # is the binding, not integrity, because repackArtifact re-signs and re-hashes
+  # faithfully); "attestation subject digest does not match artifact" absent proves
+  # the refusal is the CARRIED re-bind, not the native artifact-binding the strip
+  # removed (which would otherwise fire one layer earlier).
+  - name: 'G7 - post-publish content substitution surviving transport is refused at install'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g7}}
+          mkdir -p {{.home_g7}}
+          cat > {{.profile_g7}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g7
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g7}}
+              trust_root: {{.pub_g7}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g7}} apply --scope user {{.profile_g7}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
+          - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
+          - 'result.systemerr ShouldNotContainSubstring "signature verification failed"'
+          - 'result.systemerr ShouldNotContainSubstring "hash mismatch"'
+          - 'result.systemerr ShouldNotContainSubstring "attestation subject digest does not match artifact"'
+
+  # G6 downgrade control (spec §11 / §5.5): the SAME stripped-inclusion-proof
+  # sigstore bundle applied WITHOUT require proves the strip only DOWNGRADES the
+  # tier (it is not a hard refusal). Under DEFAULT policy the install proceeds and
+  # the carried binding records verified-transport-only with NO certificate
+  # identity — the fail-closed result of an inclusion proof that can no longer be
+  # verified offline. `info --format json` renders the carried tier. Reads the
+  # g6-no-inclusion-proof fixture (see gen.BuildG6NoInclusionProof). This is the
+  # positive control that makes the require-gated refusal below attributable to
+  # the tier downgrade and nothing else.
+  - name: 'G6 downgrade - stripped-inclusion-proof sigstore bundle records verified-transport-only without require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g6def}}
+          mkdir -p {{.home_g6def}}
+          cat > {{.profile_g6def}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g6def
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g6}}
+              trust_root: {{.pub_g6}}/trust_root.pub
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g6def}} apply --scope user {{.profile_g6def}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.px_g6def}} --format json info provpkg'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "tier"'
+          - 'result.systemout ShouldContainSubstring "verified-transport-only"'
+          - 'result.systemout ShouldNotContainSubstring "verified-offline"'
+          - 'result.systemout ShouldNotContainSubstring "certificate_identity"'
+
+  # G6 refusal (spec §11 / §5.5): the same stripped-inclusion-proof bundle under
+  # require:[slsa] is refused — verified-transport-only is not an anchored tier
+  # (attestpolicy.go's tierAnchored), so the require gate cannot be satisfied even
+  # though the bundle is present and its subjects bind. No builders.allow needed.
+  # Reads the g6-no-inclusion-proof fixture (see gen.BuildG6NoInclusionProof).
+  - name: 'G6 refusal - stripped-inclusion-proof sigstore bundle is refused under require'
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home_g6req}}
+          mkdir -p {{.home_g6req}}
+          cat > {{.profile_g6req}} <<EOF
+          schema: polypkg.spec/v1
+          name: prov99g6req
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [prov]
+            prov:
+              type: polypkg-native
+              url: file://{{.pub_g6}}
+              trust_root: {{.pub_g6}}/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+          packages:
+            user:
+              provpkg:
+                version: ">=1.0.0"
+          EOF
+          {{.px_g6req}} apply --scope user {{.profile_g6req}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation 1"
+          # Single-quoted at the YAML level: the substring carries the
+          # predicate-type "https://..." colon that would otherwise be read as a
+          # YAML mapping indicator.
+          - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
+          - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'

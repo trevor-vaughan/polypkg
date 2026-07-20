@@ -1,0 +1,74 @@
+name: Attestation gate off (G8 - per-source tier off is loud and recorded)
+# G8 (spec §11): a source configured `attestation: { tier: off }` disables the
+# attestation gate for its packages. apply/install MUST emit an unsuppressible
+# SECURITY warning, RECORD the gate-off in the audit log, and surface it in
+# status/info — so an operator can never silently ship with the gate down.
+# Reads the shared served repo read-only via file:///repo/public (bind-mounted
+# in the runner); consumer state is isolated under /tmp/u97.
+vars:
+  pub: '/repo/public'
+  home: '/tmp/u97'
+  px: 'env HOME=/tmp/u97 XDG_DATA_HOME=/tmp/u97/data XDG_CONFIG_HOME=/tmp/u97/cfg XDG_STATE_HOME=/tmp/u97/state XDG_CACHE_HOME=/tmp/u97/cache /usr/local/bin/polypkg'
+  profile: '/tmp/u97/profile.yaml'
+
+testcases:
+  - name: apply a profile whose only source sets attestation tier off
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.home}}
+          mkdir -p {{.home}}
+          cat > {{.profile}} <<EOF
+          schema: polypkg.spec/v1
+          name: gateoff
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [native]
+            native:
+              type: polypkg-native
+              url: file://{{.pub}}
+              trust_root: {{.pub}}/trust_root.pub
+              attestation:
+                tier: off
+          packages:
+            user:
+              hello:
+                version: ">=1.0.0"
+          EOF
+          {{.px}} apply --scope user {{.profile}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+          - result.systemerr ShouldContainSubstring "SECURITY"
+          # Single-quoted at the YAML level: the substring carries a "key: value"
+          # colon that would otherwise be read as a YAML mapping indicator.
+          - 'result.systemerr ShouldContainSubstring "gate disabled (tier: off)"'
+
+  - name: the gate-off is recorded in the audit log with discrete fields
+    steps:
+      - type: exec
+        script: 'cat {{.home}}/state/polypkg/audit.log'
+        assertions:
+          - result.code ShouldEqual 0
+          # Venom strips one layer of wrapping quotes but does NOT unescape
+          # backslashes, so the JSON quotes are matched bare (single-quoted at
+          # the YAML level to protect the embedded double quotes and colon).
+          - 'result.systemout ShouldContainSubstring event":"attestation.gate_off'
+          - 'result.systemout ShouldContainSubstring source":"native'
+
+  - name: status and info surface the gate-off so it is never silent
+    steps:
+      - type: exec
+        script: '{{.px}} status -vv'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "attestation gate OFF"
+      - type: exec
+        script: '{{.px}} info hello'
+        assertions:
+          - result.code ShouldEqual 0
+          # Single-quoted at the YAML level to protect the "tier: off" colon.
+          - 'result.systemout ShouldContainSubstring "gate disabled (tier: off"'

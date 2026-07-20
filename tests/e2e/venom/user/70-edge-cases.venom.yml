@@ -1,0 +1,110 @@
+name: Edge cases and remaining verbs
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  home: '/tmp/u70'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: init the sandbox
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: installing a missing package fails clearly
+    steps:
+      - type: exec
+        script: '{{.px}} install no-such-package'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "no-such-package"
+
+  - name: an unsatisfiable version constraint fails for the right reason
+    steps:
+      - type: exec
+        script: '{{.px}} install hello@99.0.0'
+        assertions:
+          - result.code ShouldNotEqual 0
+          # prove it failed on version resolution, not some unrelated error
+          - result.systemerr ShouldContainSubstring "no version matching"
+
+  - name: plan is a dry run that does not apply a generation
+    steps:
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} plan'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring "applied generation"
+
+  - name: generation list errors with a hint pointing at status, the real viewer
+    steps:
+      - type: exec
+        script: '{{.px}} generation list'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "unknown generation subcommand"
+          - result.systemerr ShouldContainSubstring "status -v"
+      - type: exec
+        script: '{{.px}} --format json status'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: double install is idempotent
+    steps:
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "hello"
+
+  - name: remove hello so its state becomes purgeable
+    steps:
+      # purge refuses while a package is still active in the current generation;
+      # it cleans the persistent state left behind AFTER removal.
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} remove hello'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: purge without --yes on a non-TTY aborts rather than hangs
+    steps:
+      - type: exec
+        script: '{{.px}} purge hello </dev/null'
+        assertions:
+          - result.code ShouldNotEqual 0
+          # prove it aborted for lack of confirmation, not e.g. "still active"
+          - result.systemerr ShouldContainSubstring "purge aborted"
+
+  - name: purge --yes removes the removed package's state
+    steps:
+      - type: exec
+        script: '{{.px}} purge hello --yes'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: config reset queues a package's config files for the next apply
+    steps:
+      # goodbye owns an operator-mutable config file (config action), so it has
+      # something resettable; hello (bin only) would error "no resettable config".
+      - type: exec
+        script: '{{.px}} install goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} config reset --package goodbye --yes'
+        assertions:
+          - result.code ShouldEqual 0
