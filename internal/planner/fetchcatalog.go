@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -51,6 +52,9 @@ type FetchResult struct {
 	// §10.9 E-3): expired but within the operator's deadline. Callers surface
 	// it loudly; the anti-rollback serial floor was still enforced.
 	FreshnessGraced []GracedMetadata
+	// NearExpiry lists signed metadata documents that are still valid but within
+	// the operator's near-expiry threshold at fetch time (informational warning).
+	NearExpiry []NearExpiryMetadata
 }
 
 // GracedMetadata records that one signed metadata document was accepted under
@@ -61,6 +65,15 @@ type GracedMetadata struct {
 	Source      string // source name
 	What        string // "index" | "trust document" | "trust bundle" | "revocation list"
 	AcceptUntil string // the accept_expiry_until deadline that admitted it (RFC3339)
+}
+
+// NearExpiryMetadata records that a fetched, still-valid signed document is within
+// the operator's near-expiry threshold — a proactive warning that the publisher
+// should re-sign before consumers begin rejecting it.
+type NearExpiryMetadata struct {
+	Source  string
+	What    string // "revocation list"
+	Expires string // RFC3339
 }
 
 // FetchCatalog fetches and verifies the trust document and signed index for
@@ -137,6 +150,7 @@ func FetchCatalog(ctx context.Context, p *schema.Profile, opts Options) (*FetchR
 	revs := make(map[string]*trust.Revocations, len(fetchSet))
 	bundles := make(map[string]*trust.Bundle, len(fetchSet))
 	var freshnessGraced []GracedMetadata
+	var nearExpiry []NearExpiryMetadata
 	for _, s := range fetchSet {
 		sf, err := fetchOneSource(ctx, s, p.Sources.Sources[s], opts)
 		if err != nil {
@@ -150,6 +164,7 @@ func FetchCatalog(ctx context.Context, p *schema.Profile, opts Options) (*FetchR
 		revs[s] = sf.revocations
 		bundles[s] = sf.bundle
 		freshnessGraced = append(freshnessGraced, sf.graced...)
+		nearExpiry = append(nearExpiry, sf.nearExpiry...)
 	}
 
 	merged, err := resolver.MergeCatalogs(catalogs, p.Sources.Order, pins)
@@ -157,7 +172,7 @@ func FetchCatalog(ctx context.Context, p *schema.Profile, opts Options) (*FetchR
 		return nil, err
 	}
 
-	return &FetchResult{Catalog: merged, Backends: backends, Keyrings: keyrings, SourceURLs: urls, HighWater: high, Revocations: revs, Bundles: bundles, FreshnessGraced: freshnessGraced}, nil
+	return &FetchResult{Catalog: merged, Backends: backends, Keyrings: keyrings, SourceURLs: urls, HighWater: high, Revocations: revs, Bundles: bundles, FreshnessGraced: freshnessGraced, NearExpiry: nearExpiry}, nil
 }
 
 // sourceFetch is the per-source result of fetchOneSource: the verified
@@ -173,6 +188,7 @@ type sourceFetch struct {
 	revocations *trust.Revocations
 	bundle      *trust.Bundle
 	graced      []GracedMetadata
+	nearExpiry  []NearExpiryMetadata
 }
 
 // fetchOneSource fetches and verifies one source's trust document, signed
@@ -212,6 +228,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 
 	acceptUntil := src.AcceptExpiryUntil
 	var graced []GracedMetadata
+	var nearExpiry []NearExpiryMetadata
 
 	var docBytes []byte
 	var docSig string
@@ -337,16 +354,20 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 	revSerial := seen.RevocationSerial
 	var revs *trust.Revocations
 	var revGraced bool
+	var revExpires string
 	rDoc, rSig, rerr := backend.FetchRevocationList(ctx)
 	switch {
 	case rerr == nil:
 		// Narrate only when a revocation list is actually present.
 		opts.progress("verifying revocation list", src.URL)
-		if revs, revSerial, revGraced, err = verifier.LoadRevocationList(rDoc, rSig, seen.RevocationSerial, acceptUntil); err != nil {
+		if revs, revSerial, revGraced, revExpires, err = verifier.LoadRevocationList(rDoc, rSig, seen.RevocationSerial, acceptUntil); err != nil {
 			return nil, fmt.Errorf("verify revocation list: %w", err)
 		}
 		if revGraced {
-			graced = append(graced, GracedMetadata{Source: sourceName, What: "revocation list", AcceptUntil: acceptUntil})
+			graced = append(graced, GracedMetadata{Source: sourceName, What: trust.DocRevocationList, AcceptUntil: acceptUntil})
+		}
+		if n := nearExpiryEntry(sourceName, trust.DocRevocationList, revExpires, opts.RevocationNearExpiry); n != nil {
+			nearExpiry = append(nearExpiry, *n)
 		}
 	case errors.Is(rerr, source.ErrMetadataAbsent):
 		// serial 0 is schema-forbidden for these optional docs (min 1), so a
@@ -373,11 +394,33 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		IndexSerial:        indexSerial,
 		BundleSerial:       bundleSerial,
 		RevocationSerial:   revSerial,
+		RevocationExpires:  revExpires,
 		Packages:           hwm,
 		Graced:             seenGrace,
 		RevokedBuilderKeys: revs.RevokedBuilderKeyIDs(),
 	}); err != nil {
 		return nil, fmt.Errorf("persist trust state: %w", err)
 	}
-	return &sourceFetch{catalog: catalog, backend: backend, keyring: state, highWater: hwm, revocations: revs, bundle: bundle, graced: graced}, nil
+	return &sourceFetch{catalog: catalog, backend: backend, keyring: state, highWater: hwm, revocations: revs, bundle: bundle, graced: graced, nearExpiry: nearExpiry}, nil
+}
+
+// nearExpiryEntry returns a NearExpiryMetadata when a still-valid document (expires
+// in the future) is within window of its expiry. window <= 0 disables the check.
+// A malformed or empty expires yields nil (the fetch path already validated it).
+func nearExpiryEntry(sourceName, what, expires string, window time.Duration) *NearExpiryMetadata {
+	if window <= 0 || expires == "" {
+		return nil
+	}
+	exp, err := time.Parse(time.RFC3339, expires)
+	if err != nil {
+		return nil
+	}
+	now := time.Now()
+	if now.After(exp) { // already expired: not "near" — handled by the expiry/grace path
+		return nil
+	}
+	if now.After(exp.Add(-window)) {
+		return &NearExpiryMetadata{Source: sourceName, What: what, Expires: expires}
+	}
+	return nil
 }

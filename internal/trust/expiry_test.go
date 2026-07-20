@@ -26,13 +26,13 @@ var _ = Describe("CheckExpiry", func() {
 	})
 
 	It("rejects a past expires beyond the skew with the freeze-attack message", func() {
-		_, err := CheckExpiry("index", now.Add(-expirySkew-time.Second).Format(time.RFC3339), "")
+		_, err := CheckExpiry("index", now.Add(-ExpirySkew-time.Second).Format(time.RFC3339), "")
 		Expect(err).To(MatchError(ContainSubstring("index expired at")))
 		Expect(err).To(MatchError(ContainSubstring("stale metadata refused")))
 	})
 
 	It("accepts a past expires within the clock-skew tolerance", func() {
-		_, err := CheckExpiry("index", now.Add(-expirySkew+time.Second).Format(time.RFC3339), "")
+		_, err := CheckExpiry("index", now.Add(-ExpirySkew+time.Second).Format(time.RFC3339), "")
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -47,7 +47,7 @@ var _ = Describe("CheckExpiry", func() {
 	})
 
 	It("grants grace to an expired doc within accept_expiry_until", func() {
-		expired := now.Add(-expirySkew - time.Hour).Format(time.RFC3339)
+		expired := now.Add(-ExpirySkew - time.Hour).Format(time.RFC3339)
 		accept := now.Add(time.Hour).Format(time.RFC3339)
 		graced, err := CheckExpiry("index", expired, accept)
 		Expect(err).NotTo(HaveOccurred())
@@ -55,7 +55,7 @@ var _ = Describe("CheckExpiry", func() {
 	})
 
 	It("still refuses an expired doc past accept_expiry_until", func() {
-		expired := now.Add(-expirySkew - 2*time.Hour).Format(time.RFC3339)
+		expired := now.Add(-ExpirySkew - 2*time.Hour).Format(time.RFC3339)
 		accept := now.Add(-time.Hour).Format(time.RFC3339) // ceiling already passed
 		graced, err := CheckExpiry("index", expired, accept)
 		Expect(err).To(HaveOccurred())
@@ -71,14 +71,14 @@ var _ = Describe("CheckExpiry", func() {
 	})
 
 	It("ignores an unparseable accept_expiry_until (fail closed to refusal)", func() {
-		expired := now.Add(-expirySkew - time.Hour).Format(time.RFC3339)
+		expired := now.Add(-ExpirySkew - time.Hour).Format(time.RFC3339)
 		graced, err := CheckExpiry("index", expired, "not-a-date")
 		Expect(err).To(HaveOccurred(), "a malformed ceiling must NOT grant infinite grace")
 		Expect(graced).To(BeFalse())
 	})
 
 	It("empty accept_expiry_until means no grace (today's behavior)", func() {
-		expired := now.Add(-expirySkew - time.Second).Format(time.RFC3339)
+		expired := now.Add(-ExpirySkew - time.Second).Format(time.RFC3339)
 		graced, err := CheckExpiry("index", expired, "")
 		Expect(err).To(HaveOccurred())
 		Expect(graced).To(BeFalse())

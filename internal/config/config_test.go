@@ -3,9 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/trevor-vaughan/polypkg/internal/gc"
 )
 
 var _ = Describe("Load", func() {
@@ -56,3 +58,17 @@ var _ = Describe("Load", func() {
 		Expect(cfg.GetString("lock.contention")).To(Equal("wait-timeout"))
 	})
 })
+
+func TestNearExpiryThresholdDefaultParses(t *testing.T) {
+	v, err := Load(Options{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := v.GetString("revocation.near_expiry_threshold")
+	if got != "14d" {
+		t.Fatalf("default = %q, want %q", got, "14d")
+	}
+	if _, err := gc.ParseAge(got); err != nil {
+		t.Fatalf("default %q not parseable by gc.ParseAge: %v", got, err)
+	}
+}

@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/trevor-vaughan/polypkg/internal/config"
+	"github.com/trevor-vaughan/polypkg/internal/gc"
 	"github.com/trevor-vaughan/polypkg/internal/paths"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/substrate"
@@ -147,19 +149,43 @@ func scopeNamesStr(p *schema.Profile) string {
 // yields the gate's default (true), so a fresh prefix / a host without
 // /etc/polypkg is default-on, consistent with user scope.
 func scopeConfigEnabled(scope, prefix, key string) (bool, error) {
-	var configDir string
-	if scope == "system" {
-		configDir = filepath.Join(prefix, paths.SystemConfigDir())
-	} else {
-		h, err := paths.UserConfigHome()
-		if err != nil {
-			return false, err
-		}
-		configDir = h
+	configDir, err := scopeConfigDirWithPrefix(scope, prefix)
+	if err != nil {
+		return false, err
 	}
 	v, err := config.Load(config.Options{ConfigPaths: []string{configDir}, EnvPrefix: "POLYPKG"})
 	if err != nil {
 		return false, err
 	}
 	return v.GetBool(key), nil
+}
+
+// scopeConfigDirWithPrefix resolves the scope-appropriate config directory,
+// honoring a DESTDIR prefix: system uses <prefix>/<SystemConfigDir>; user uses
+// UserConfigHome. It differs from scopeConfigDir (init) in that it applies the
+// system-scope prefix, matching how apply/plan redirect every system read.
+func scopeConfigDirWithPrefix(scope, prefix string) (string, error) {
+	if scope == "system" {
+		return filepath.Join(prefix, paths.SystemConfigDir()), nil
+	}
+	return paths.UserConfigHome()
+}
+
+// scopeNearExpiryThreshold reads revocation.near_expiry_threshold for the scope and
+// parses it via gc.ParseAge. An unparseable value is a hard error (fail-closed,
+// matching how retention.age is handled).
+func scopeNearExpiryThreshold(scope, prefix string) (time.Duration, error) {
+	configDir, err := scopeConfigDirWithPrefix(scope, prefix)
+	if err != nil {
+		return 0, err
+	}
+	v, err := config.Load(config.Options{ConfigPaths: []string{configDir}, EnvPrefix: "POLYPKG"})
+	if err != nil {
+		return 0, err
+	}
+	d, err := gc.ParseAge(v.GetString("revocation.near_expiry_threshold"))
+	if err != nil {
+		return 0, fmt.Errorf("revocation.near_expiry_threshold: %w", err)
+	}
+	return d, nil
 }

@@ -77,6 +77,9 @@ type Options struct {
 	// it to refuse a provenance regression. Populated by the CLI from the
 	// substrate; nil disables the floor.
 	PriorManifest *schema.Manifest
+	// RevocationNearExpiry is the window before a revocation list's expiry within
+	// which fetch emits a proactive near-expiry warning. Zero disables the warning.
+	RevocationNearExpiry time.Duration
 }
 
 // progress calls opts.Progress when it is non-nil. Defined as a method so
@@ -113,6 +116,9 @@ type Result struct {
 	// SECURITY line and (on apply) a metadata.expiry_graced audit event. The
 	// anti-rollback serial floor was still enforced.
 	FreshnessGraced []GracedMetadata
+	// NearExpiry lists still-valid signed documents within the near-expiry window
+	// at fetch, for the CLI to warn on.
+	NearExpiry []NearExpiryMetadata
 }
 
 // GateDisabledEntry identifies one package installed with its source's
@@ -155,6 +161,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 	var suggests []resolver.Suggestion
 	var fr *FetchResult
 	var freshnessGraced []GracedMetadata
+	var nearExpiry []NearExpiryMetadata
 
 	if len(reqs) > 0 {
 		var err error
@@ -163,6 +170,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 			return nil, err
 		}
 		freshnessGraced = fr.FreshnessGraced
+		nearExpiry = fr.NearExpiry
 		opts.progress("resolving", "")
 		rr, err := resolver.ResolveWithWeak(reqs, fr.Catalog, opts.WeakPolicy)
 		if err != nil {
@@ -392,7 +400,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		return nil, fmt.Errorf("project ownership: %w", err)
 	}
 
-	return &Result{Manifest: m, Entries: entries, Ownership: own, Skipped: skipped, Suggests: suggests, AttestationWarnings: attWarnings, AttestationGateDisabled: gateDisabled, FreshnessGraced: freshnessGraced}, nil
+	return &Result{Manifest: m, Entries: entries, Ownership: own, Skipped: skipped, Suggests: suggests, AttestationWarnings: attWarnings, AttestationGateDisabled: gateDisabled, FreshnessGraced: freshnessGraced, NearExpiry: nearExpiry}, nil
 }
 
 // verifyArtifact runs the full artifact verification chain over data: the

@@ -148,23 +148,23 @@ type Revocations struct {
 	atts map[string]struct{}
 }
 
-func (v *minisignVerifier) LoadRevocationList(doc []byte, sig string, lastSerial uint64, acceptUntil string) (revocations *Revocations, serial uint64, graced bool, err error) {
+func (v *minisignVerifier) LoadRevocationList(doc []byte, sig string, lastSerial uint64, acceptUntil string) (revocations *Revocations, serial uint64, graced bool, expires string, err error) {
 	if err := Verify(v.anchorPub, doc, sig); err != nil {
-		return nil, 0, false, fmt.Errorf("revocation list signature: %w", err)
+		return nil, 0, false, "", fmt.Errorf("revocation list signature: %w", err)
 	}
 	rl, err := schema.ParseRevocationList(bytes.NewReader(doc))
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("parse revocation list: %w", err)
+		return nil, 0, false, "", fmt.Errorf("parse revocation list: %w", err)
 	}
 	if rl.Source != v.source {
-		return nil, 0, false, fmt.Errorf("revocation list is for source %q, expected %q", rl.Source, v.source)
+		return nil, 0, false, "", fmt.Errorf("revocation list is for source %q, expected %q", rl.Source, v.source)
 	}
 	graced, err = CheckExpiry("revocation list", rl.Expires, acceptUntil)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, "", err
 	}
 	if rl.Serial < lastSerial {
-		return nil, 0, false, fmt.Errorf("revocation list rollback: serial %d is below last-seen %d", rl.Serial, lastSerial)
+		return nil, 0, false, "", fmt.Errorf("revocation list rollback: serial %d is below last-seen %d", rl.Serial, lastSerial)
 	}
 	r := &Revocations{keys: map[string]struct{}{}, atts: map[string]struct{}{}}
 	for _, k := range rl.RevokedBuilderKeys {
@@ -173,7 +173,7 @@ func (v *minisignVerifier) LoadRevocationList(doc []byte, sig string, lastSerial
 	for _, a := range rl.RevokedAttestations {
 		r.atts[a] = struct{}{}
 	}
-	return r, rl.Serial, graced, nil
+	return r, rl.Serial, graced, rl.Expires, nil
 }
 
 // IsBuilderKeyRevoked reports whether the given builder key_id is revoked.

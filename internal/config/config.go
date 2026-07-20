@@ -71,6 +71,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("lock.stale_age_threshold", "24h")
 	v.SetDefault("retention.count", 5)
 	v.SetDefault("retention.age", "30d")
+	v.SetDefault("revocation.near_expiry_threshold", "14d")
 	v.SetDefault("audit.sinks.file.enabled", true)
 	v.SetDefault("audit.sinks.journald.enabled", true)
 	v.SetDefault("bridge.enabled", true)

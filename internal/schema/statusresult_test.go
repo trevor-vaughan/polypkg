@@ -64,6 +64,18 @@ var _ = Describe("StatusResult", func() {
 		Expect(sr.RevokedBuilders[0].KeyID).To(Equal("builder-a"))
 	})
 
+	It("round-trips a status result carrying revocation_freshness", func() {
+		const j = `{"schema":"polypkg.status/v1","retained":[],` +
+			`"revocation_freshness":[{"source":"acme","expires":"2026-07-01T00:00:00Z","state":"expired","acknowledged":false}]}`
+		sr, err := ParseStatusResult(strings.NewReader(j))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sr.RevocationFreshness).To(HaveLen(1))
+		Expect(sr.RevocationFreshness[0].Source).To(Equal("acme"))
+		Expect(sr.RevocationFreshness[0].Expires).To(Equal("2026-07-01T00:00:00Z"))
+		Expect(sr.RevocationFreshness[0].State).To(Equal("expired"))
+		Expect(sr.RevocationFreshness[0].Acknowledged).To(BeFalse())
+	})
+
 	It("rejects bad schema version", func() {
 		bad := []byte(`{"schema":"polypkg.status/v0","retained":[]}`)
 		_, err := ParseStatusResult(bytes.NewReader(bad))

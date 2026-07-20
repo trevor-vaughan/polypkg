@@ -18,6 +18,11 @@ type SeenGrace struct {
 	Docs        []string `json:"docs"`
 }
 
+// DocRevocationList is the SeenGrace.Docs / GracedMetadata label for a source's
+// revocation list. Shared because status's grace-acknowledgement match gates an
+// exit code — a divergent literal would silently misfire it.
+const DocRevocationList = "revocation list"
+
 // Seen records the highest trust- and index-document serials observed for a
 // source, persisted so a later run can refuse a rolled-back document.
 type Seen struct {
@@ -44,6 +49,12 @@ type Seen struct {
 	// the last fetch saw no revocation list or no revoked keys — StoreSeen
 	// overwrites the whole file, so a later fetch with none clears it.
 	RevokedBuilderKeys []string `json:"revoked_builder_keys,omitempty"`
+	// RevocationExpires is the RFC3339 expires of the revocation list seen at the
+	// last fetch of this source. Informational, offline-readable state for
+	// `status`; NEVER consulted by the anti-rollback serial floors. Empty/absent
+	// when the last fetch saw no revocation list — StoreSeen overwrites the whole
+	// file, so a later fetch with none clears it.
+	RevocationExpires string `json:"revocation_expires,omitempty"`
 }
 
 // seenPath is the per-source state file. filepath.Base on the source name keeps

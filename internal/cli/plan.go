@@ -90,6 +90,10 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 	if err != nil {
 		return err
 	}
+	nearExpiry, nerr := scopeNearExpiryThreshold(scope, prefix)
+	if nerr != nil {
+		return &StatusError{Code: 1, Msg: nerr.Error()}
+	}
 	dataHome, stateHome, err := scopeHomes(scope, prefix)
 	if err != nil {
 		return err
@@ -163,9 +167,10 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 			MaxMemoryBytes: rl.MaxMemoryBytes,
 			MaxOutputBytes: rl.MaxOutputBytes,
 		},
-		BaselineActiveRoot: activeRoot, // "" when oerr != nil; projection keeps the placeholder
-		AttestationPolicy:  attestationPolicy(p),
-		PriorManifest:      priorManifest,
+		BaselineActiveRoot:   activeRoot, // "" when oerr != nil; projection keeps the placeholder
+		AttestationPolicy:    attestationPolicy(p),
+		PriorManifest:        priorManifest,
+		RevocationNearExpiry: nearExpiry,
 	})
 	if err != nil {
 		return planExecError(err)
@@ -178,6 +183,9 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 	}
 	for _, g := range res.FreshnessGraced {
 		fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: %s %s metadata expired — would install under grace until %s (freshness relaxed; anti-rollback still enforced)\n", g.Source, g.What, g.AcceptUntil)
+	}
+	for _, n := range res.NearExpiry {
+		fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s %s expires %s (within near-expiry window) — publisher should re-sign\n", n.Source, n.What, n.Expires)
 	}
 
 	if conflicts := conflict.Detect(res.Ownership.Entries); len(conflicts) > 0 {

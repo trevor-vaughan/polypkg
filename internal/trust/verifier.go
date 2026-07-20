@@ -90,8 +90,9 @@ type Verifier interface {
 	LoadBundle(doc []byte, sig string, lastSerial uint64, acceptUntil string) (*Bundle, uint64, bool, error)
 	// LoadRevocationList verifies the revocation list under the anchor, enforces
 	// freshness (with grace) before the serial floor lastSerial, and returns the
-	// queryable revocations, its serial, and whether freshness was graced.
-	LoadRevocationList(doc []byte, sig string, lastSerial uint64, acceptUntil string) (*Revocations, uint64, bool, error)
+	// queryable revocations, its serial, whether freshness was graced, and the
+	// list's RFC3339 expires (for the caller to persist as informational state).
+	LoadRevocationList(doc []byte, sig string, lastSerial uint64, acceptUntil string) (*Revocations, uint64, bool, string, error)
 }
 
 // NewVerifier returns the trust Verifier for the given source backend type,
