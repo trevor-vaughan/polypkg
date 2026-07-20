@@ -24,6 +24,8 @@ type StatusResult struct {
 	FreshnessGrace []StatusGraceEntry `json:"freshness_grace,omitempty"`
 
 	RevokedBuilders []StatusRevokedBuilder `json:"revoked_builders,omitempty"`
+
+	RevocationFreshness []StatusRevocationFreshness `json:"revocation_freshness,omitempty"`
 }
 
 // StatusCurrentGen describes the active generation.
@@ -68,6 +70,18 @@ type StatusRevokedBuilder struct {
 	Package string `json:"package"`
 	Version string `json:"version"`
 	KeyID   string `json:"key_id"`
+}
+
+// StatusRevocationFreshness reports the freshness posture of one source's enforced
+// revocation list, computed offline at status time from the expires recorded at the
+// last fetch. State is "near_expiry" or "expired". Acknowledged is meaningful only
+// when State is "expired": the operator's accept_expiry_until grace window still
+// covers it, so it does not fail the command.
+type StatusRevocationFreshness struct {
+	Source       string `json:"source"`
+	Expires      string `json:"expires"`
+	State        string `json:"state"`
+	Acknowledged bool   `json:"acknowledged"`
 }
 
 // ParseStatusResult reads a JSON status result from r, validates against

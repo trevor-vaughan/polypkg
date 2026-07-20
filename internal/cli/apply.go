@@ -206,6 +206,10 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 	if err != nil {
 		return nil, err
 	}
+	nearExpiry, nerr := scopeNearExpiryThreshold(scope, prefix)
+	if nerr != nil {
+		return nil, nerr
+	}
 	dataHome, stateHome, err := scopeHomes(scope, prefix)
 	if err != nil {
 		return nil, err
@@ -272,15 +276,16 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 	}
 
 	planRes, err := planner.Plan(ctx, p, planner.Options{
-		DataHome:          dataHome,
-		StateHome:         stateHome,
-		AuditWriter:       w,
-		Scope:             scope,
-		WeakPolicy:        weakPolicy,
-		StarlarkLimits:    starlarkLimits,
-		Progress:          prog.Update,
-		AttestationPolicy: attestationPolicy(p),
-		PriorManifest:     priorManifest,
+		DataHome:             dataHome,
+		StateHome:            stateHome,
+		AuditWriter:          w,
+		Scope:                scope,
+		WeakPolicy:           weakPolicy,
+		StarlarkLimits:       starlarkLimits,
+		Progress:             prog.Update,
+		AttestationPolicy:    attestationPolicy(p),
+		PriorManifest:        priorManifest,
+		RevocationNearExpiry: nearExpiry,
 	})
 	if err != nil {
 		return nil, planExecError(err)
@@ -301,6 +306,9 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 			Scope: scope, TxID: "apply", Event: "metadata.expiry_graced",
 			Fields: map[string]any{"source": g.Source, "metadata": g.What, "accept_expiry_until": g.AcceptUntil},
 		})
+	}
+	for _, n := range planRes.NearExpiry {
+		fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s %s expires %s (within near-expiry window) — publisher should re-sign\n", n.Source, n.What, n.Expires)
 	}
 	entries := planRes.Entries
 

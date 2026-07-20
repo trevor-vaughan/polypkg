@@ -312,7 +312,7 @@ var _ = Describe("LoadRevocationList", func() {
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "native", 3, "2099-01-01T00:00:00Z",
 			[]string{"builder-a"}, []string{"blake3:deadbeef"})
-		r, serial, _, err := v.LoadRevocationList(doc, sig, 0, "")
+		r, serial, _, _, err := v.LoadRevocationList(doc, sig, 0, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(serial).To(Equal(uint64(3)))
 		Expect(r.IsBuilderKeyRevoked("builder-a")).To(BeTrue())
@@ -328,7 +328,7 @@ var _ = Describe("LoadRevocationList", func() {
 		Expect(err).NotTo(HaveOccurred())
 		doc, _ := revJSON(anchor, "native", 1, "2099-01-01T00:00:00Z", nil, nil)
 		_, wrongSig := revJSON(other, "native", 1, "2099-01-01T00:00:00Z", nil, nil)
-		_, _, _, err = v.LoadRevocationList(doc, wrongSig, 0, "")
+		_, _, _, _, err = v.LoadRevocationList(doc, wrongSig, 0, "")
 		Expect(err).To(MatchError(ContainSubstring("revocation list signature")))
 	})
 
@@ -337,7 +337,7 @@ var _ = Describe("LoadRevocationList", func() {
 		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "other", 1, "2099-01-01T00:00:00Z", nil, nil)
-		_, _, _, err = v.LoadRevocationList(doc, sig, 0, "")
+		_, _, _, _, err = v.LoadRevocationList(doc, sig, 0, "")
 		Expect(err).To(MatchError(ContainSubstring(`revocation list is for source "other", expected "native"`)))
 	})
 
@@ -346,7 +346,7 @@ var _ = Describe("LoadRevocationList", func() {
 		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "native", 1, "2020-01-01T00:00:00Z", nil, nil)
-		_, _, _, err = v.LoadRevocationList(doc, sig, 6, "")
+		_, _, _, _, err = v.LoadRevocationList(doc, sig, 6, "")
 		Expect(err).To(MatchError(ContainSubstring("revocation list expired at")))
 		Expect(err.Error()).NotTo(ContainSubstring("rollback"))
 	})
@@ -356,7 +356,7 @@ var _ = Describe("LoadRevocationList", func() {
 		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "native", 2, "2099-01-01T00:00:00Z", nil, nil)
-		_, _, _, err = v.LoadRevocationList(doc, sig, 5, "")
+		_, _, _, _, err = v.LoadRevocationList(doc, sig, 5, "")
 		Expect(err).To(MatchError(ContainSubstring("revocation list rollback: serial 2 is below last-seen 5")))
 	})
 
@@ -366,7 +366,7 @@ var _ = Describe("LoadRevocationList", func() {
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "native", 3, "2020-01-01T00:00:00Z", nil, nil)
 		accept := timeNow().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-		_, serial, graced, err := v.LoadRevocationList(doc, sig, 0, accept)
+		_, serial, graced, _, err := v.LoadRevocationList(doc, sig, 0, accept)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(serial).To(Equal(uint64(3)))
 		Expect(graced).To(BeTrue())
@@ -380,9 +380,20 @@ var _ = Describe("LoadRevocationList", func() {
 		// grace must not admit it as a rollback.
 		doc, sig := revJSON(anchor, "native", 1, "2020-01-01T00:00:00Z", nil, nil)
 		accept := timeNow().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-		_, _, graced, err := v.LoadRevocationList(doc, sig, 5, accept)
+		_, _, graced, _, err := v.LoadRevocationList(doc, sig, 5, accept)
 		Expect(err).To(MatchError(ContainSubstring("rollback")))
 		Expect(graced).To(BeFalse())
+	})
+
+	It("returns the list's expires for the caller to persist", func() {
+		const wantExp = "2026-09-01T00:00:00Z"
+		anchor := newTKey()
+		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
+		Expect(err).NotTo(HaveOccurred())
+		doc, sig := revJSON(anchor, "native", 3, wantExp, nil, nil)
+		_, _, _, gotExp, err := v.LoadRevocationList(doc, sig, 0, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gotExp).To(Equal(wantExp))
 	})
 
 	It("rejects a revocation list with serial 0 (serial 0 is reserved for never-seen)", func() {
@@ -390,7 +401,7 @@ var _ = Describe("LoadRevocationList", func() {
 		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
 		Expect(err).NotTo(HaveOccurred())
 		doc, sig := revJSON(anchor, "native", 0, "2099-01-01T00:00:00Z", nil, nil)
-		_, _, _, err = v.LoadRevocationList(doc, sig, 0, "")
+		_, _, _, _, err = v.LoadRevocationList(doc, sig, 0, "")
 		Expect(err).To(HaveOccurred())
 	})
 })

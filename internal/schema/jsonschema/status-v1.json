@@ -67,6 +67,20 @@
           "key_id":  { "type": "string" }
         }
       }
+    },
+    "revocation_freshness": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "expires", "state", "acknowledged"],
+        "additionalProperties": false,
+        "properties": {
+          "source":       { "type": "string" },
+          "expires":      { "type": "string" },
+          "state":        { "type": "string", "enum": ["near_expiry", "expired"] },
+          "acknowledged": { "type": "boolean" }
+        }
+      }
     }
   }
 }

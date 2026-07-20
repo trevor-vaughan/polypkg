@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -127,6 +128,17 @@ var _ = Describe("resolveScope", func() {
 		Expect(c.ParseFlags([]string{"--scope", "bogus"})).To(Succeed())
 		_, _, err := resolveScope(c, profile(""))
 		Expect(err).To(MatchError(ContainSubstring("invalid --scope")))
+	})
+})
+
+var _ = Describe("scopeNearExpiryThreshold", func() {
+	It("returns the 14d viper default when no config file is present", func() {
+		// UserConfigHome resolves from XDG_CONFIG_HOME; an empty temp dir has no
+		// config file, so the helper must fall back to the viper default 14d.
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		d, err := scopeNearExpiryThreshold("user", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d).To(Equal(14 * 24 * time.Hour))
 	})
 })
 

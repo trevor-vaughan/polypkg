@@ -290,6 +290,37 @@ var _ = Describe("FetchCatalog trust bundle + revocation list (2c-0)", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("flags a still-valid revocation list within the near-expiry window and persists its expires", func() {
+		repoDir, kp, prof, opts := newHarness()
+		soon := time.Now().Add(3 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		writeRevocations(repoDir, kp, src, 1, soon, nil)
+		opts.RevocationNearExpiry = 14 * 24 * time.Hour
+		fr, err := planner.FetchCatalog(GinkgoT().Context(), prof, opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fr.NearExpiry).To(HaveLen(1))
+		Expect(fr.NearExpiry[0]).To(And(
+			HaveField("Source", Equal(src)),
+			HaveField("What", Equal("revocation list")),
+			HaveField("Expires", Equal(soon)),
+		))
+		seen, err := trust.LoadSeen(opts.StateHome, src)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen.RevocationExpires).To(Equal(soon))
+	})
+
+	It("does not flag a comfortably-fresh revocation list but still persists its expires", func() {
+		repoDir, kp, prof, opts := newHarness()
+		later := time.Now().Add(90 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		writeRevocations(repoDir, kp, src, 1, later, nil)
+		opts.RevocationNearExpiry = 14 * 24 * time.Hour
+		fr, err := planner.FetchCatalog(GinkgoT().Context(), prof, opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fr.NearExpiry).To(BeEmpty())
+		seen, err := trust.LoadSeen(opts.StateHome, src)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen.RevocationExpires).To(Equal(later))
+	})
+
 	It("keeps a present bundle on FetchResult.Bundles", func() {
 		repoDir, kp, prof, opts := newHarness()
 		writeBundle(repoDir, kp, src, 3, far)

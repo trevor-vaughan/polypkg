@@ -128,7 +128,7 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 	switch {
 	case rerr == nil:
 		var rGraced bool
-		revocations, _, rGraced, err = verifier.LoadRevocationList(rDoc, rSig, 0, opts.AcceptExpiryUntil)
+		revocations, _, rGraced, _, err = verifier.LoadRevocationList(rDoc, rSig, 0, opts.AcceptExpiryUntil)
 		if err != nil {
 			return nil, fmt.Errorf("verify revocation list: %w", err)
 		}

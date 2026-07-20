@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// expirySkew bounds acceptable consumer clock drift when enforcing metadata
+// ExpirySkew bounds acceptable consumer clock drift when enforcing metadata
 // expiry (D13). Rejection triggers only when now exceeds expires by more than
 // this tolerance.
-const expirySkew = 5 * time.Minute
+const ExpirySkew = 5 * time.Minute
 
 // timeNow is indirected for tests.
 var timeNow = time.Now
@@ -44,7 +44,7 @@ func CheckExpiry(what, expires, acceptUntil string) (graced bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("%s expires %q is not RFC3339: %w", what, expires, err)
 	}
-	if !timeNow().After(t.Add(expirySkew)) {
+	if !timeNow().After(t.Add(ExpirySkew)) {
 		return false, nil // still fresh
 	}
 	// Expired. Grace only if the operator set a valid ceiling and we are at or

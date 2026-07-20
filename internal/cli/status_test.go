@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
 // makeStatusWeakState writes generation-1 substrate state whose manifest
@@ -318,6 +320,65 @@ var _ = Describe("status command", func() {
 		Expect(out.String()).NotTo(ContainSubstring("revoked builders:"))
 	})
 })
+
+func writeSeenForTest(t *testing.T, stateHome, source string, s trust.Seen) {
+	t.Helper()
+	if err := trust.StoreSeen(stateHome, source, s); err != nil {
+		t.Fatalf("StoreSeen(%s): %v", source, err)
+	}
+}
+
+func TestCollectRevocationFreshnessClassifies(t *testing.T) {
+	stateHome := t.TempDir()
+	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	rfc := func(tm time.Time) string { return tm.UTC().Format(time.RFC3339) }
+	writeSeenForTest(t, stateHome, "fresh", trust.Seen{RevocationSerial: 1, RevocationExpires: rfc(now.Add(90 * 24 * time.Hour))})
+	writeSeenForTest(t, stateHome, "near", trust.Seen{RevocationSerial: 1, RevocationExpires: rfc(now.Add(3 * 24 * time.Hour))})
+	writeSeenForTest(t, stateHome, "exp-unack", trust.Seen{RevocationSerial: 1, RevocationExpires: rfc(now.Add(-10 * 24 * time.Hour))})
+	writeSeenForTest(t, stateHome, "exp-ack", trust.Seen{
+		RevocationSerial: 1, RevocationExpires: rfc(now.Add(-10 * 24 * time.Hour)),
+		Graced: &trust.SeenGrace{AcceptUntil: rfc(now.Add(30 * 24 * time.Hour)), Docs: []string{trust.DocRevocationList}},
+	})
+	// Defensive branches: never-fetched (empty expires) and malformed expires are
+	// both skipped silently rather than erroring.
+	writeSeenForTest(t, stateHome, "no-rev", trust.Seen{RevocationSerial: 1})
+	writeSeenForTest(t, stateHome, "bad-rev", trust.Seen{RevocationSerial: 1, RevocationExpires: "garbage"})
+	// A near-expiry source that is ALSO graced must NOT pick up acknowledgement:
+	// the grace gate is scoped to expired entries only.
+	writeSeenForTest(t, stateHome, "near-graced", trust.Seen{
+		RevocationSerial: 1, RevocationExpires: rfc(now.Add(3 * 24 * time.Hour)),
+		Graced: &trust.SeenGrace{AcceptUntil: rfc(now.Add(30 * 24 * time.Hour)), Docs: []string{trust.DocRevocationList}},
+	})
+	got, err := collectRevocationFreshness(stateHome, 14*24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("collectRevocationFreshness: %v", err)
+	}
+	bySrc := map[string]schema.StatusRevocationFreshness{}
+	for _, e := range got {
+		bySrc[e.Source] = e
+	}
+	if _, ok := bySrc["fresh"]; ok {
+		t.Fatalf("fresh should be omitted: %+v", bySrc["fresh"])
+	}
+	if _, ok := bySrc["no-rev"]; ok {
+		t.Fatalf("empty RevocationExpires should be omitted: %+v", bySrc["no-rev"])
+	}
+	if _, ok := bySrc["bad-rev"]; ok {
+		t.Fatalf("malformed RevocationExpires should be omitted: %+v", bySrc["bad-rev"])
+	}
+	if bySrc["near"].State != "near_expiry" {
+		t.Fatalf("near.State = %q", bySrc["near"].State)
+	}
+	if e := bySrc["near-graced"]; e.State != "near_expiry" || e.Acknowledged {
+		t.Fatalf("near-graced must be near_expiry and unacknowledged: %+v", e)
+	}
+	if e := bySrc["exp-unack"]; e.State != "expired" || e.Acknowledged {
+		t.Fatalf("exp-unack = %+v", e)
+	}
+	if e := bySrc["exp-ack"]; e.State != "expired" || !e.Acknowledged {
+		t.Fatalf("exp-ack = %+v", e)
+	}
+}
 
 func TestAttestationTagGateOffAndCarriedTiers(t *testing.T) {
 	// gate-off is prominent

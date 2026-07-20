@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,9 +26,10 @@ func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show retained generations, drift, and GC preview",
-		Long: "Default verbosity prints a one-line summary (generation, retention, drift, any freshness-grace count, and any revoked-builder count). " +
-			"-v adds per-generation listing and freshness-grace detail; -vv adds drift detail and per-package attestation/revoked-builder tags; -vvv adds GC preview. " +
+		Long: "Default verbosity prints a one-line summary (generation, retention, drift, any freshness-grace count, any revoked-builder count, and any revocation-data expired/expiring-soon count). " +
+			"-v adds per-generation listing, freshness-grace detail, and a revocation freshness section (each non-fresh source's expires with an [EXPIRED … ago] or [expiring in …] tag, plus [grace acknowledged] when an open grace window still covers an expired list); -vv adds drift detail and per-package attestation/revoked-builder tags; -vvv adds GC preview. " +
 			"Exits 3 when an installed package's builder key has been revoked (as of the last fetch). " +
+			"Exits 4 when an installed source's enforced revocation list is expired and not covered by an open accept_expiry_until grace window; the revoked-builder exit 3 takes precedence when both apply. " +
 			"Under --format json the full StatusResult schema is always emitted and verbosity flags are ignored.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -111,6 +113,20 @@ func runStatus(cmd *cobra.Command, format Format, verbosity int) error {
 		}
 	}
 
+	var revFresh []schema.StatusRevocationFreshness
+	if sherr == nil {
+		threshold, terr := scopeNearExpiryThreshold("user", "")
+		if terr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v (using 14d default)\n", terr)
+			threshold = 14 * 24 * time.Hour
+		}
+		if rf, rferr := collectRevocationFreshness(stateHome, threshold, time.Now()); rferr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: revocation-freshness inspect failed: %v\n", rferr)
+		} else {
+			revFresh = rf
+		}
+	}
+
 	// GC preview uses the user-scope defaults (5 / 30d), matching the default
 	// retention applied by opportunistic GC when a profile specifies none.
 	policy := gc.Policy{Count: 5, Age: 30 * 24 * time.Hour}
@@ -136,14 +152,19 @@ func runStatus(cmd *cobra.Command, format Format, verbosity int) error {
 	revoked := collectRevokedBuilders(curManifest, revokedKeys)
 
 	if format == FormatJSON {
-		if err := emitStatusJSON(cmd.OutOrStdout(), cur, gens, driftEntries, decision, grace, revoked); err != nil {
+		if err := emitStatusJSON(cmd.OutOrStdout(), cur, gens, driftEntries, decision, grace, revoked, revFresh); err != nil {
 			return err
 		}
 	} else {
-		emitStatusText(cmd.OutOrStdout(), verbosity, cur, gens, driftEntries, decision, curManifest, grace, revoked)
+		emitStatusText(cmd.OutOrStdout(), verbosity, cur, gens, driftEntries, decision, curManifest, grace, revoked, revFresh)
 	}
 	if len(revoked) > 0 {
 		return &StatusError{Code: 3, Quiet: true, Msg: "revoked builder key(s) on installed package(s)"}
+	}
+	for i := range revFresh {
+		if revFresh[i].State == "expired" && !revFresh[i].Acknowledged {
+			return &StatusError{Code: 4, Quiet: true, Msg: "revocation data expired for installed source(s)"}
+		}
 	}
 	return nil
 }
@@ -236,6 +257,63 @@ func collectRevokedKeys(stateHome string) (map[string]struct{}, error) {
 	return out, nil
 }
 
+// collectRevocationFreshness classifies each source's enforced revocation list by the
+// freshness of its last-fetched expires. threshold is the near-expiry window; now is
+// passed for testability. Sources that never saw a revocation list
+// (RevocationExpires == "") are skipped, as are ones with a comfortable margin. The
+// expired boundary reuses trust.ExpirySkew so it matches the fetch path. Sorted by source.
+func collectRevocationFreshness(stateHome string, threshold time.Duration, now time.Time) ([]schema.StatusRevocationFreshness, error) {
+	sources, err := trust.ListSeenSources(stateHome)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]schema.StatusRevocationFreshness, 0, len(sources))
+	for _, source := range sources {
+		seen, lerr := trust.LoadSeen(stateHome, source)
+		if lerr != nil {
+			return nil, fmt.Errorf("read revocation freshness for source %s: %w", source, lerr)
+		}
+		if seen.RevocationExpires == "" {
+			continue
+		}
+		exp, perr := time.Parse(time.RFC3339, seen.RevocationExpires)
+		if perr != nil {
+			continue // defensive: fetch already validated it
+		}
+		var state string
+		switch {
+		case now.After(exp.Add(trust.ExpirySkew)):
+			state = "expired"
+		case now.After(exp.Add(-threshold)):
+			state = "near_expiry"
+		default:
+			continue // fresh
+		}
+		entry := schema.StatusRevocationFreshness{Source: source, Expires: seen.RevocationExpires, State: state}
+		if state == "expired" {
+			entry.Acknowledged = revocationGraceAcknowledged(seen, now)
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
+	return out, nil
+}
+
+// revocationGraceAcknowledged reports whether an expired revocation list is covered by an
+// OPEN operator grace window at status time: the last fetch graced the "revocation list"
+// doc AND the accept_expiry_until deadline has not itself passed. Acknowledged expiry is
+// informational and does not drive exit 4.
+func revocationGraceAcknowledged(seen trust.Seen, now time.Time) bool {
+	if seen.Graced == nil || !slices.Contains(seen.Graced.Docs, trust.DocRevocationList) {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, seen.Graced.AcceptUntil)
+	if err != nil {
+		return false
+	}
+	return !now.After(t)
+}
+
 // collectRevokedBuilders returns the installed packages whose builder-verified
 // binding was signed by a now-revoked builder key. De-duped per (package,
 // version, key) and sorted for deterministic output. A nil manifest or empty
@@ -293,7 +371,7 @@ func revokedKeyIDsFor(revoked []schema.StatusRevokedBuilder, name, version strin
 
 func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 	drifted []schema.PlanDriftEntry, dec gc.Decision, grace []schema.StatusGraceEntry,
-	revoked []schema.StatusRevokedBuilder) error {
+	revoked []schema.StatusRevokedBuilder, revFresh []schema.StatusRevocationFreshness) error {
 	sr := &schema.StatusResult{
 		Schema:   "polypkg.status/v1",
 		Current:  &schema.StatusCurrentGen{Generation: cur},
@@ -303,8 +381,9 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 			WouldRemove: dec.Remove,
 			WouldKeep:   dec.Keep,
 		},
-		FreshnessGrace:  grace,
-		RevokedBuilders: revoked,
+		FreshnessGrace:      grace,
+		RevokedBuilders:     revoked,
+		RevocationFreshness: revFresh,
 	}
 	for i := range gens {
 		g := &gens[i]
@@ -327,7 +406,8 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 
 func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 	drifted []schema.PlanDriftEntry, dec gc.Decision, curManifest *schema.Manifest,
-	grace []schema.StatusGraceEntry, revoked []schema.StatusRevokedBuilder) {
+	grace []schema.StatusGraceEntry, revoked []schema.StatusRevokedBuilder,
+	revFresh []schema.StatusRevocationFreshness) {
 	st := style.ForWriter(w)
 	pinned := 0
 	for i := range gens {
@@ -360,8 +440,26 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 	if len(revoked) > 0 {
 		revokedSeg = "  " + st.Changed.Render(fmt.Sprintf("revoked builders: %d package(s)", len(revoked)))
 	}
-	fmt.Fprintf(w, "current generation: %s  retained: %d (%d pinned)  drift: %s%s%s\n",
-		st.Emph.Render(fmt.Sprintf("%d", cur)), len(gens), pinned, driftPart, graceSeg, revokedSeg)
+	revFreshSeg := ""
+	if len(revFresh) > 0 {
+		nExpired, nNear := 0, 0
+		for i := range revFresh {
+			if revFresh[i].State == "expired" {
+				nExpired++
+			} else {
+				nNear++
+			}
+		}
+		label := fmt.Sprintf("revocation data: %d expired, %d expiring soon", nExpired, nNear)
+		if nExpired > 0 {
+			label = st.Changed.Render(label)
+		} else {
+			label = st.Emph.Render(label)
+		}
+		revFreshSeg = "  " + label
+	}
+	fmt.Fprintf(w, "current generation: %s  retained: %d (%d pinned)  drift: %s%s%s%s\n",
+		st.Emph.Render(fmt.Sprintf("%d", cur)), len(gens), pinned, driftPart, graceSeg, revokedSeg, revFreshSeg)
 	if verbosity < 1 {
 		return
 	}
@@ -402,6 +500,25 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 				line += " " + st.Changed.Render("[window EXPIRED]")
 			}
 			fmt.Fprintln(w, line)
+		}
+	}
+	if len(revFresh) > 0 {
+		now := time.Now()
+		fmt.Fprintln(w, "")
+		fmt.Fprintf(w, "%s\n", st.Header.Render("revocation freshness:"))
+		for i := range revFresh {
+			r := &revFresh[i]
+			exp, _ := time.Parse(time.RFC3339, r.Expires)
+			var tag string
+			if r.State == "expired" {
+				tag = st.Changed.Render(fmt.Sprintf("[EXPIRED %s ago]", humanAge(now.Sub(exp))))
+				if r.Acknowledged {
+					tag += " [grace acknowledged]"
+				}
+			} else {
+				tag = st.Emph.Render(fmt.Sprintf("[expiring in %s]", humanAge(exp.Sub(now))))
+			}
+			fmt.Fprintf(w, "  %s  expires %s  %s\n", r.Source, r.Expires, tag)
 		}
 	}
 	if verbosity < 2 {

@@ -342,6 +342,28 @@ The default summary adds a `revoked builders: N package(s)` count, `status -vv` 
 
 This is an offline check: it reflects the revocation state recorded per source **as of the last `plan`/`apply` fetch**, not a live lookup, and it covers **builder-verified** bindings only (retroactive builder-key revocation) — not attestation-hash revocation, which refuses the install outright.
 
+**Revocation-list freshness.** A source's revocation list is itself signed with an expiry. polypkg records the expiry seen at the last fetch and reports, offline, how close it is to lapsing. Once any source is affected, the default `polypkg status` summary gains a segment:
+
+```
+revocation data: 1 expired, 2 expiring soon
+```
+
+`status -v` adds a `revocation freshness:` section — one line per non-fresh source with its expiry and an `[EXPIRED 5d ago]` or `[expiring in 9d]` tag. An expired list that an operator grace window (`accept_expiry_until`) still covers also carries `[grace acknowledged]`. Under `--format json` the same data lands in a `revocation_freshness` array:
+
+```json
+"revocation_freshness": [
+  {"source": "native", "expires": "2026-07-15T00:00:00Z", "state": "expired", "acknowledged": true}
+]
+```
+
+`state` is `near_expiry` or `expired`. `status` exits 4 when an installed source's enforced revocation list is expired and no open `accept_expiry_until` window covers it; a `near_expiry` list never changes the exit code. When a revoked builder (exit 3) and an expired revocation list (exit 4) both apply, exit 3 wins.
+
+How early "expiring soon" fires is set by the `revocation.near_expiry_threshold` config key (default `14d`; accepts the same forms as other age settings — `14d`, `2w`, `12h`). The same threshold drives a fetch-time warning: when `plan` or `apply` fetches a still-valid revocation list already inside the window, it prints a stderr line so you can nudge the publisher before consumers begin rejecting it.
+
+```
+WARNING: native revocation list expires 2026-08-01T00:00:00Z (within near-expiry window) — publisher should re-sign
+```
+
 **Auditing recorded provenance across generations.** `polypkg attestation report` aggregates this recorded evidence into a deterministic `polypkg.attestation-report/v1` JSON document, one entry per installed package across every retained generation: its content hash, verified predicate types, tier, verifying key id / builder identity / certificate identity+issuer, the policy in force at install, and the recorded install time.
 
 ```
@@ -372,7 +394,7 @@ The report is a faithful aggregation of evidence that was already recorded and i
 | `search` | Search configured sources for packages matching a term. |
 | `list` (alias: `ls`) | List installed packages in the current generation. |
 | `info` (alias: `show`) | Show installed and available versions for a package. |
-| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). Exit 3 = an installed package's builder key has been revoked. |
+| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). Exit 3 = an installed package's builder key has been revoked; exit 4 = an installed source's revocation list is expired and not under a grace window (3 wins if both). |
 | `plan` | Compute the apply plan and report what would change. Exit 2 = changes pending, 0 = nothing to do. |
 
 ### Audit
@@ -420,6 +442,8 @@ The report is a faithful aggregation of evidence that was already recorded and i
 ## Exit codes
 
 `plan`: 0 = no changes pending, 2 = changes pending, 1 = error.
+
+`status`: 0 = ok, 1 = error, 3 = an installed package's builder key has been revoked, 4 = an installed source's revocation list is expired and not under a grace window (3 wins if both).
 
 All other commands: 0 = ok, 1 = error.
 

@@ -222,4 +222,53 @@ var _ = Describe("status", func() {
 			Expect(cli.ExitCode(err)).To(Equal(3))
 		})
 	})
+
+	// Places a current generation and a per-source trust-state Seen file whose
+	// revocation list expired ~30 days ago (well past the 14d near-expiry default
+	// AND the 5m ExpirySkew) with no operator grace, then drives the REAL status
+	// command to guard the revocation_freshness JSON field and the exit-code-4
+	// contract end to end.
+	Context("with an installed source whose revocation list is expired and unacknowledged", func() {
+		It("--format json surfaces revocation_freshness and exits 4", func() {
+			t := GinkgoTB()
+			root := IsolatedEnv(t)
+			storeRoot := filepath.Join(root, "data", "polypkg")
+			stateHome := filepath.Join(root, "state", "polypkg")
+
+			// Minimal current generation so status does not short-circuit on the
+			// first-apply view; mirrors the revoked-builder e2e's on-disk setup.
+			gen1 := filepath.Join(storeRoot, "generations", "1")
+			Expect(os.MkdirAll(filepath.Join(gen1, "active"), 0o700)).To(Succeed())
+			Expect(os.Symlink(filepath.Join("generations", "1", "active"),
+				filepath.Join(storeRoot, "active"))).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(gen1, "ownership.json"),
+				[]byte(`{"schema":"polypkg.ownership/v1","scope":"user","entries":[]}`), 0o600)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(gen1, "manifest.json"), []byte(`{
+  "schema":"polypkg.manifest/v2","generation":1,"scope":"user",
+  "produced_by":{"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries":[]}`), 0o600)).To(Succeed())
+
+			// Seed an expired, unacknowledged revocation posture for source "acme".
+			past := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+			Expect(trust.StoreSeen(stateHome, "acme", trust.Seen{
+				RevocationSerial: 1, RevocationExpires: past,
+			})).To(Succeed())
+
+			out, err := runStatusCmd("--format", "json")
+			sr, perr := schema.ParseStatusResult(strings.NewReader(lastNonEmptyLine(out)))
+			Expect(perr).NotTo(HaveOccurred())
+
+			found := false
+			for i := range sr.RevocationFreshness {
+				r := &sr.RevocationFreshness[i]
+				if r.Source == "acme" && r.State == "expired" && !r.Acknowledged {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "no expired/unacknowledged acme entry: %+v", sr.RevocationFreshness)
+			// The runner returns the command error, so the exit-code contract
+			// (cli.ExitCode == 4 -> process exit 4) is asserted here too.
+			Expect(cli.ExitCode(err)).To(Equal(4))
+		})
+	})
 })
