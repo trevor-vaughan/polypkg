@@ -1,0 +1,82 @@
+name: Author journey — pkg init to a running command
+# The first-run promise, end to end on a live repo: scaffold a package with
+# `pkg init`, publish it to a fresh file:// repo under a NON-default source
+# name, then consume it from a fully isolated sandbox and RUN the linked
+# command. This proves the scaffold is sufficient as emitted (no edits), that
+# `init --source-name` binds a non-default name correctly, and that the
+# scaffold's path action + auto-bridge deliver a working `hello` on $PATH.
+#
+# Everything lives under {{.scratch}} in this runner's /tmp — no shared repo,
+# no shared consumer state — so the suite cannot disturb the serial
+# expectations of the other user-scope suites. 95-republish-integrity
+# continues from the state this suite leaves behind (same vars, same scratch).
+vars:
+  scratch: '/tmp/aj'
+  src: '/tmp/aj/hello'
+  repo: '/tmp/aj/repo'
+  keys: '/tmp/aj/keys'
+  keypw: '/tmp/aj/keypw'
+  chome: '/tmp/aj/consumer'
+  pxa: 'env HOME={{.chome}} XDG_DATA_HOME={{.chome}}/data XDG_CONFIG_HOME={{.chome}}/cfg XDG_STATE_HOME={{.chome}}/state XDG_CACHE_HOME={{.chome}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: author scaffolds a package that lints clean with no edits
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.scratch}}
+          mkdir -p {{.scratch}}
+          printf 'test-pw' > {{.keypw}}
+          /usr/local/bin/polypkg pkg init --name hello --version 1.0.0 {{.src}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Scaffolded hello (1.0.0)"
+      - type: exec
+        script: '/usr/local/bin/polypkg pkg lint {{.src}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "clean: no findings"'
+
+  - name: publisher creates the authors repo and publishes at serial 1
+    steps:
+      - type: exec
+        script: '/usr/local/bin/polypkg repo init {{.repo}} --source authors --key-dir {{.keys}} --key-password-file {{.keypw}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "trust_root.pub"
+      - type: exec
+        script: '/usr/local/bin/polypkg repo add {{.src}} --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}} --key-password-file {{.keypw}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Added hello@1.0.0"
+          - result.systemout ShouldContainSubstring "(serial 1)"
+
+  - name: consumer initializes against the non-default source name
+    steps:
+      - type: exec
+        script: '{{.pxa}} init --scope user --source-name authors --source-url file://{{.repo}}/public --trust-root-file {{.repo}}/public/trust_root.pub'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'cat {{.chome}}/cfg/polypkg/profile.yaml'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "order: [authors]"'
+
+  - name: install hello applies generation 1 and links the command
+    steps:
+      - type: exec
+        script: '{{.pxa}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+          - result.systemout ShouldContainSubstring "linked 1 command(s)"
+
+  - name: the linked command runs the scaffolded payload
+    steps:
+      - type: exec
+        script: '{{.chome}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Hello, world!"

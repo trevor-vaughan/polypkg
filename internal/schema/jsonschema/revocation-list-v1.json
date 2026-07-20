@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/revocation-list-v1.json",
+  "type": "object",
+  "required": ["schema", "source", "serial", "expires"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.revocation-list/v1" },
+    "source": { "type": "string", "minLength": 1 },
+    "serial": { "type": "integer", "minimum": 1 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires": { "type": "string", "format": "date-time" },
+    "revoked_builder_keys": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "revoked_attestations": { "type": "array", "items": { "type": "string", "pattern": "^blake3:[0-9a-f]+$" } }
+  }
+}

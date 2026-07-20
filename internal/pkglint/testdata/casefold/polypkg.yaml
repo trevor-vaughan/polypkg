@@ -1,0 +1,9 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+provides:
+  - name: Hello
+actions:
+  - phase: post-place
+    action: dir
+    params: { path: "$ACTIVE/hello" }

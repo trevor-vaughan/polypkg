@@ -1,0 +1,7 @@
+schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions:
+  - phase: elsewhen
+    action: dir
+    params: { path: "$ACTIVE/hello" }

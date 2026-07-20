@@ -1,0 +1,27 @@
+schema: polypkg.package/v1
+name: goodbye
+version: 1.0.0
+description: Farewell command that also owns a config file (config-reset subject)
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/goodbye/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/goodbye
+      dest: $ACTIVE/goodbye/bin/goodbye
+      policy: symlink
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/goodbye/etc
+      mode: "0o755"
+  - phase: post-place
+    action: config
+    params:
+      src: $PKG/content/etc/goodbye.conf
+      dest: $ACTIVE/goodbye/etc/goodbye.conf
+      policy: preserve

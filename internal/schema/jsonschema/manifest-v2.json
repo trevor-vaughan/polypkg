@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polypkg.dev/schemas/manifest-v2.json",
+  "type": "object",
+  "required": ["schema", "generation", "scope", "produced_by", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "polypkg.manifest/v2" },
+    "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "scope": { "type": "string", "enum": ["system", "user"] },
+    "weak_deps_policy": { "type": "string", "enum": ["on", "off"] },
+    "produced_by": {
+      "type": "object",
+      "required": ["tool", "version", "timestamp", "host"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "type": "string" },
+        "version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "host": { "type": "string" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "version", "content_hash"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "content_hash": { "type": "string" },
+          "source_url": { "type": "string", "format": "uri" },
+          "depends_on": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "weak": { "type": "boolean" },
+          "recommended_by": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "attestation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "policy_at_install"],
+            "properties": {
+              "status":           { "type": "string", "enum": ["verified", "unattested"] },
+              "predicate_types":  { "type": "array", "items": { "type": "string" } },
+              "attestation_hash": { "type": "string", "pattern": "^blake3:[0-9a-f]+$" },
+              "policy_at_install":{ "type": "string", "enum": ["warn", "require", "off"] },
+              "carried_bindings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["predicate_type", "format", "subject_scope", "tier"],
+                  "properties": {
+                    "predicate_type": { "type": "string" },
+                    "format":         { "type": "string" },
+                    "subject_scope":  { "type": "string" },
+                    "tier":           { "type": "string", "enum": ["bound-unverified", "builder-verified", "verified-transport-only", "verified-offline"] },
+                    "verifying_key_id": { "type": "string" },
+                    "builder_identity": { "type": "string" },
+                    "certificate_identity": { "type": "string" },
+                    "certificate_issuer":   { "type": "string" }
+                  }
+                }
+              },
+              "gate_disabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

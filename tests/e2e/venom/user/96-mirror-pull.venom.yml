@@ -1,0 +1,151 @@
+name: Offline mirror pull lifecycle (fetch -> re-publish -> export -> verify -> install)
+# Self-contained under {{.scratch}} in this runner's /tmp: builds an UPSTREAM
+# repo (attested), mirror-pulls it under a local key into a re-published mirror,
+# exports + verifies a bundle, then installs from the mirror and confirms the
+# upstream provenance survived the re-publish. Nothing here touches the shared
+# /repo, so suite ordering does not matter.
+vars:
+  scratch: '/tmp/mp'
+  fixtures: '/e2e/fixtures'
+  px: '/usr/local/bin/polypkg'
+  up: '/tmp/mp/upstream'
+  upkeys: '/tmp/mp/upkeys'
+  seed: '/tmp/mp/seed'
+  mkeys: '/tmp/mp/mkeys'
+  mirror: '/tmp/mp/mirror'
+  mcache: '/tmp/mp/mcache'
+  bundle: '/tmp/mp/mirror.tar'
+  chome: '/tmp/mp/consumer'
+  pxc: 'env HOME=/tmp/mp/consumer XDG_DATA_HOME=/tmp/mp/consumer/data XDG_CONFIG_HOME=/tmp/mp/consumer/cfg XDG_STATE_HOME=/tmp/mp/consumer/state XDG_CACHE_HOME=/tmp/mp/consumer/cache /usr/local/bin/polypkg'
+  fresh: '/tmp/mp/fresh'
+  fhome: '/tmp/mp/consumer-fresh'
+  rhome: '/tmp/mp/consumer-require'
+  pxf: 'env HOME=/tmp/mp/consumer-fresh XDG_DATA_HOME=/tmp/mp/consumer-fresh/data XDG_CONFIG_HOME=/tmp/mp/consumer-fresh/cfg XDG_STATE_HOME=/tmp/mp/consumer-fresh/state XDG_CACHE_HOME=/tmp/mp/consumer-fresh/cache /usr/local/bin/polypkg'
+  pxr: 'env HOME=/tmp/mp/consumer-require XDG_DATA_HOME=/tmp/mp/consumer-require/data XDG_CONFIG_HOME=/tmp/mp/consumer-require/cfg XDG_STATE_HOME=/tmp/mp/consumer-require/state XDG_CACHE_HOME=/tmp/mp/consumer-require/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: build an attested upstream repo and a local mirror-signing key
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.scratch}}
+          mkdir -p {{.scratch}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo init {{.up}} --source upstream --key-dir {{.upkeys}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo add {{.fixtures}}/hello --manifest {{.up}}/polypkg-repo.yaml --key-dir {{.upkeys}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Added hello@1.0.0"
+      - type: exec
+        script: 'POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo init {{.seed}} --source mirror --key-dir {{.mkeys}}'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'test -f {{.mkeys}}/mirror.key'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: mirror pull re-publishes the upstream package and exports a bundle
+    steps:
+      - type: exec
+        script: |
+          set -e
+          # --key-dir is the build cache; mirror pull does not create it, so it
+          # must exist before the pull writes its cache tmp file into it.
+          mkdir -p {{.mcache}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} mirror pull \
+            --source-url file://{{.up}}/public --trust-root {{.up}}/public/trust_root.pub \
+            --source-name upstream \
+            --repo-source mirror --output-dir {{.mirror}} \
+            --key {{.mkeys}}/mirror.key --key-dir {{.mcache}} \
+            -o {{.bundle}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Pulled 1 package(s)"
+          - result.systemout ShouldContainSubstring "Exported mirror bundle"
+      - type: exec
+        # mirror pull publishes FLAT into --output-dir (the manifest's output is
+        # the output dir itself), so there is no public/ subdir like repo init.
+        script: 'test -f {{.mirror}}/index.json && test -f {{.mirror}}/trust_root.pub && test -f {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: mirror verify accepts the exported bundle
+    steps:
+      - type: exec
+        script: '{{.px}} mirror verify {{.bundle}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "OK:"
+          - result.systemout ShouldContainSubstring "verified"
+
+  - name: a consumer installs from the mirror and the upstream provenance survives
+    steps:
+      - type: exec
+        script: '{{.pxc}} init --source-url file://{{.mirror}} --trust-root-file {{.mirror}}/trust_root.pub --source-name mirror --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.pxc}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"
+      - type: exec
+        script: '{{.pxc}} info hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "attestation:"'
+          - 'result.systemout ShouldNotContainSubstring "attestation: unattested"'
+
+  - name: mirror pull --fresh re-anchors with NO upstream provenance
+    steps:
+      - type: exec
+        script: |
+          set -e
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} mirror pull --fresh \
+            --source-url file://{{.up}}/public --trust-root {{.up}}/public/trust_root.pub \
+            --source-name upstream \
+            --repo-source mirror --output-dir {{.fresh}} \
+            --key {{.mkeys}}/mirror.key
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Pulled 1 package(s)"
+
+  - name: policy require fails closed against the fresh (provenance-stripped) mirror
+    steps:
+      - type: exec
+        script: '{{.pxf}} init --source-url file://{{.fresh}} --trust-root-file {{.fresh}}/trust_root.pub --source-name mirror --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          set -e
+          printf 'attestation:\n  policy: require\n' >> {{.fhome}}/cfg/polypkg/profile.yaml
+          cat {{.fhome}}/cfg/polypkg/profile.yaml
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "policy: require"'
+      - type: exec
+        script: '{{.pxf}} install hello'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "has no attestation"
+          - result.systemerr ShouldContainSubstring "require"
+
+  - name: the SAME require policy INSTALLS from the non-fresh mirror (proves --fresh caused the refusal)
+    steps:
+      - type: exec
+        script: '{{.pxr}} init --source-url file://{{.mirror}} --trust-root-file {{.mirror}}/trust_root.pub --source-name mirror --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          set -e
+          printf 'attestation:\n  policy: require\n' >> {{.rhome}}/cfg/polypkg/profile.yaml
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.pxr}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"

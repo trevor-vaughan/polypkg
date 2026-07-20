@@ -1,0 +1,18 @@
+schema: polypkg.package/v1
+name: needs-hello
+version: 1.0.0
+description: Declares a dependency on hello (dependency-resolution subject)
+depends:
+  - name: hello
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/needs-hello/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/needer
+      dest: $ACTIVE/needs-hello/bin/needer
+      policy: symlink

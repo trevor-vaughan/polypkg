@@ -1,0 +1,79 @@
+name: Anti-rollback serial guard
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  pub: '/repo/public'
+  manifest: '/repo/polypkg-repo.yaml'
+  keys: '/keys'
+  fixtures: '/e2e/fixtures'
+  snapshot: '/tmp/good'
+  home: '/tmp/u50'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: init and snapshot the current good metadata
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: |
+          # Keep a copy of the current (high-serial) signed metadata to restore later.
+          mkdir -p {{.snapshot}}
+          cp {{.pub}}/index.json {{.pub}}/index.json.minisig \
+             {{.pub}}/trust.json {{.pub}}/trust.json.minisig {{.snapshot}}/
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: install advances the consumer watermark to the current serial
+    steps:
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: republish forward bumps the serial and a fresh fetch advances the watermark
+    steps:
+      - type: exec
+        script: |
+          # A uniquely-named throwaway package guarantees a real content change, so
+          # the serial bumps regardless of what the shared rolling repo already holds
+          # (re-adding hello would be a no-op if an earlier suite already rolled it).
+          mkdir -p /tmp/bumper
+          printf 'schema: polypkg.package/v1\nname: bumper-ar\nversion: 1.0.0\nactions: []\n' > /tmp/bumper/polypkg.yaml
+          POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo add /tmp/bumper --manifest {{.manifest}} --key-dir {{.keys}}
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} search hello'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: serving a stale lower-serial index is rejected by the consumer
+    steps:
+      - type: exec
+        script: |
+          # Roll the served metadata back to the snapshot taken before the bump.
+          # Its serial is below the consumer's stored watermark, so fetch must reject it.
+          cp {{.snapshot}}/index.json {{.snapshot}}/index.json.minisig \
+             {{.snapshot}}/trust.json {{.snapshot}}/trust.json.minisig {{.pub}}/
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} search hello'
+        assertions:
+          - result.code ShouldNotEqual 0
+          # The real messages are "index rollback: serial N is below last-seen M"
+          # and "trust document rollback: serial N is below last-seen M". Assert
+          # the discriminating "rollback" token, not a generic "serial" that an
+          # unrelated error could also contain.
+          - result.systemerr ShouldContainSubstring "rollback"
+          - result.systemerr ShouldContainSubstring "below last-seen"
+
+  - name: restore the forward metadata so later runs see a healthy repo
+    steps:
+      - type: exec
+        script: 'POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo build --manifest {{.manifest}} --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0

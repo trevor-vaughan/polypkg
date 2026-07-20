@@ -1,0 +1,80 @@
+name: Repo publish attestation chain (producer)
+vars:
+  repo: '/repo'
+  keys: '/keys'
+  px: '/usr/local/bin/polypkg'
+  # The scratch source MUST live on the shared /repo volume: the manifest
+  # records it as the package's source, and later rebuilds from OTHER
+  # containers (the user runner re-adds fixtures) must still fingerprint it.
+  # A /tmp path would vanish with this container and poison every rebuild.
+  scratch: '/repo/scratch/repub-att'
+
+testcases:
+  - name: Attestation blobs are published content-addressed in the pool
+    steps:
+      - type: exec
+        script: 'ls {{.repo}}/public/pool'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring ".att.json"
+          - result.systemout ShouldContainSubstring ".att.json.minisig"
+
+  - name: The signed index is v2 with attestation refs and a freshness bound
+    steps:
+      - type: exec
+        script: 'cat {{.repo}}/public/index.json'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "polypkg.index/v2"
+          - result.systemout ShouldContainSubstring "attestations"
+          - result.systemout ShouldContainSubstring "expires"
+
+  - name: Republish keeps the prior immutable blob and bumps the revision
+    steps:
+      - type: exec
+        # A uniquely-named throwaway package (mirroring the anti-rollback
+        # suite's bumper) so the mutation never disturbs the shared fixtures.
+        script: |
+          set -e
+          rm -rf {{.scratch}}
+          mkdir -p {{.scratch}}/content
+          printf 'schema: polypkg.package/v1\nname: repub-att\nversion: 1.0.0\nactions: []\n' > {{.scratch}}/polypkg.yaml
+          printf 'first publish\n' > {{.scratch}}/content/notes.txt
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo add {{.scratch}} --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Added repub-att@1.0.0"
+      - type: exec
+        # Mutate the source content WITHOUT changing the version, rebuild, and
+        # prove the old pool blob persists next to the new one (rollback needs
+        # it) while the signed index repoints with a bumped revision ordinal.
+        # Blobs are content-addressed, so persistence is proven two ways: the
+        # count grows by exactly one, AND every pre-republish filename —
+        # including the original repub-att artifact just added above — still
+        # exists as that exact file afterwards.
+        script: |
+          set -e
+          before=$(ls {{.repo}}/public/pool/*.tar.zst | wc -l)
+          prior_blobs=$(ls {{.repo}}/public/pool/*.tar.zst)
+          printf 'second publish\n' >> {{.scratch}}/content/notes.txt
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo build --manifest {{.repo}}/polypkg-repo.yaml --key-dir {{.keys}}
+          after=$(ls {{.repo}}/public/pool/*.tar.zst | wc -l)
+          echo "blobs before=$before after=$after"
+          for f in $prior_blobs; do
+            test -f "$f" || { echo "MISSING_PRIOR_BLOB $f"; exit 1; }
+          done
+          echo "PRIOR_BLOBS_INTACT"
+          [ "$after" -eq $((before + 1)) ] && echo "OLD_BLOB_PERSISTED"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "PRIOR_BLOBS_INTACT"
+          - result.systemout ShouldContainSubstring "OLD_BLOB_PERSISTED"
+      - type: exec
+        # Venom assertion tokens cannot carry embedded double quotes (the
+        # backslash stays literal), so the exact JSON key:value probe runs in
+        # the shell and surfaces as a sentinel token.
+        script: |
+          grep -q '"revision":2' {{.repo}}/public/index.json && echo REVISION_BUMPED
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "REVISION_BUMPED"

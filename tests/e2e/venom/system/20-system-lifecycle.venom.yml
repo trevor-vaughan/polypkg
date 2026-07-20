@@ -1,0 +1,70 @@
+name: System-scope lifecycle
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  etc: '/etc/polypkg'
+  data: '/var/lib/polypkg'
+  bin: '/usr/local/bin'
+  px: '/usr/local/bin/polypkg'
+
+testcases:
+  - name: init --scope system writes the system config dir
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope system'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: 'cat {{.etc}}/profile.yaml'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "native"
+          # Regression: init --scope system must declare the system scope, not user,
+          # or every subsequent --scope system operation fails (caught by this suite).
+          - result.systemout ShouldContainSubstring "system:"
+          - result.systemout ShouldNotContainSubstring "user:"
+
+  - name: install --scope system places into the system data dir and auto-bridges exposed commands
+    steps:
+      # tool-a exposes the `widget` command via the alternatives action (so it is
+      # bridged); hello places its command in its own package bin (reachable via
+      # the active path but not bridged — only exposed commands reach the FHS bin).
+      - type: exec
+        script: '{{.px}} install hello tool-a --scope system'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.data}}/active/hello/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring hello
+      # apply (run by install) bridges exposed system commands into /usr/local/bin
+      # automatically; there is no separate `link --scope system` (link is user-only).
+      - type: exec
+        script: '{{.bin}}/widget'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring widget
+
+  - name: list reflects the system generation
+    steps:
+      - type: exec
+        script: '{{.px}} --format json list --scope system'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "hello"
+
+  - name: remove --scope system uninstalls and unbridges the command
+    steps:
+      - type: exec
+        script: '{{.px}} remove hello tool-a --scope system'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      # Portable absence check: busybox ls (Alpine) and GNU ls (CentOS/Ubuntu)
+      # return different exit codes for a missing file, so test the path directly.
+      - type: exec
+        script: '[ -e {{.bin}}/widget ] && echo PRESENT || echo GONE'
+        assertions:
+          - result.systemout ShouldContainSubstring "GONE"
