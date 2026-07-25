@@ -25,6 +25,8 @@ type StatusResult struct {
 
 	RevokedBuilders []StatusRevokedBuilder `json:"revoked_builders,omitempty"`
 
+	RevokedAttestations []StatusRevokedAttestation `json:"revoked_attestations,omitempty"`
+
 	RevocationFreshness []StatusRevocationFreshness `json:"revocation_freshness,omitempty"`
 }
 
@@ -70,6 +72,15 @@ type StatusRevokedBuilder struct {
 	Package string `json:"package"`
 	Version string `json:"version"`
 	KeyID   string `json:"key_id"`
+}
+
+// StatusRevokedAttestation reports one installed package carrying an attestation
+// whose content-hash a configured source's revocation list (as of the last fetch)
+// has since revoked.
+type StatusRevokedAttestation struct {
+	Package         string `json:"package"`
+	Version         string `json:"version"`
+	AttestationHash string `json:"attestation_hash"`
 }
 
 // StatusRevocationFreshness reports the freshness posture of one source's enforced

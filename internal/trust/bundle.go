@@ -202,3 +202,17 @@ func (r *Revocations) RevokedBuilderKeyIDs() []string {
 	sort.Strings(out)
 	return out
 }
+
+// RevokedAttestationHashes returns the revoked attestation content-hashes in
+// sorted order. Nil-safe: a nil receiver (no revocation list fetched) returns nil.
+func (r *Revocations) RevokedAttestationHashes() []string {
+	if r == nil {
+		return nil
+	}
+	out := make([]string, 0, len(r.atts))
+	for a := range r.atts {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}

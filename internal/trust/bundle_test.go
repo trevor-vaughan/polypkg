@@ -405,3 +405,32 @@ var _ = Describe("LoadRevocationList", func() {
 		Expect(err).To(HaveOccurred())
 	})
 })
+
+var _ = Describe("Revocations.RevokedAttestationHashes", func() {
+	revJSON := func(anchor tkey, source string, serial uint64, expires string, keys, atts []string) (doc []byte, sig string) {
+		GinkgoHelper()
+		rl := schema.RevocationList{
+			Schema: "polypkg.revocation-list/v1", Source: source, Serial: serial,
+			Expires: expires, RevokedBuilderKeys: keys, RevokedAttestations: atts,
+		}
+		raw, err := json.Marshal(rl)
+		Expect(err).NotTo(HaveOccurred())
+		return raw, anchor.sign(raw, "serial=0")
+	}
+
+	It("returns revoked attestation hashes in sorted order", func() {
+		anchor := newTKey()
+		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
+		Expect(err).NotTo(HaveOccurred())
+		doc, sig := revJSON(anchor, "native", 1, "2099-01-01T00:00:00Z",
+			nil, []string{"blake3:b", "blake3:a"})
+		r, _, _, _, err := v.LoadRevocationList(doc, sig, 0, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.RevokedAttestationHashes()).To(Equal([]string{"blake3:a", "blake3:b"}))
+	})
+
+	It("is nil-safe on a nil receiver", func() {
+		var r *Revocations
+		Expect(r.RevokedAttestationHashes()).To(BeNil())
+	})
+})

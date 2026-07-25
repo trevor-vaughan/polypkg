@@ -730,9 +730,10 @@ func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundl
 			return fmt.Errorf("carried attestation %s (%s) does not bind the installed bytes: %w", c.ref.Artifact, info.Format, err)
 		}
 		binding := schema.CarriedBinding{
-			PredicateType: info.PredicateType,
-			Format:        info.Format,
-			SubjectScope:  materials[0].Name,
+			PredicateType:   info.PredicateType,
+			Format:          info.Format,
+			SubjectScope:    materials[0].Name,
+			AttestationHash: c.ref.ContentHash,
 		}
 		if info.Format == schema.FormatSigstoreBundle {
 			// Sigstore path (2c-3b): verify the bundle OFFLINE against the source's

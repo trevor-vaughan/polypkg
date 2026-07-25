@@ -340,7 +340,25 @@ The install-time verdict is recorded in the generation manifest: `status -vv` ta
 
 The default summary adds a `revoked builders: N package(s)` count, `status -vv` tags each affected package `[builder revoked: <keyid>]`, the `--format json` output carries a `revoked_builders` field, and the command exits non-zero (exit code 3).
 
-This is an offline check: it reflects the revocation state recorded per source **as of the last `plan`/`apply` fetch**, not a live lookup, and it covers **builder-verified** bindings only (retroactive builder-key revocation) — not attestation-hash revocation, which refuses the install outright.
+This is an offline check: it reflects the revocation state recorded per source **as of the last `plan`/`apply` fetch**, not a live lookup, and it covers **builder-verified** bindings only (retroactive builder-key revocation).
+
+**Flagging retroactively revoked attestations.** `polypkg status` also flags installed packages carrying an attestation whose content-hash a configured source has since revoked — a hash that verified cleanly at install but appears on the source's revocation list at the last fetch. To make this match possible, the generation manifest records each carried binding's `attestation_hash`; the check compares those recorded hashes against the revoked set.
+
+The default summary adds a `revoked attestations: N package(s)` segment (shown only when nonzero), `status -vv` tags each affected package `[attestation revoked: <hash>]`, and the `--format json` output carries a `revoked_attestations` array:
+
+```
+revoked attestations: 1 package(s)
+```
+
+```json
+"revoked_attestations": [
+  {"package": "hello", "version": "1.2.3", "attestation_hash": "blake3:445566"}
+]
+```
+
+The command exits 5 when an installed package carries such a revoked attestation. This is the retroactive twin of install-time hash revocation, which refuses the install outright. Like the revoked-builder check, it is offline — the state recorded per source as of the last fetch, not a live lookup.
+
+When more than one condition applies, the revoked-builder exit 3 takes precedence over the revoked-attestation exit 5, and exit 5 takes precedence over the expired-revocation-list exit 4 (3 > 5 > 4).
 
 **Revocation-list freshness.** A source's revocation list is itself signed with an expiry. polypkg records the expiry seen at the last fetch and reports, offline, how close it is to lapsing. Once any source is affected, the default `polypkg status` summary gains a segment:
 
@@ -356,7 +374,7 @@ revocation data: 1 expired, 2 expiring soon
 ]
 ```
 
-`state` is `near_expiry` or `expired`. `status` exits 4 when an installed source's enforced revocation list is expired and no open `accept_expiry_until` window covers it; a `near_expiry` list never changes the exit code. When a revoked builder (exit 3) and an expired revocation list (exit 4) both apply, exit 3 wins.
+`state` is `near_expiry` or `expired`. `status` exits 4 when an installed source's enforced revocation list is expired and no open `accept_expiry_until` window covers it; a `near_expiry` list never changes the exit code. A revoked builder (exit 3) or a revoked attestation (exit 5) takes precedence over this expired-list exit 4 (3 > 5 > 4).
 
 How early "expiring soon" fires is set by the `revocation.near_expiry_threshold` config key (default `14d`; accepts the same forms as other age settings — `14d`, `2w`, `12h`). The same threshold drives a fetch-time warning: when `plan` or `apply` fetches a still-valid revocation list already inside the window, it prints a stderr line so you can nudge the publisher before consumers begin rejecting it.
 
@@ -394,7 +412,7 @@ The report is a faithful aggregation of evidence that was already recorded and i
 | `search` | Search configured sources for packages matching a term. |
 | `list` (alias: `ls`) | List installed packages in the current generation. |
 | `info` (alias: `show`) | Show installed and available versions for a package. |
-| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). Exit 3 = an installed package's builder key has been revoked; exit 4 = an installed source's revocation list is expired and not under a grace window (3 wins if both). |
+| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). Exit 3 = an installed package's builder key has been revoked; exit 5 = an installed package carries a revoked attestation; exit 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4). |
 | `plan` | Compute the apply plan and report what would change. Exit 2 = changes pending, 0 = nothing to do. |
 
 ### Audit
@@ -443,7 +461,7 @@ The report is a faithful aggregation of evidence that was already recorded and i
 
 `plan`: 0 = no changes pending, 2 = changes pending, 1 = error.
 
-`status`: 0 = ok, 1 = error, 3 = an installed package's builder key has been revoked, 4 = an installed source's revocation list is expired and not under a grace window (3 wins if both).
+`status`: 0 = ok, 1 = error, 3 = an installed package's builder key has been revoked, 5 = an installed package carries a revoked attestation, 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4).
 
 All other commands: 0 = ok, 1 = error.
 

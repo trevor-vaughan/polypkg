@@ -63,7 +63,8 @@
                     "verifying_key_id": { "type": "string" },
                     "builder_identity": { "type": "string" },
                     "certificate_identity": { "type": "string" },
-                    "certificate_issuer":   { "type": "string" }
+                    "certificate_issuer":   { "type": "string" },
+                    "attestation_hash":     { "type": "string" }
                   }
                 }
               },

@@ -503,4 +503,35 @@ var _ = Describe("AttestationState verified-offline carried binding", func() {
 		Expect(b.CertificateIdentity).To(Equal("https://github.com/acme/ci/.github/workflows/release.yml@refs/tags/v8.0.0"))
 		Expect(b.CertificateIssuer).To(Equal("https://token.actions.githubusercontent.com"))
 	})
+
+	It("round-trips a carried binding with attestation_hash through the v2 schema", func() {
+		m := &Manifest{
+			Schema:     "polypkg.manifest/v2",
+			Generation: 1,
+			Scope:      "user",
+			ProducedBy: ProducedBy{Tool: "polypkg", Version: "test", Timestamp: time.Unix(0, 0).UTC(), Host: "h"},
+			Entries: []ManifestEntry{{
+				Name:        "acme",
+				Version:     "1.0.0",
+				ContentHash: "blake3:deadbeef",
+				Attestation: &AttestationState{
+					Status:          "verified",
+					PolicyAtInstall: "warn",
+					CarriedBindings: []CarriedBinding{{
+						PredicateType:   "https://slsa.dev/provenance/v1",
+						Format:          FormatSLSAProvenance,
+						SubjectScope:    "acme.tar.zst",
+						Tier:            CarriedTierBuilderVerified,
+						AttestationHash: "blake3:deadbeef",
+					}},
+				},
+			}},
+		}
+		raw, err := json.Marshal(m)
+		Expect(err).NotTo(HaveOccurred())
+		got, err := ParseManifest(bytes.NewReader(raw))
+		Expect(err).NotTo(HaveOccurred())
+		b := got.Entries[0].Attestation.CarriedBindings[0]
+		Expect(b.AttestationHash).To(Equal("blake3:deadbeef"))
+	})
 })

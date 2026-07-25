@@ -223,6 +223,53 @@ var _ = Describe("status", func() {
 		})
 	})
 
+	// Attestation twin of the revoked-builder e2e above: place a current
+	// generation whose manifest entry carries an attestation (identified by its
+	// blake3 content-hash) and a per-source trust-state Seen file listing that
+	// hash as revoked, then drive the REAL status command to guard the cobra
+	// wiring, the revoked_attestations JSON field, and the exit-code-5 contract
+	// end to end. No builder key is revoked here, so exit 3 cannot mask exit 5.
+	Context("with an installed package whose carried attestation is revoked", func() {
+		It("--format json surfaces revoked_attestations and exits 5", func() {
+			t := GinkgoTB()
+			root := IsolatedEnv(t)
+			storeRoot := filepath.Join(root, "data", "polypkg")
+			stateHome := filepath.Join(root, "state", "polypkg")
+
+			gen1 := filepath.Join(storeRoot, "generations", "1")
+			Expect(os.MkdirAll(filepath.Join(gen1, "active"), 0o700)).To(Succeed())
+			Expect(os.Symlink(filepath.Join("generations", "1", "active"),
+				filepath.Join(storeRoot, "active"))).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(gen1, "ownership.json"),
+				[]byte(`{"schema":"polypkg.ownership/v1","scope":"user","entries":[]}`), 0o600)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(gen1, "manifest.json"), []byte(`{
+  "schema":"polypkg.manifest/v2","generation":1,"scope":"user",
+  "produced_by":{"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries":[
+    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc",
+     "attestation":{"status":"verified","policy_at_install":"warn",
+       "carried_bindings":[{"predicate_type":"p","format":"f","subject_scope":"artifact","tier":"bound-unverified","attestation_hash":"blake3:e2ea115"}]}}
+  ]}`), 0o600)).To(Succeed())
+
+			// Seed the source's fetched revocation posture listing the carried
+			// attestation's content-hash as revoked.
+			Expect(trust.StoreSeen(stateHome, "acme", trust.Seen{
+				RevokedAttestations: []string{"blake3:e2ea115"},
+			})).To(Succeed())
+
+			out, err := runStatusCmd("--format", "json")
+			sr, perr := schema.ParseStatusResult(strings.NewReader(lastNonEmptyLine(out)))
+			Expect(perr).NotTo(HaveOccurred())
+			Expect(sr.RevokedAttestations).To(HaveLen(1))
+			Expect(sr.RevokedAttestations[0].Package).To(Equal("hello"))
+			Expect(sr.RevokedAttestations[0].Version).To(Equal("1.0.0"))
+			Expect(sr.RevokedAttestations[0].AttestationHash).To(Equal("blake3:e2ea115"))
+			// The runner returns the command error, so the exit-code contract
+			// (cli.ExitCode == 5 -> process exit 5) is asserted here too.
+			Expect(cli.ExitCode(err)).To(Equal(5))
+		})
+	})
+
 	// Places a current generation and a per-source trust-state Seen file whose
 	// revocation list expired ~30 days ago (well past the 14d near-expiry default
 	// AND the 5m ExpirySkew) with no operator grace, then drives the REAL status

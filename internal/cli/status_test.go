@@ -413,3 +413,39 @@ func TestAttestationTagGateOffAndCarriedTiers(t *testing.T) {
 		t.Errorf("nil must yield empty tag, got %q", got)
 	}
 }
+
+func TestCollectRevokedAttestationsMatches(t *testing.T) {
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{{
+		Name: "acme", Version: "1.0.0",
+		Attestation: &schema.AttestationState{CarriedBindings: []schema.CarriedBinding{
+			{Tier: schema.CarriedTierBuilderVerified, AttestationHash: "blake3:aa"},
+			{Tier: schema.CarriedTierVerifiedTransportOnly, AttestationHash: "blake3:bb"},
+			{Tier: schema.CarriedTierBoundUnverified, AttestationHash: ""}, // old/empty: never matches
+		}},
+	}}}
+	revoked := map[string]struct{}{"blake3:aa": {}, "blake3:bb": {}}
+	got := collectRevokedAttestations(m, revoked)
+	if len(got) != 2 {
+		t.Fatalf("want 2 hits, got %+v", got)
+	}
+	if got[0].AttestationHash != "blake3:aa" || got[1].AttestationHash != "blake3:bb" {
+		t.Fatalf("order/hashes = %+v", got)
+	}
+	if none := collectRevokedAttestations(m, map[string]struct{}{}); len(none) != 0 {
+		t.Fatalf("empty set must match nothing: %+v", none)
+	}
+}
+
+func TestCollectRevokedAttestationsEmptyHashGuardAndNilAttestation(t *testing.T) {
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{
+		{Name: "acme", Version: "1.0.0", Attestation: &schema.AttestationState{CarriedBindings: []schema.CarriedBinding{
+			{Tier: schema.CarriedTierBoundUnverified, AttestationHash: ""}, // empty hash
+		}}},
+		{Name: "beta", Version: "2.0.0", Attestation: nil}, // nil attestation must be skipped, not panic
+	}}
+	// Revoked set even CONTAINS "" — the guard, not a set-miss, must exclude it.
+	got := collectRevokedAttestations(m, map[string]struct{}{"": {}})
+	if len(got) != 0 {
+		t.Fatalf("empty-hash binding must never match even when \"\" is revoked; got %+v", got)
+	}
+}

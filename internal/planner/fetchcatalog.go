@@ -390,14 +390,15 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 	}
 
 	if err := trust.StoreSeen(opts.StateHome, sourceName, trust.Seen{
-		TrustSerial:        trustSerial,
-		IndexSerial:        indexSerial,
-		BundleSerial:       bundleSerial,
-		RevocationSerial:   revSerial,
-		RevocationExpires:  revExpires,
-		Packages:           hwm,
-		Graced:             seenGrace,
-		RevokedBuilderKeys: revs.RevokedBuilderKeyIDs(),
+		TrustSerial:         trustSerial,
+		IndexSerial:         indexSerial,
+		BundleSerial:        bundleSerial,
+		RevocationSerial:    revSerial,
+		RevocationExpires:   revExpires,
+		Packages:            hwm,
+		Graced:              seenGrace,
+		RevokedBuilderKeys:  revs.RevokedBuilderKeyIDs(),
+		RevokedAttestations: revs.RevokedAttestationHashes(),
 	}); err != nil {
 		return nil, fmt.Errorf("persist trust state: %w", err)
 	}

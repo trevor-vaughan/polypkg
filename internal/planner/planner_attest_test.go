@@ -363,6 +363,26 @@ var _ = Describe("Plan attestation policy gate", func() {
 			Expect(att.CarriedBindings[0].SubjectScope).To(Equal("content:bin/hello"))
 			Expect(att.CarriedBindings[0].VerifyingKeyID).To(BeEmpty())
 		})
+
+		It("records the carried attestation's content-hash on the binding", func() {
+			out, tr := buildSignedCarriageRepo(GinkgoTB(), "repo")
+			// Find the carried ref's published content-hash so we can assert the
+			// binding records exactly that value (the offline revocation key, 2c-0).
+			var carriedHash string
+			for _, ref := range readPublishedIndex(GinkgoTB(), out).Packages["hello"][0].Attestations {
+				if ref.Kind == schema.KindCarriedOpaque {
+					carriedHash = ref.ContentHash
+				}
+			}
+			Expect(carriedHash).NotTo(BeEmpty())
+			p := profileForLocalSource("repo", out, tr)
+
+			res, err := planner.Plan(GinkgoT().Context(), p, planOpts("warn"))
+			Expect(err).NotTo(HaveOccurred())
+			b := res.Manifest.Entries[0].Attestation.CarriedBindings
+			Expect(b).To(HaveLen(1))
+			Expect(b[0].AttestationHash).To(Equal(carriedHash))
+		})
 	})
 
 	Context("carriage builder-signature verification (2c-1a)", func() {

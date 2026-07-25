@@ -65,6 +65,7 @@ type CarriedBinding struct {
 	BuilderIdentity     string `json:"builder_identity,omitempty"`     // SLSA builder.id, set only when Tier == builder-verified (phase 2c-1b)
 	CertificateIdentity string `json:"certificate_identity,omitempty"` // Fulcio SAN, set only when Tier == verified-offline (phase 2c-3b)
 	CertificateIssuer   string `json:"certificate_issuer,omitempty"`   // Fulcio OIDC issuer, set only when Tier == verified-offline (phase 2c-3b)
+	AttestationHash     string `json:"attestation_hash,omitempty"`     // blake3:<hex> content-hash of this carried attestation; recorded for offline revocation matching
 }
 
 // CarriedTierBoundUnverified is the tier of a carried attestation whose subjects

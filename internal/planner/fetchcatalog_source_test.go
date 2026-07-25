@@ -442,3 +442,32 @@ var _ = Describe("FetchCatalog persists revoked builder keys (revoked-builder st
 		Expect(seen.RevokedBuilderKeys).To(BeEmpty())
 	})
 })
+
+var _ = Describe("FetchCatalog persists revoked attestation hashes (revoked-attestation status flag)", func() {
+	const far = "2099-01-01T00:00:00Z"
+
+	It("records the source's revoked attestation hashes in Seen", func() {
+		out, tr, kp := buildSignedLocalRepoWithKeypair(GinkgoTB(), "repo", repo.BuildOptions{}, nil)
+		writeRevocationsFull(out, kp, "repo", 1, far, nil, []string{"blake3:e2ea11"})
+		p := profileForLocalSource("repo", out, tr)
+		stateHome := GinkgoT().TempDir()
+
+		_, err := planner.FetchCatalog(GinkgoT().Context(), p, planner.Options{Scope: "user", StateHome: stateHome})
+		Expect(err).NotTo(HaveOccurred())
+		seen, err := trust.LoadSeen(stateHome, "repo")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen.RevokedAttestations).To(ContainElement("blake3:e2ea11"))
+	})
+
+	It("records no revoked attestation hashes when the source has no revocation list", func() {
+		out, tr, _ := buildSignedLocalRepoWithKeypair(GinkgoTB(), "repo", repo.BuildOptions{}, nil)
+		p := profileForLocalSource("repo", out, tr)
+		stateHome := GinkgoT().TempDir()
+
+		_, err := planner.FetchCatalog(GinkgoT().Context(), p, planner.Options{Scope: "user", StateHome: stateHome})
+		Expect(err).NotTo(HaveOccurred())
+		seen, err := trust.LoadSeen(stateHome, "repo")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen.RevokedAttestations).To(BeEmpty())
+	})
+})

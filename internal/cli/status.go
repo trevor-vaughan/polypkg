@@ -29,6 +29,7 @@ func newStatusCmd() *cobra.Command {
 		Long: "Default verbosity prints a one-line summary (generation, retention, drift, any freshness-grace count, any revoked-builder count, and any revocation-data expired/expiring-soon count). " +
 			"-v adds per-generation listing, freshness-grace detail, and a revocation freshness section (each non-fresh source's expires with an [EXPIRED … ago] or [expiring in …] tag, plus [grace acknowledged] when an open grace window still covers an expired list); -vv adds drift detail and per-package attestation/revoked-builder tags; -vvv adds GC preview. " +
 			"Exits 3 when an installed package's builder key has been revoked (as of the last fetch). " +
+			"Exits 5 when an installed package carries an attestation whose content-hash has been revoked (as of the last fetch); the revoked-builder exit 3 takes precedence when both apply. " +
 			"Exits 4 when an installed source's enforced revocation list is expired and not covered by an open accept_expiry_until grace window; the revoked-builder exit 3 takes precedence when both apply. " +
 			"Under --format json the full StatusResult schema is always emitted and verbosity flags are ignored.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -151,15 +152,27 @@ func runStatus(cmd *cobra.Command, format Format, verbosity int) error {
 	}
 	revoked := collectRevokedBuilders(curManifest, revokedKeys)
 
+	var revokedAtts []schema.StatusRevokedAttestation
+	if sherr == nil {
+		if rah, raherr := collectRevokedAttestationHashes(stateHome); raherr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: revoked-attestation inspect failed: %v\n", raherr)
+		} else {
+			revokedAtts = collectRevokedAttestations(curManifest, rah)
+		}
+	}
+
 	if format == FormatJSON {
-		if err := emitStatusJSON(cmd.OutOrStdout(), cur, gens, driftEntries, decision, grace, revoked, revFresh); err != nil {
+		if err := emitStatusJSON(cmd.OutOrStdout(), cur, gens, driftEntries, decision, grace, revoked, revFresh, revokedAtts); err != nil {
 			return err
 		}
 	} else {
-		emitStatusText(cmd.OutOrStdout(), verbosity, cur, gens, driftEntries, decision, curManifest, grace, revoked, revFresh)
+		emitStatusText(cmd.OutOrStdout(), verbosity, cur, gens, driftEntries, decision, curManifest, grace, revoked, revFresh, revokedAtts)
 	}
 	if len(revoked) > 0 {
 		return &StatusError{Code: 3, Quiet: true, Msg: "revoked builder key(s) on installed package(s)"}
+	}
+	if len(revokedAtts) > 0 {
+		return &StatusError{Code: 5, Quiet: true, Msg: "revoked attestation(s) on installed package(s)"}
 	}
 	for i := range revFresh {
 		if revFresh[i].State == "expired" && !revFresh[i].Acknowledged {
@@ -369,9 +382,86 @@ func revokedKeyIDsFor(revoked []schema.StatusRevokedBuilder, name, version strin
 	return strings.Join(ids, ", ")
 }
 
+// collectRevokedAttestationHashes unions the revoked attestation content-hashes
+// recorded per source in the trust state at last fetch. A missing trust dir yields
+// an empty set; a read error is returned for the caller to warn on.
+func collectRevokedAttestationHashes(stateHome string) (map[string]struct{}, error) {
+	sources, err := trust.ListSeenSources(stateHome)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]struct{}{}
+	for _, source := range sources {
+		seen, lerr := trust.LoadSeen(stateHome, source)
+		if lerr != nil {
+			return nil, fmt.Errorf("read revoked attestations for source %s: %w", source, lerr)
+		}
+		for _, h := range seen.RevokedAttestations {
+			out[h] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// collectRevokedAttestations returns installed packages carrying an attestation whose
+// content-hash is revoked. De-duped per (package, version, hash) and sorted for
+// deterministic output. A binding with an empty AttestationHash (old manifest) never
+// matches. A nil manifest or empty revoked set yields none.
+func collectRevokedAttestations(m *schema.Manifest, revoked map[string]struct{}) []schema.StatusRevokedAttestation {
+	if m == nil || len(revoked) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var out []schema.StatusRevokedAttestation
+	for i := range m.Entries {
+		e := &m.Entries[i]
+		if e.Attestation == nil {
+			continue
+		}
+		for j := range e.Attestation.CarriedBindings {
+			b := &e.Attestation.CarriedBindings[j]
+			if b.AttestationHash == "" {
+				continue
+			}
+			if _, ok := revoked[b.AttestationHash]; !ok {
+				continue
+			}
+			key := e.Name + "\x00" + e.Version + "\x00" + b.AttestationHash
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, schema.StatusRevokedAttestation{Package: e.Name, Version: e.Version, AttestationHash: b.AttestationHash})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Package != out[j].Package {
+			return out[i].Package < out[j].Package
+		}
+		if out[i].Version != out[j].Version {
+			return out[i].Version < out[j].Version
+		}
+		return out[i].AttestationHash < out[j].AttestationHash
+	})
+	return out
+}
+
+// revokedAttHashesFor returns the comma-joined revoked attestation hashes recorded for
+// a given installed package (name@version), or "" if none.
+func revokedAttHashesFor(revoked []schema.StatusRevokedAttestation, name, version string) string {
+	var hs []string
+	for i := range revoked {
+		if revoked[i].Package == name && revoked[i].Version == version {
+			hs = append(hs, revoked[i].AttestationHash)
+		}
+	}
+	return strings.Join(hs, ", ")
+}
+
 func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 	drifted []schema.PlanDriftEntry, dec gc.Decision, grace []schema.StatusGraceEntry,
-	revoked []schema.StatusRevokedBuilder, revFresh []schema.StatusRevocationFreshness) error {
+	revoked []schema.StatusRevokedBuilder, revFresh []schema.StatusRevocationFreshness,
+	revokedAtts []schema.StatusRevokedAttestation) error {
 	sr := &schema.StatusResult{
 		Schema:   "polypkg.status/v1",
 		Current:  &schema.StatusCurrentGen{Generation: cur},
@@ -384,6 +474,7 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 		FreshnessGrace:      grace,
 		RevokedBuilders:     revoked,
 		RevocationFreshness: revFresh,
+		RevokedAttestations: revokedAtts,
 	}
 	for i := range gens {
 		g := &gens[i]
@@ -407,7 +498,7 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 	drifted []schema.PlanDriftEntry, dec gc.Decision, curManifest *schema.Manifest,
 	grace []schema.StatusGraceEntry, revoked []schema.StatusRevokedBuilder,
-	revFresh []schema.StatusRevocationFreshness) {
+	revFresh []schema.StatusRevocationFreshness, revokedAtts []schema.StatusRevokedAttestation) {
 	st := style.ForWriter(w)
 	pinned := 0
 	for i := range gens {
@@ -440,6 +531,10 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 	if len(revoked) > 0 {
 		revokedSeg = "  " + st.Changed.Render(fmt.Sprintf("revoked builders: %d package(s)", len(revoked)))
 	}
+	revokedAttSeg := ""
+	if len(revokedAtts) > 0 {
+		revokedAttSeg = "  " + st.Changed.Render(fmt.Sprintf("revoked attestations: %d package(s)", len(revokedAtts)))
+	}
 	revFreshSeg := ""
 	if len(revFresh) > 0 {
 		nExpired, nNear := 0, 0
@@ -458,8 +553,8 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 		}
 		revFreshSeg = "  " + label
 	}
-	fmt.Fprintf(w, "current generation: %s  retained: %d (%d pinned)  drift: %s%s%s%s\n",
-		st.Emph.Render(fmt.Sprintf("%d", cur)), len(gens), pinned, driftPart, graceSeg, revokedSeg, revFreshSeg)
+	fmt.Fprintf(w, "current generation: %s  retained: %d (%d pinned)  drift: %s%s%s%s%s\n",
+		st.Emph.Render(fmt.Sprintf("%d", cur)), len(gens), pinned, driftPart, graceSeg, revokedSeg, revokedAttSeg, revFreshSeg)
 	if verbosity < 1 {
 		return
 	}
@@ -539,6 +634,9 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 			}
 			if ids := revokedKeyIDsFor(revoked, e.Name, e.Version); ids != "" {
 				suffix += " " + st.Changed.Render("[builder revoked: "+ids+"]")
+			}
+			if hs := revokedAttHashesFor(revokedAtts, e.Name, e.Version); hs != "" {
+				suffix += " " + st.Changed.Render("[attestation revoked: "+hs+"]")
 			}
 			fmt.Fprintf(w, "  %s %s%s\n", e.Name, e.Version, suffix)
 		}

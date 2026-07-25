@@ -49,6 +49,12 @@ type Seen struct {
 	// the last fetch saw no revocation list or no revoked keys — StoreSeen
 	// overwrites the whole file, so a later fetch with none clears it.
 	RevokedBuilderKeys []string `json:"revoked_builder_keys,omitempty"`
+	// RevokedAttestations is the set of attestation content-hashes this source's
+	// revocation list revoked, as of the last fetch. Informational, offline-readable
+	// state for `status`; NEVER consulted by the anti-rollback floors. Empty/absent
+	// when the last fetch saw no revocation list or no revoked attestations —
+	// StoreSeen overwrites the whole file, so a later fetch with none clears it.
+	RevokedAttestations []string `json:"revoked_attestations,omitempty"`
 	// RevocationExpires is the RFC3339 expires of the revocation list seen at the
 	// last fetch of this source. Informational, offline-readable state for
 	// `status`; NEVER consulted by the anti-rollback serial floors. Empty/absent

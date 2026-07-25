@@ -68,6 +68,19 @@
         }
       }
     },
+    "revoked_attestations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["package", "version", "attestation_hash"],
+        "properties": {
+          "package": { "type": "string" },
+          "version": { "type": "string" },
+          "attestation_hash": { "type": "string" }
+        }
+      }
+    },
     "revocation_freshness": {
       "type": "array",
       "items": {

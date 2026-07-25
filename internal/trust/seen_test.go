@@ -149,6 +149,20 @@ var _ = Describe("Seen revoked builder keys", func() {
 	})
 })
 
+var _ = Describe("Seen revoked attestations", func() {
+	It("round-trips RevokedAttestations and clears them on an overwrite with none", func() {
+		dir := GinkgoT().TempDir()
+		Expect(StoreSeen(dir, "native", Seen{RevokedAttestations: []string{"blake3:a", "blake3:b"}})).To(Succeed())
+		got, err := LoadSeen(dir, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.RevokedAttestations).To(Equal([]string{"blake3:a", "blake3:b"}))
+		Expect(StoreSeen(dir, "native", Seen{TrustSerial: 2})).To(Succeed())
+		got, err = LoadSeen(dir, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.RevokedAttestations).To(BeEmpty())
+	})
+})
+
 var _ = Describe("Seen revocation expires", func() {
 	It("round-trips RevocationExpires and clears it on an overwrite with none", func() {
 		dir := GinkgoT().TempDir()

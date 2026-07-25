@@ -64,6 +64,16 @@ var _ = Describe("StatusResult", func() {
 		Expect(sr.RevokedBuilders[0].KeyID).To(Equal("builder-a"))
 	})
 
+	It("round-trips a status result carrying revoked_attestations", func() {
+		const j = `{"schema":"polypkg.status/v1","retained":[],` +
+			`"revoked_attestations":[{"package":"acme","version":"1.0.0","attestation_hash":"blake3:deadbeef"}]}`
+		sr, err := ParseStatusResult(strings.NewReader(j))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sr.RevokedAttestations).To(HaveLen(1))
+		Expect(sr.RevokedAttestations[0].Package).To(Equal("acme"))
+		Expect(sr.RevokedAttestations[0].AttestationHash).To(Equal("blake3:deadbeef"))
+	})
+
 	It("round-trips a status result carrying revocation_freshness", func() {
 		const j = `{"schema":"polypkg.status/v1","retained":[],` +
 			`"revocation_freshness":[{"source":"acme","expires":"2026-07-01T00:00:00Z","state":"expired","acknowledged":false}]}`
