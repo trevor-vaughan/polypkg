@@ -198,6 +198,7 @@ type stagedPkg struct {
 	artPath    string
 	attDir     string
 	bundlePath string // "" if none
+	nativePath string // "" if none
 }
 
 // stageOnePrebuilt builds an artifact named `name`, stages it + a bound SLSA
@@ -264,6 +265,9 @@ func writePrebuiltManifest(t *testing.T, root string, pkgs ...stagedPkg) (mPath,
 		sb.WriteString("      attestations: " + p.attDir + "\n")
 		if p.bundlePath != "" {
 			sb.WriteString("      trust_bundle: " + p.bundlePath + "\n")
+		}
+		if p.nativePath != "" {
+			sb.WriteString("      native_attestation: " + p.nativePath + "\n")
 		}
 	}
 	mPath = filepath.Join(root, "polypkg-repo.yaml")

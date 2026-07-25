@@ -93,9 +93,10 @@ never both:
 packages:
   hello:
     prebuilt:
-      artifact: ./staging/hello.tar.zst          # a fetched, verified polypkg artifact
-      attestations: ./staging/hello-atts         # dir of its carried *.att.json blobs
-      trust_bundle: ./staging/trust-bundle.json  # optional: carried forward under the local key
+      artifact: ./staging/hello.tar.zst           # a fetched, verified polypkg artifact
+      attestations: ./staging/hello-atts          # dir of its carried *.att.json blobs
+      trust_bundle: ./staging/trust-bundle.json   # optional: carried forward under the local key
+      native_attestation: ./staging/hello-1.0.att.json  # optional: mint a native attestation for it
 ```
 
 `repo build` copies `artifact` into the pool **content-addressed and
@@ -119,6 +120,26 @@ verify the original upstream builder identity against the carried-forward
 keys, layered underneath the local repo's own signature. A repository with no
 `prebuilt` entries — or none that stage a `trust_bundle` — emits no
 `trust-bundle.json` at all.
+
+**Native attestation for a prebuilt (`native_attestation:`).** A carried
+attestation under `attestations` keeps the upstream's provenance, but a prebuilt
+package otherwise has no polypkg-native attestation of its own — the kind a
+`source:` package gets from its native lint. Point `native_attestation` at the
+canonical `pkg build` `<name>-<version>.att.json` preview to give the prebuilt
+that native tier. The input is the exact JCS-canonical bytes `pkg build` writes;
+`repo build` publishes those bytes unchanged. It first checks the statement is an
+in-toto SARIF-predicate statement whose subject binds this artifact — subject
+name `<name>-<version>.tar.zst` and `digest.blake3` equal to the artifact's own
+content hash — and that the bytes are already JCS-canonical. A statement that is
+non-canonical, carries a non-SARIF predicate, or binds nothing packed is refused
+at build, never reformatted or silently dropped (a non-SARIF document belongs
+under `attestations` as a carried blob instead). The accepted bytes are signed
+under this repository's attestation-role key — the same role that signs a
+`source:` package's native lint attestation — and published as a native
+(`native-jcs`) attestation in the signed index, so a consumer verifies it exactly
+like a source-minted native attestation. Because rebuilds are cache-keyed on the
+artifact's content hash, changing only `native_attestation` while the artifact
+stays the same is a no-op; clear the build cache to re-publish.
 
 This is the *ingest* half of mirroring: `repo build` consumes an
 already-fetched artifact, its attestations, and (optionally) its upstream

@@ -28,6 +28,13 @@ type RepoPrebuilt struct {
 	Artifact     string `yaml:"artifact"                json:"artifact"`
 	Attestations string `yaml:"attestations"            json:"attestations"`
 	TrustBundle  string `yaml:"trust_bundle,omitempty"  json:"trust_bundle,omitempty"`
+	// NativeAttestation is an optional path to a JCS-canonical in-toto SARIF
+	// statement (the `pkg build` <name>-<version>.att.json preview) to sign and
+	// publish as this prebuilt package's native attestation. Its subject digest
+	// must bind the artifact. Absent ⇒ carried attestations only.
+	// The build cache keys on the artifact content-hash, so changing only this
+	// path without changing the artifact may require a cache-busting rebuild.
+	NativeAttestation string `yaml:"native_attestation,omitempty" json:"native_attestation,omitempty"`
 }
 
 // RepoPackage is one package registered in a repo manifest: either a local

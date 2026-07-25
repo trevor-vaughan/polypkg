@@ -35,7 +35,8 @@
             "properties": {
               "artifact": { "type": "string", "minLength": 1 },
               "attestations": { "type": "string", "minLength": 1 },
-              "trust_bundle": { "type": "string", "minLength": 1 }
+              "trust_bundle": { "type": "string", "minLength": 1 },
+              "native_attestation": { "type": "string", "minLength": 1 }
             }
           }
         }

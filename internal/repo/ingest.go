@@ -7,7 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 
+	"github.com/gowebpki/jcs"
+	"github.com/trevor-vaughan/polypkg/internal/attest"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/source"
 )
@@ -79,6 +83,15 @@ func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPreb
 	refs, blobs, err := b.prebuiltAttestations(scratch, resolveRel(lay.manifestDir, pb.Attestations), name, pkgParsed.Version, ch, artifact)
 	if err != nil {
 		return packageWork{}, ingestHit{}, err
+	}
+	if pb.NativeAttestation != "" {
+		nref, nblob, nerr := b.nativeAttestationRef(resolveRel(lay.manifestDir, pb.NativeAttestation), name, pkgParsed.Version, ch)
+		if nerr != nil {
+			return packageWork{}, ingestHit{}, nerr
+		}
+		refs = append(refs, nref)
+		blobs = append(blobs, nblob)
+		sort.SliceStable(refs, func(i, j int) bool { return attRefLess(refs[i], refs[j]) })
 	}
 	return packageWork{
 		name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
@@ -191,4 +204,56 @@ func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey,
 		}
 	}
 	return true
+}
+
+// nativeAttestationRef reads a publisher-supplied native SARIF attestation preview,
+// validates it is a JCS-canonical in-toto SARIF statement whose subject binds the
+// artifact content-hash, and returns the AttestationRef + pool blob to sign and publish
+// VERBATIM (Phase C: the signed attestation is byte-identical to the publisher's preview).
+func (b *Builder) nativeAttestationRef(path, name, version, ch string) (schema.AttestationRef, poolBlob, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-declared prebuilt.native_attestation
+	if err != nil {
+		return schema.AttestationRef{}, poolBlob{}, &PublishError{
+			Msg:  fmt.Sprintf("cannot read native attestation for %q", name),
+			Hint: fmt.Sprintf("check packages.%s.prebuilt.native_attestation (%s)", name, path), Err: err}
+	}
+	st, err := attest.ParseStatement(data)
+	if err != nil {
+		return schema.AttestationRef{}, poolBlob{}, &PublishError{
+			Msg: fmt.Sprintf("native attestation for %q is not a valid in-toto statement", name), Err: err}
+	}
+	if st.PredicateType != attest.PredicateTypeSARIF {
+		return schema.AttestationRef{}, poolBlob{}, &PublishError{
+			Msg:  fmt.Sprintf("native attestation for %q has predicateType %q, want the polypkg SARIF predicate", name, st.PredicateType),
+			Hint: "supply a non-SARIF document via prebuilt.attestations (carried) instead"}
+	}
+	wantName := fmt.Sprintf("%s-%s.tar.zst", name, version)
+	wantHex := strings.TrimPrefix(ch, "blake3:")
+	bound := false
+	for _, s := range st.Subject {
+		if s.Name == wantName && s.Digest["blake3"] == wantHex {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		return schema.AttestationRef{}, poolBlob{}, &PublishError{
+			Msg:  fmt.Sprintf("native attestation for %q does not bind the artifact", name),
+			Hint: fmt.Sprintf("its subject must be name=%s digest.blake3=%s", wantName, wantHex)}
+	}
+	canon, cerr := jcs.Transform(data)
+	if cerr != nil || !bytes.Equal(canon, data) {
+		return schema.AttestationRef{}, poolBlob{}, &PublishError{
+			Msg:  fmt.Sprintf("native attestation for %q is not JCS-canonical", name),
+			Hint: "publish the exact `pkg build` .att.json bytes (canonical); do not reformat"}
+	}
+	attCH := ContentHash(data)
+	attName := "pool/" + strings.TrimPrefix(attCH, "blake3:") + ".att.json"
+	return schema.AttestationRef{
+		PredicateType: attest.PredicateTypeSARIF,
+		Artifact:      attName,
+		ContentHash:   attCH,
+		Kind:          schema.KindNativeJCS,
+		Format:        schema.FormatPolypkgSARIF,
+	}, poolBlob{name: attName, bytes: data}, nil
 }

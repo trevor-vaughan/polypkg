@@ -115,6 +115,33 @@ func TestParseRepoManifestAcceptsPrebuilt(t *testing.T) {
 	}
 }
 
+func TestParseRepoManifestAcceptsPrebuiltNativeAttestation(t *testing.T) {
+	const in = `schema: polypkg.repo/v1
+source: example
+output: ./public
+key:
+  path: /keys/example.key
+  kdf: scrypt
+packages:
+  hello:
+    prebuilt:
+      artifact: ./staging/hello.tar.zst
+      attestations: ./staging/hello-atts
+      native_attestation: some/path.att.json
+`
+	m, err := ParseRepoManifest(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("parse native_attestation manifest: %v", err)
+	}
+	p := m.Packages["hello"]
+	if p.Prebuilt == nil {
+		t.Fatal("prebuilt entry parsed with nil Prebuilt")
+	}
+	if p.Prebuilt.NativeAttestation != "some/path.att.json" {
+		t.Fatalf("native_attestation = %q, want %q", p.Prebuilt.NativeAttestation, "some/path.att.json")
+	}
+}
+
 func TestParseRepoManifestAcceptsSourceOnly(t *testing.T) {
 	src := `schema: polypkg.repo/v1
 source: example
