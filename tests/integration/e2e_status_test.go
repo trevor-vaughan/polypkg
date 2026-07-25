@@ -270,6 +270,52 @@ var _ = Describe("status", func() {
 		})
 	})
 
+	// Native twin of the carried-attestation e2e above. A native (source-minted)
+	// attestation records its content-hash at the TOP LEVEL of the entry's
+	// attestation with NO carried binding — the default case for every source:
+	// package. Seed the source's Seen file revoking that top-level hash, then
+	// drive the REAL status command to prove exit 5 fires for native attestations
+	// (regression: the retroactive matcher previously inspected carried bindings
+	// only, so a revoked native attestation reported a false all-clear).
+	Context("with an installed package whose NATIVE attestation is revoked", func() {
+		It("--format json surfaces revoked_attestations and exits 5", func() {
+			t := GinkgoTB()
+			root := IsolatedEnv(t)
+			storeRoot := filepath.Join(root, "data", "polypkg")
+			stateHome := filepath.Join(root, "state", "polypkg")
+
+			gen1 := filepath.Join(storeRoot, "generations", "1")
+			Expect(os.MkdirAll(filepath.Join(gen1, "active"), 0o700)).To(Succeed())
+			Expect(os.Symlink(filepath.Join("generations", "1", "active"),
+				filepath.Join(storeRoot, "active"))).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(gen1, "ownership.json"),
+				[]byte(`{"schema":"polypkg.ownership/v1","scope":"user","entries":[]}`), 0o600)).To(Succeed())
+			// The attestation carries its hash at the top level (attestation_hash)
+			// with NO carried_bindings — the native/source-minted shape.
+			Expect(os.WriteFile(filepath.Join(gen1, "manifest.json"), []byte(`{
+  "schema":"polypkg.manifest/v2","generation":1,"scope":"user",
+  "produced_by":{"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries":[
+    {"name":"hello","version":"0.1.0","content_hash":"blake3:aabbcc",
+     "attestation":{"status":"verified","policy_at_install":"warn","attestation_hash":"blake3:00e58177"}}
+  ]}`), 0o600)).To(Succeed())
+
+			// Revoke the native top-level attestation hash.
+			Expect(trust.StoreSeen(stateHome, "native", trust.Seen{
+				RevokedAttestations: []string{"blake3:00e58177"},
+			})).To(Succeed())
+
+			out, err := runStatusCmd("--format", "json")
+			sr, perr := schema.ParseStatusResult(strings.NewReader(lastNonEmptyLine(out)))
+			Expect(perr).NotTo(HaveOccurred())
+			Expect(sr.RevokedAttestations).To(HaveLen(1))
+			Expect(sr.RevokedAttestations[0].Package).To(Equal("hello"))
+			Expect(sr.RevokedAttestations[0].Version).To(Equal("0.1.0"))
+			Expect(sr.RevokedAttestations[0].AttestationHash).To(Equal("blake3:00e58177"))
+			Expect(cli.ExitCode(err)).To(Equal(5))
+		})
+	})
+
 	// Places a current generation and a per-source trust-state Seen file whose
 	// revocation list expired ~30 days ago (well past the 14d near-expiry default
 	// AND the 5m ExpirySkew) with no operator grace, then drives the REAL status

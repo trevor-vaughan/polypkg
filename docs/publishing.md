@@ -209,6 +209,50 @@ immutably so previously signed indexes — and consumer rollbacks — keep
 resolving. The pool therefore grows with every republish until pool garbage
 collection lands (future work).
 
+**Revoking a builder key or a bad attestation.** When a builder key is
+compromised or an attestation must be withdrawn, `polypkg repo revoke` authors,
+signs, and publishes the source's revocation list — the producer side of the
+revocation story consumers enforce (revoked attestation → install refused;
+revoked builder key → refused; the `status` audit flags installed packages and
+exits non-zero). Name what to revoke:
+
+```
+# revoke a bad attestation by its blake3 content-hash
+polypkg repo revoke --attestation blake3:<hex> \
+  --manifest polypkg-repo.yaml --key-dir <key-dir>
+
+# revoke a compromised builder key by its id (repeatable; combine with --attestation)
+polypkg repo revoke --builder-key <keyid> --manifest polypkg-repo.yaml --key-dir <key-dir>
+```
+
+It writes `revocations.json` (plus its detached `.minisig`) to the repository
+output directory, alongside `index.json`. Revocation is **cumulative**: each
+call loads the currently published list, merges in the new targets, and
+re-signs at a bumped serial — an entry is never silently dropped, and re-running
+with an already-revoked target is a safe no-op that only refreshes the serial
+and freshness window. Like `repo build`, it needs the signing key
+(`--key-dir` / `--key-password-file` or `POLYPKG_REPO_KEY_PASSWORD`) and stamps
+a `--valid-for` freshness window (default 30d); re-run before that window lapses
+so consumers do not begin treating the list as expired (`status` exit 4). If you
+distribute via offline bundles, re-run `repo export-bundle` after revoking so the
+bundle carries the updated `revocations.json`.
+
+Direct clients and dumb HTTP/`file://` mirrors that serve the repository tree
+verbatim pick the list up automatically — the client fetches root-level
+`revocations.json` on its next `plan`/`apply`. A **re-publishing mirror**
+(`polypkg mirror pull`) is different: it re-signs upstream packages under its own
+trust root and does **not** currently propagate the upstream revocation list, so
+its clients would see a false all-clear. If you operate one, run `repo revoke`
+against the mirror under its own key whenever the upstream revokes, until
+revocation propagation lands in `mirror pull`.
+
+Two operational cautions. The revocation list's monotonic serial lives only in
+the published `revocations.json`; do **not** delete or re-init it out from under
+clients — a re-published list at a lower (reset) serial looks like a rollback and
+clients reject it, silently failing to apply the new revocation. And because
+revoking is cumulative on the on-disk list, keep that file under the same
+backup/restore discipline as the rest of the published tree.
+
 **Export bundles (offline mirrors).** `polypkg repo export-bundle -o bundle.tar`
 packs the built repository into a single, signed tarball for offline transport
 to an air-gapped site. Choose what to export with `--package <name>` or

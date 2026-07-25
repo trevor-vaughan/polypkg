@@ -436,6 +436,53 @@ func TestCollectRevokedAttestationsMatches(t *testing.T) {
 	}
 }
 
+func TestCollectRevokedAttestationsMatchesNativeHash(t *testing.T) {
+	// A native (source-minted) attestation records its content-hash at the top
+	// level and carries NO CarriedBindings entry. This is the default case for
+	// every source: package and every prebuilt with native_attestation.
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{{
+		Name: "hello", Version: "0.1.0",
+		Attestation: &schema.AttestationState{Status: "verified", AttestationHash: "blake3:00e5"},
+	}}}
+	revoked := map[string]struct{}{"blake3:00e5": {}}
+	got := collectRevokedAttestations(m, revoked)
+	if len(got) != 1 {
+		t.Fatalf("native top-level attestation_hash must match the revoked set; got %+v", got)
+	}
+	if got[0].Package != "hello" || got[0].Version != "0.1.0" || got[0].AttestationHash != "blake3:00e5" {
+		t.Fatalf("wrong hit: %+v", got[0])
+	}
+}
+
+func TestCollectRevokedAttestationsNativeAndCarriedNoDuplicate(t *testing.T) {
+	// If the same hash appears both at the top level and as a carried binding,
+	// the package must be reported exactly once for that (name, version, hash).
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{{
+		Name: "hello", Version: "0.1.0",
+		Attestation: &schema.AttestationState{
+			Status:          "verified",
+			AttestationHash: "blake3:aa",
+			CarriedBindings: []schema.CarriedBinding{{Tier: schema.CarriedTierBuilderVerified, AttestationHash: "blake3:aa"}},
+		},
+	}}}
+	got := collectRevokedAttestations(m, map[string]struct{}{"blake3:aa": {}})
+	if len(got) != 1 {
+		t.Fatalf("a hash present as both native and carried must be reported once; got %+v", got)
+	}
+}
+
+func TestCollectRevokedAttestationsEmptyNativeHashGuard(t *testing.T) {
+	// A native attestation with an empty top-level hash must never match, even
+	// when "" is in the revoked set (symmetry with the carried-binding guard).
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{{
+		Name: "acme", Version: "1.0.0",
+		Attestation: &schema.AttestationState{Status: "unattested", AttestationHash: ""},
+	}}}
+	if got := collectRevokedAttestations(m, map[string]struct{}{"": {}}); len(got) != 0 {
+		t.Fatalf("empty native hash must never match even when \"\" is revoked; got %+v", got)
+	}
+}
+
 func TestCollectRevokedAttestationsEmptyHashGuardAndNilAttestation(t *testing.T) {
 	m := &schema.Manifest{Entries: []schema.ManifestEntry{
 		{Name: "acme", Version: "1.0.0", Attestation: &schema.AttestationState{CarriedBindings: []schema.CarriedBinding{

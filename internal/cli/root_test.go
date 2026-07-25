@@ -190,6 +190,7 @@ var _ = Describe("subcommand grouping", func() {
 			"export-bundle": "Build & status:",
 			"status":        "Build & status:",
 			"key":           "Signing keys:",
+			"revoke":        "Revocation:",
 		},
 		"source": {
 			"list":   "Inspect:",

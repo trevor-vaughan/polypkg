@@ -342,7 +342,7 @@ The default summary adds a `revoked builders: N package(s)` count, `status -vv` 
 
 This is an offline check: it reflects the revocation state recorded per source **as of the last `plan`/`apply` fetch**, not a live lookup, and it covers **builder-verified** bindings only (retroactive builder-key revocation).
 
-**Flagging retroactively revoked attestations.** `polypkg status` also flags installed packages carrying an attestation whose content-hash a configured source has since revoked — a hash that verified cleanly at install but appears on the source's revocation list at the last fetch. To make this match possible, the generation manifest records each carried binding's `attestation_hash`; the check compares those recorded hashes against the revoked set.
+**Flagging retroactively revoked attestations.** `polypkg status` also flags installed packages carrying an attestation whose content-hash a configured source has since revoked — a hash that verified cleanly at install but appears on the source's revocation list at the last fetch. The check compares the revoked set against both the top-level `attestation_hash` a **native** (source-minted) attestation records — the default case for every `source:` package and every prebuilt with `native_attestation` — and each carried binding's recorded `attestation_hash`, so a revoked native attestation is flagged just like a revoked carried one.
 
 The default summary adds a `revoked attestations: N package(s)` segment (shown only when nonzero), `status -vv` tags each affected package `[attestation revoked: <hash>]`, and the `--format json` output carries a `revoked_attestations` array:
 
@@ -481,7 +481,13 @@ polypkg --format json plan profile.yaml
 
 `polypkg repo` builds and signs the repositories that `polypkg` installs from —
 `repo init`/`add`/`build`, incremental rebuilds, prebuilt ingest, offline export
-bundles, and `mirror pull`. See **[docs/publishing.md](docs/publishing.md)**.
+bundles, and `mirror pull`. To revoke a compromised builder key or a bad
+attestation, `repo revoke --attestation <blake3:hash>` / `--builder-key <id>`
+authors and signs the source's `revocations.json` (cumulative, serial-bumped);
+direct clients and verbatim mirrors refuse the named hashes/keys on their next
+fetch (re-publishing `mirror pull` mirrors must re-revoke under their own key —
+see the caveat in the publishing guide). See
+**[docs/publishing.md](docs/publishing.md)**.
 
 ## Authoring a package
 

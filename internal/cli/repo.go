@@ -44,6 +44,9 @@ published directory.`,
 		{"signing", "Signing keys:", []*cobra.Command{
 			newRepoKeyCmd(),
 		}},
+		{"revocation", "Revocation:", []*cobra.Command{
+			newRepoRevokeCmd(),
+		}},
 	} {
 		cmd.AddGroup(&cobra.Group{ID: g.id, Title: g.title})
 		for _, c := range g.cmds {

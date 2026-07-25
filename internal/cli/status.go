@@ -403,35 +403,43 @@ func collectRevokedAttestationHashes(stateHome string) (map[string]struct{}, err
 	return out, nil
 }
 
-// collectRevokedAttestations returns installed packages carrying an attestation whose
-// content-hash is revoked. De-duped per (package, version, hash) and sorted for
-// deterministic output. A binding with an empty AttestationHash (old manifest) never
-// matches. A nil manifest or empty revoked set yields none.
+// collectRevokedAttestations returns installed packages whose attestation content-hash
+// is revoked. Both the top-level native attestation_hash (source-minted, the default
+// case) and each carried-binding AttestationHash are tested. De-duped per
+// (package, version, hash) and sorted for deterministic output. An empty AttestationHash
+// (old manifest) never matches. A nil manifest or empty revoked set yields none.
 func collectRevokedAttestations(m *schema.Manifest, revoked map[string]struct{}) []schema.StatusRevokedAttestation {
 	if m == nil || len(revoked) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
 	var out []schema.StatusRevokedAttestation
+	match := func(name, version, hash string) {
+		if hash == "" {
+			return
+		}
+		if _, ok := revoked[hash]; !ok {
+			return
+		}
+		key := name + "\x00" + version + "\x00" + hash
+		if _, dup := seen[key]; dup {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, schema.StatusRevokedAttestation{Package: name, Version: version, AttestationHash: hash})
+	}
 	for i := range m.Entries {
 		e := &m.Entries[i]
 		if e.Attestation == nil {
 			continue
 		}
+		// Native (source-minted) attestations record their content-hash at the top
+		// level with no carried binding; carried external attestations record theirs
+		// per binding. Both must be tested against the revoked set (issue: a revoked
+		// native attestation previously escaped this audit).
+		match(e.Name, e.Version, e.Attestation.AttestationHash)
 		for j := range e.Attestation.CarriedBindings {
-			b := &e.Attestation.CarriedBindings[j]
-			if b.AttestationHash == "" {
-				continue
-			}
-			if _, ok := revoked[b.AttestationHash]; !ok {
-				continue
-			}
-			key := e.Name + "\x00" + e.Version + "\x00" + b.AttestationHash
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, schema.StatusRevokedAttestation{Package: e.Name, Version: e.Version, AttestationHash: b.AttestationHash})
+			match(e.Name, e.Version, e.Attestation.CarriedBindings[j].AttestationHash)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
