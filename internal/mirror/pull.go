@@ -54,6 +54,12 @@ type PullResult struct {
 	Packages        []PulledPackage
 	TrustBundlePath string   // staged trust-bundle.json — set by Task 3
 	Graced          []string // freshness-graced doc notes (surfaced loudly by callers)
+	// RevokedAttestations / RevokedBuilderKeys are the upstream's revoked sets as
+	// loaded and verified during this pull (nil when the upstream published no
+	// revocation list). Callers propagate their union into the mirror's own
+	// revocations.json.
+	RevokedAttestations []string
+	RevokedBuilderKeys  []string
 }
 
 // PrebuiltManifestParams are the local re-publish settings for the generated
@@ -146,7 +152,11 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		return nil, err
 	}
 	stagingRoot := filepath.Join(opts.StageDir, "staging")
-	res := &PullResult{Graced: graced}
+	res := &PullResult{
+		Graced:              graced,
+		RevokedAttestations: revocations.RevokedAttestationHashes(),
+		RevokedBuilderKeys:  revocations.RevokedBuilderKeyIDs(),
+	}
 	for i := range selected {
 		sel := &selected[i]
 		data, err := backend.Fetch(ctx, sel.entry.Artifact)

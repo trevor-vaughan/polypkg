@@ -9,6 +9,7 @@ import (
 
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
 func exportTestBundle(t *testing.T) (bundle, trustRoot string) {
@@ -113,6 +114,16 @@ func TestMirrorPullSurfacesSourcesFileParseError(t *testing.T) {
 // its served output dir + trust root, reusing the mirror_test fixture helpers.
 func buildUpstreamRepo(t *testing.T) (outDir, trustRoot string) {
 	t.Helper()
+	outDir, trustRoot, _ = buildUpstreamRepoReturningKey(t)
+	return outDir, trustRoot
+}
+
+// buildUpstreamRepoReturningKey is buildUpstreamRepo plus the repo signing
+// keypair (loaded back from the on-disk key the CLI `repo init` generated), so
+// callers can sign additional upstream documents (e.g. a revocation list) that
+// verify under the same trust root.
+func buildUpstreamRepoReturningKey(t *testing.T) (outDir, trustRoot string, kp *repo.Keypair) {
+	t.Helper()
 	repoDir := filepath.Join(t.TempDir(), "up")
 	keyDir := t.TempDir()
 	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
@@ -127,13 +138,47 @@ func buildUpstreamRepo(t *testing.T) (outDir, trustRoot string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Extract the key path the same way injectHelloPackage does, so we can load
+	// the keypair `repo init` generated (there is no other handle to it).
+	keyPath := ""
+	for _, line := range splitLines(string(mraw)) {
+		if len(line) > 10 && line[:10] == "    path: " {
+			keyPath = line[10:]
+			break
+		}
+	}
+	if keyPath == "" {
+		t.Fatalf("could not extract key path from manifest:\n%s", mraw)
+	}
 	if err := os.WriteFile(mPath, []byte(injectHelloPackage(t, repoDir, keyDir, mraw)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir); err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	return filepath.Join(repoDir, "public"), filepath.Join(repoDir, "public", "trust_root.pub")
+	kp, err = repo.LoadKey(keyPath, "pw")
+	if err != nil {
+		t.Fatalf("load upstream signing key: %v", err)
+	}
+	return filepath.Join(repoDir, "public"), filepath.Join(repoDir, "public", "trust_root.pub"), kp
+}
+
+// publishUpstreamRevocationList writes a repo-key-signed revocations.json (+
+// .minisig) under the upstream's served output dir, mirroring
+// internal/mirror/pull_test.go's publishRevocationList for the CLI package.
+func publishUpstreamRevocationList(t *testing.T, upstreamDir string, kp *repo.Keypair, rl schema.RevocationList) {
+	t.Helper()
+	raw, err := json.Marshal(&rl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upstreamDir, "revocations.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sig := kp.SignRevocationList(rl.Serial, raw)
+	if err := os.WriteFile(filepath.Join(upstreamDir, "revocations.json.minisig"), []byte(sig), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // makeLocalKey generates an encrypted local signing key (password "pw") and
@@ -481,5 +526,156 @@ func TestMirrorPullMultiSourceRejectsDuplicatePackageName(t *testing.T) {
 		"--key", keyPath, "--key-dir", keyDir)
 	if err == nil || !strings.Contains(err.Error(), "more than one source") {
 		t.Fatalf("want cross-source duplicate-name failure, got %v", err)
+	}
+}
+
+// mirrorTrustSource reads the "source" field a mirror's own trust.json was
+// published with. A consumer's Verifier must be bound to THIS name (the value
+// the signed trust document claims), not to the --repo-source flag that
+// produced it, so tests read it back rather than assuming the flag value.
+func mirrorTrustSource(t *testing.T, outputDir string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(outputDir, "trust.json"))
+	if err != nil {
+		t.Fatalf("read mirror trust.json: %v", err)
+	}
+	var doc struct {
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse mirror trust.json: %v", err)
+	}
+	if doc.Source == "" {
+		t.Fatalf("mirror trust.json has no source field:\n%s", raw)
+	}
+	return doc.Source
+}
+
+// loadMirrorRevocations reads and verifies the mirror's published
+// revocations.json under the mirror's OWN trust root (not the upstream's),
+// proving propagation produced something a downstream consumer of this
+// re-publishing mirror actually trusts.
+func loadMirrorRevocations(t *testing.T, outputDir string) *trust.Revocations {
+	t.Helper()
+	doc, err := os.ReadFile(filepath.Join(outputDir, "revocations.json"))
+	if err != nil {
+		t.Fatalf("mirror revocations.json missing: %v", err)
+	}
+	sig, err := os.ReadFile(filepath.Join(outputDir, "revocations.json.minisig"))
+	if err != nil {
+		t.Fatalf("mirror revocations.json.minisig missing: %v", err)
+	}
+	mirrorTrustRoot, err := os.ReadFile(filepath.Join(outputDir, "trust_root.pub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := trust.NewVerifier("polypkg-native", string(mirrorTrustRoot), mirrorTrustSource(t, outputDir))
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	revs, _, _, _, err := v.LoadRevocationList(doc, string(sig), 0, "")
+	if err != nil {
+		t.Fatalf("mirror revocation list rejected by consumer verifier: %v", err)
+	}
+	return revs
+}
+
+// TestMirrorPullPropagatesUpstreamRevocations is the end-to-end security proof
+// for revocation propagation: an upstream revokes a hash + a builder key, and
+// after `mirror pull`, the MIRROR's own revocations.json — verified under the
+// mirror's own trust root, as a downstream consumer of the mirror would — honors
+// both. Task 6 (runMirrorPull) wires PropagateRevocations in; this proves the
+// wiring actually produces a document a real consumer accepts, not just that
+// the CLI call did not error.
+func TestMirrorPullPropagatesUpstreamRevocations(t *testing.T) {
+	upstreamDir, upTrustRoot, upKey := buildUpstreamRepoReturningKey(t)
+	// Values chosen to be disjoint from anything the pull actually publishes, so
+	// the inbound revocation gate (mirror.Pull refuses to launder a revoked
+	// attestation/key it is about to carry) never fires and this pull succeeds.
+	revHash := "blake3:" + strings.Repeat("a1", 32)
+	revKey := "builder-unrelated"
+	publishUpstreamRevocationList(t, upstreamDir, upKey, schema.RevocationList{
+		Schema:              "polypkg.revocation-list/v1",
+		Source:              "example",
+		Serial:              1,
+		Expires:             "2999-01-01T00:00:00Z",
+		RevokedAttestations: []string{revHash},
+		RevokedBuilderKeys:  []string{revKey},
+	})
+
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "mirror")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	if _, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstreamDir, "--trust-root", upTrustRoot, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("mirror pull: %v", err)
+	}
+
+	revs := loadMirrorRevocations(t, outputDir)
+	if !revs.IsAttestationRevoked(revHash) {
+		t.Fatalf("mirror does not honor upstream revoked attestation %s", revHash)
+	}
+	if !revs.IsBuilderKeyRevoked(revKey) {
+		t.Fatalf("mirror does not honor upstream revoked builder key %s", revKey)
+	}
+}
+
+// TestMirrorPullRevocationsAreCumulative proves the mirror's revocation list
+// never auto-drops an entry: a second pull, from an upstream whose latest
+// revocation list has dropped revHash (e.g. its retention window rolled it
+// off), must still list revHash as revoked in the mirror's own re-published
+// revocations.json. PropagateRevocations merges upstream's advertised set into
+// the mirror's own history rather than replacing it (repo.mergedSets), so a
+// once-seen revocation persists.
+func TestMirrorPullRevocationsAreCumulative(t *testing.T) {
+	upstreamDir, upTrustRoot, upKey := buildUpstreamRepoReturningKey(t)
+	revHash := "blake3:" + strings.Repeat("a1", 32)
+	revKey := "builder-unrelated"
+	publishUpstreamRevocationList(t, upstreamDir, upKey, schema.RevocationList{
+		Schema:              "polypkg.revocation-list/v1",
+		Source:              "example",
+		Serial:              1,
+		Expires:             "2999-01-01T00:00:00Z",
+		RevokedAttestations: []string{revHash},
+		RevokedBuilderKeys:  []string{revKey},
+	})
+
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "mirror")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	if _, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstreamDir, "--trust-root", upTrustRoot, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("first mirror pull: %v", err)
+	}
+	if revs := loadMirrorRevocations(t, outputDir); !revs.IsAttestationRevoked(revHash) {
+		t.Fatalf("fixture invalid: first pull did not propagate %s (test would be vacuous)", revHash)
+	}
+
+	// Upstream's NEXT revocation list drops revHash (still schema-valid: keeps
+	// revKey so the document is non-empty) but the mirror must not forget it.
+	publishUpstreamRevocationList(t, upstreamDir, upKey, schema.RevocationList{
+		Schema:             "polypkg.revocation-list/v1",
+		Source:             "example",
+		Serial:             2,
+		Expires:            "2999-01-01T00:00:00Z",
+		RevokedBuilderKeys: []string{revKey},
+	})
+	if _, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstreamDir, "--trust-root", upTrustRoot, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("second mirror pull: %v", err)
+	}
+
+	revs := loadMirrorRevocations(t, outputDir)
+	if !revs.IsAttestationRevoked(revHash) {
+		t.Fatalf("mirror dropped a previously propagated revoked attestation %s once upstream stopped advertising it", revHash)
+	}
+	if !revs.IsBuilderKeyRevoked(revKey) {
+		t.Fatalf("mirror does not honor still-advertised revoked builder key %s", revKey)
 	}
 }

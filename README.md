@@ -485,8 +485,8 @@ bundles, and `mirror pull`. To revoke a compromised builder key or a bad
 attestation, `repo revoke --attestation <blake3:hash>` / `--builder-key <id>`
 authors and signs the source's `revocations.json` (cumulative, serial-bumped);
 direct clients and verbatim mirrors refuse the named hashes/keys on their next
-fetch (re-publishing `mirror pull` mirrors must re-revoke under their own key —
-see the caveat in the publishing guide). See
+fetch (re-publishing `mirror pull` mirrors propagate upstream revocations under
+their own key automatically). See
 **[docs/publishing.md](docs/publishing.md)**.
 
 ## Authoring a package

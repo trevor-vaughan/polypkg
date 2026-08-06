@@ -457,6 +457,44 @@ func TestPullRefusesRevokedBuilderKey(t *testing.T) {
 	}
 }
 
+func TestPullSurfacesUpstreamRevokedSets(t *testing.T) {
+	outDir, trustRoot, kp := buildLocalRepoWithCarried(t)
+	revHash := "blake3:" + strings.Repeat("a1", 32)
+	publishRevocationList(t, outDir, kp, schema.RevocationList{
+		Schema:              "polypkg.revocation-list/v1",
+		Source:              "upstream",
+		Serial:              1,
+		Expires:             "2999-01-01T00:00:00Z",
+		RevokedAttestations: []string{revHash},
+		RevokedBuilderKeys:  []string{"builder-unrelated"},
+	})
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	if len(res.RevokedAttestations) != 1 || res.RevokedAttestations[0] != revHash {
+		t.Fatalf("RevokedAttestations = %v, want [%s]", res.RevokedAttestations, revHash)
+	}
+	if len(res.RevokedBuilderKeys) != 1 || res.RevokedBuilderKeys[0] != "builder-unrelated" {
+		t.Fatalf("RevokedBuilderKeys = %v", res.RevokedBuilderKeys)
+	}
+}
+
+func TestPullSurfacesEmptyRevokedSetsWithNoUpstreamList(t *testing.T) {
+	outDir, trustRoot, _ := buildLocalRepoWithCarried(t)
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	if res.RevokedAttestations != nil || res.RevokedBuilderKeys != nil {
+		t.Fatalf("no upstream list must yield nil sets, got %v / %v", res.RevokedAttestations, res.RevokedBuilderKeys)
+	}
+}
+
 func TestPullProceedsWithNoRevocationList(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithCarried(t) // publishes no revocations.json
 	stage := t.TempDir()

@@ -225,6 +225,12 @@ polypkg repo revoke --attestation blake3:<hex> \
 polypkg repo revoke --builder-key <keyid> --manifest polypkg-repo.yaml --key-dir <key-dir>
 ```
 
+To un-revoke (prune) an entry from the published list — for instance to reconcile
+a mirror's cumulative list back down to what an upstream currently publishes —
+name it with `--remove` / `--remove-builder-key`. This authors a new list at a
+bumped serial with the entry dropped; clients honor the higher-serial list and
+un-revoke it. Additions and removals cannot be combined in one invocation.
+
 It writes `revocations.json` (plus its detached `.minisig`) to the repository
 output directory, alongside `index.json`. Revocation is **cumulative**: each
 call loads the currently published list, merges in the new targets, and
@@ -240,11 +246,15 @@ bundle carries the updated `revocations.json`.
 Direct clients and dumb HTTP/`file://` mirrors that serve the repository tree
 verbatim pick the list up automatically — the client fetches root-level
 `revocations.json` on its next `plan`/`apply`. A **re-publishing mirror**
-(`polypkg mirror pull`) is different: it re-signs upstream packages under its own
-trust root and does **not** currently propagate the upstream revocation list, so
-its clients would see a false all-clear. If you operate one, run `repo revoke`
-against the mirror under its own key whenever the upstream revokes, until
-revocation propagation lands in `mirror pull`.
+(`polypkg mirror pull`) now propagates revocations automatically: every pull
+re-emits the union of its upstreams' revoked attestation hashes and builder
+key-ids as a `revocations.json` signed under the mirror's own key, so the
+mirror's clients enforce them exactly like direct clients. Propagation is
+cumulative — the mirror never auto-drops an entry, even if an upstream later
+removes it (defending against an upstream that tries to launder a revocation
+away). To deliberately shrink the mirror's list (for example, to match an
+upstream that legitimately un-revoked something), prune the specific entries
+with `repo revoke --remove <blake3:hash>` / `--remove-builder-key <id>`.
 
 Two operational cautions. The revocation list's monotonic serial lives only in
 the published `revocations.json`; do **not** delete or re-init it out from under

@@ -63,6 +63,48 @@ func TestRepoRevokeNeedsPassword(t *testing.T) {
 	}
 }
 
+func TestRepoRevokeRemoveDropsEntry(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir := t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	h := "blake3:" + strings.Repeat("ab", 32)
+	if _, err := runRepo(t, env, "repo", "revoke", "--attestation", h, "--manifest", mPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("seed revoke: %v", err)
+	}
+	if _, err := runRepo(t, env, "repo", "revoke", "--remove", h, "--manifest", mPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(repoDir, "public", "revocations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl, err := schema.ParseRevocationList(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(rl.RevokedAttestations) != 0 {
+		t.Fatalf("hash must be pruned, got %v", rl.RevokedAttestations)
+	}
+}
+
+func TestRepoRevokeRejectsAddRemoveMix(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir := t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	h := "blake3:" + strings.Repeat("ab", 32)
+	if _, err := runRepo(t, env, "repo", "revoke", "--attestation", h, "--remove", h, "--manifest", mPath, "--key-dir", keyDir); err == nil {
+		t.Fatal("mixing --attestation and --remove must error")
+	}
+}
+
 func TestRepoRevokeRejectsNoTargets(t *testing.T) {
 	repoDir := filepath.Join(t.TempDir(), "r")
 	keyDir := t.TempDir()
