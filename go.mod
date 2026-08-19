@@ -2,11 +2,19 @@ module github.com/trevor-vaughan/polypkg
 
 go 1.26
 
-// Build with a patched toolchain: 1.26.4 fixes GO-2026-5039 (net/textproto
-// error escaping, reached via schema.ParseProfile) and GO-2026-5037 (crypto/x509
-// hostname parsing, reached via error formatting). (1.26.3 had fixed the earlier
-// GO-2026-4918 HTTP/2 transport infinite loop and GO-2026-4971 on the source-fetch path.)
-toolchain go1.26.4
+// Build with a patched toolchain: 1.26.6 fixes GO-2026-5972 (encoding/asn1
+// unbounded recursion, reached via attest.transparencyLogs and
+// attest.VerifySignedEntity — the signature-verification path), GO-2026-6090
+// (crypto/tls post-handshake message flooding) and GO-2026-5026 (net/http
+// Punycode label handling), both reached via source.httpTransport.get, and
+// GO-2026-6218 (net/url quadratic resolvePath, reached via
+// schema.validateAgainstSchema). (1.26.5 had fixed GO-2026-4970, an os.Root
+// escape via a symlink with a trailing slash that reached polypkg's write
+// containment primitive, plus GO-2026-5856 crypto/tls ECH; 1.26.4 GO-2026-5039
+// net/textproto error escaping and GO-2026-5037 crypto/x509 hostname parsing;
+// 1.26.3 the earlier GO-2026-4918 HTTP/2 transport infinite loop and
+// GO-2026-4971 on the source-fetch path.)
+toolchain go1.26.6
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
@@ -140,7 +148,7 @@ require (
 	golang.org/x/tools v0.46.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260523011958-0a33c5d7ca68 // indirect
-	google.golang.org/grpc v1.82.0 // indirect
+	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
