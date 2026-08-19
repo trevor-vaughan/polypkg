@@ -9,7 +9,7 @@ import (
 )
 
 func newRepoRevokeCmd() *cobra.Command {
-	var attestations, builderKeys []string
+	var attestations, builderKeys, removeAtts, removeKeys []string
 	cmd := &cobra.Command{
 		Use:   "revoke",
 		Short: "Author and publish the repository's signed revocation list",
@@ -20,25 +20,29 @@ signature) in the repository output directory, bumping the list's serial and
 stamping a fresh freshness window. Revocations are cumulative: each call merges
 its targets into the already-published set and never removes an entry. Clients
 fetch revocations.json and refuse any package whose attestation content-hash or
-builder key it names.`,
+builder key it names. Use --remove / --remove-builder-key to prune (un-revoke)
+an entry from the published list; additions and removals cannot be combined in
+one invocation.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
 				return ferr
 			}
-			return WrapError(cmd, format, "repo revoke", runRepoRevoke(cmd, attestations, builderKeys, format))
+			return WrapError(cmd, format, "repo revoke", runRepoRevoke(cmd, attestations, builderKeys, removeAtts, removeKeys, format))
 		},
 	}
 	addRepoCommonFlags(cmd)
 	addRepoKeyPasswordFlag(cmd)
 	cmd.Flags().StringArrayVar(&attestations, "attestation", nil, "Attestation content-hash to revoke (blake3:<hex>); repeatable")
 	cmd.Flags().StringArrayVar(&builderKeys, "builder-key", nil, "Builder key id to revoke; repeatable")
+	cmd.Flags().StringArrayVar(&removeAtts, "remove", nil, "Attestation content-hash to un-revoke / prune from the published list; repeatable")
+	cmd.Flags().StringArrayVar(&removeKeys, "remove-builder-key", nil, "Builder key id to un-revoke / prune from the published list; repeatable")
 	cmd.Flags().Duration("valid-for", repo.DefaultValidFor, "Freshness window stamped into the signed revocation list")
 	return cmd
 }
 
-func runRepoRevoke(cmd *cobra.Command, attestations, builderKeys []string, format Format) error {
+func runRepoRevoke(cmd *cobra.Command, attestations, builderKeys, removeAtts, removeKeys []string, format Format) error {
 	manifest, _ := cmd.Flags().GetString("manifest")
 	keyDir, err := resolveKeyDir(cmd)
 	if err != nil {
@@ -54,9 +58,11 @@ func runRepoRevoke(cmd *cobra.Command, attestations, builderKeys []string, forma
 	}
 	validFor, _ := cmd.Flags().GetDuration("valid-for")
 	res, err := b.Revoke(repo.RevokeOptions{
-		Attestations: attestations,
-		BuilderKeys:  builderKeys,
-		ValidFor:     validFor,
+		Attestations:       attestations,
+		BuilderKeys:        builderKeys,
+		RemoveAttestations: removeAtts,
+		RemoveBuilderKeys:  removeKeys,
+		ValidFor:           validFor,
 	})
 	if err != nil {
 		return mapPublishError(err)

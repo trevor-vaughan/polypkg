@@ -202,6 +202,27 @@ func TestRevokeRejectsMalformedAttestationBeforeSigning(t *testing.T) {
 	}
 }
 
+func TestMergedSetsAddRemoveAndChanged(t *testing.T) {
+	existing := &schema.RevocationList{
+		RevokedAttestations: []string{"blake3:aa", "blake3:bb"},
+		RevokedBuilderKeys:  []string{"k1"},
+	}
+	atts, keys, changed := mergedSets(existing, []string{"blake3:cc"}, nil, nil, nil)
+	if !changed || len(atts) != 3 || len(keys) != 1 {
+		t.Fatalf("add-new: atts=%v keys=%v changed=%v", atts, keys, changed)
+	}
+	if _, _, c := mergedSets(existing, []string{"blake3:aa"}, nil, nil, nil); c {
+		t.Fatal("re-adding an existing hash must not report changed")
+	}
+	atts, _, changed = mergedSets(existing, nil, nil, []string{"blake3:aa"}, nil)
+	if !changed || len(atts) != 1 || atts[0] != "blake3:bb" {
+		t.Fatalf("remove-present: atts=%v changed=%v", atts, changed)
+	}
+	if _, _, c := mergedSets(existing, nil, nil, []string{"blake3:zz"}, nil); c {
+		t.Fatal("removing an absent hash must not report changed")
+	}
+}
+
 func TestRevokeRejectsForeignSourceOnDisk(t *testing.T) {
 	b := revBuilder(t)
 	// A pre-existing revocations.json belonging to a different source must not be
@@ -217,5 +238,123 @@ func TestRevokeRejectsForeignSourceOnDisk(t *testing.T) {
 	hash := "blake3:" + strings.Repeat("11", 32)
 	if _, err := b.Revoke(RevokeOptions{Attestations: []string{hash}}); err == nil {
 		t.Fatal("Revoke must refuse to overwrite a revocations.json for another source")
+	}
+}
+
+func TestRevokeRemoveDropsEntryAndBumpsSerial(t *testing.T) {
+	b := revBuilder(t)
+	h := "blake3:" + strings.Repeat("ab", 32)
+	if _, err := b.Revoke(RevokeOptions{Attestations: []string{h}}); err != nil {
+		t.Fatalf("seed revoke: %v", err)
+	}
+	res, err := b.Revoke(RevokeOptions{RemoveAttestations: []string{h}})
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if res.Serial != 2 {
+		t.Fatalf("serial = %d, want 2", res.Serial)
+	}
+	if len(res.RevokedAttestations) != 0 {
+		t.Fatalf("hash must be dropped, got %v", res.RevokedAttestations)
+	}
+}
+
+func TestRevokeRemoveAbsentIsNoOpSet(t *testing.T) {
+	b := revBuilder(t)
+	h := "blake3:" + strings.Repeat("ab", 32)
+	if _, err := b.Revoke(RevokeOptions{Attestations: []string{h}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	res, err := b.Revoke(RevokeOptions{RemoveAttestations: []string{"blake3:" + strings.Repeat("cd", 32)}})
+	if err != nil {
+		t.Fatalf("remove-absent: %v", err)
+	}
+	if len(res.RevokedAttestations) != 1 || res.RevokedAttestations[0] != h {
+		t.Fatalf("removing an absent hash must leave the set intact, got %v", res.RevokedAttestations)
+	}
+}
+
+func TestRevokeRemoveWithNoListErrors(t *testing.T) {
+	b := revBuilder(t)
+	if _, err := b.Revoke(RevokeOptions{RemoveAttestations: []string{"blake3:" + strings.Repeat("ab", 32)}}); err == nil {
+		t.Fatal("pruning with no published list must error")
+	}
+}
+
+func TestRevokeRejectsAddRemoveMix(t *testing.T) {
+	b := revBuilder(t)
+	if _, err := b.Revoke(RevokeOptions{
+		Attestations:       []string{"blake3:" + strings.Repeat("ab", 32)},
+		RemoveAttestations: []string{"blake3:" + strings.Repeat("cd", 32)},
+	}); err == nil {
+		t.Fatal("mixing add and remove in one invocation must error")
+	}
+}
+
+func TestPropagateRevocationsEmitsThenSkipsSteadyState(t *testing.T) {
+	b := revBuilder(t)
+	h := "blake3:" + strings.Repeat("ab", 32)
+	res, emitted, err := b.PropagateRevocations([]string{h}, []string{"builder-a"}, DefaultValidFor)
+	if err != nil || !emitted {
+		t.Fatalf("first propagate must emit: emitted=%v err=%v", emitted, err)
+	}
+	if res.Serial != 1 {
+		t.Fatalf("serial = %d, want 1", res.Serial)
+	}
+	_, emitted2, err := b.PropagateRevocations([]string{h}, []string{"builder-a"}, DefaultValidFor)
+	if err != nil {
+		t.Fatalf("second propagate: %v", err)
+	}
+	if emitted2 {
+		t.Fatal("an unchanged set with a fresh list must not re-emit")
+	}
+}
+
+func TestPropagateRevocationsRenewsBelowHalfLife(t *testing.T) {
+	b := revBuilder(t)
+	h := "blake3:" + strings.Repeat("ab", 32)
+	if _, _, err := b.PropagateRevocations([]string{h}, nil, time.Nanosecond); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_, emitted, err := b.PropagateRevocations([]string{h}, nil, DefaultValidFor)
+	if err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	if !emitted {
+		t.Fatal("a list below its freshness half-life must be renewed even if the set is unchanged")
+	}
+}
+
+func TestPropagateRevocationsNoUpstreamNoExistingIsNoOp(t *testing.T) {
+	b := revBuilder(t)
+	res, emitted, err := b.PropagateRevocations(nil, nil, DefaultValidFor)
+	if err != nil {
+		t.Fatalf("PropagateRevocations: %v", err)
+	}
+	if emitted {
+		t.Fatal("no upstream revocations and no existing list must be a no-op, not an empty published list")
+	}
+	if res.RevocationsPath != "" {
+		t.Fatalf("no-op must return a zero result, got path %q", res.RevocationsPath)
+	}
+	// No revocations.json may have been created.
+	if _, statErr := os.Stat(filepath.Join(b.insp.layout.outputDir, "revocations.json")); statErr == nil {
+		t.Fatal("no-op must not write a revocations.json")
+	}
+}
+
+func TestPropagateRevocationsIsCumulativeAcrossCalls(t *testing.T) {
+	b := revBuilder(t)
+	h1 := "blake3:" + strings.Repeat("ab", 32)
+	h2 := "blake3:" + strings.Repeat("cd", 32)
+	if _, _, err := b.PropagateRevocations([]string{h1}, nil, DefaultValidFor); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	res, emitted, err := b.PropagateRevocations([]string{h2}, nil, DefaultValidFor)
+	if err != nil || !emitted {
+		t.Fatalf("second: emitted=%v err=%v", emitted, err)
+	}
+	if len(res.RevokedAttestations) != 2 {
+		t.Fatalf("cumulative must keep both hashes, got %v", res.RevokedAttestations)
 	}
 }

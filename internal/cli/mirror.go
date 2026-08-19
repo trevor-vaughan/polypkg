@@ -297,6 +297,18 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		return mapPublishError(err)
 	}
 
+	// Re-emit the union of every upstream's (and any local) revocations as a
+	// mirror-signed revocations.json BEFORE exporting a bundle, so downstream
+	// clients of this re-publishing mirror enforce them (retroactive coverage).
+	var revAtts, revKeys []string
+	for _, r := range results {
+		revAtts = append(revAtts, r.RevokedAttestations...)
+		revKeys = append(revKeys, r.RevokedBuilderKeys...)
+	}
+	if _, _, err := b.PropagateRevocations(revAtts, revKeys, in.validFor); err != nil {
+		return mapPublishError(err)
+	}
+
 	// Optionally export a signed bundle of everything just re-published.
 	var bundlePath string
 	if in.bundle != "" {

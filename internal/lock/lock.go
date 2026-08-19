@@ -48,12 +48,16 @@ func Acquire(ctx context.Context, path string, opts Options) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock: %w", err)
 	}
-	if err := acquireFlock(ctx, int(f.Fd()), opts); err != nil {
+	//nolint:gosec // G115: int and uintptr are the same width on every platform Go
+	// supports, and Fd returns either a small non-negative descriptor or
+	// ^uintptr(0), which lands on -1 and flock rejects with EBADF. Nothing truncates.
+	fd := int(f.Fd())
+	if err := acquireFlock(ctx, fd, opts); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	if err := writeMetadata(f, opts); err != nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(fd, syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, err
 	}
@@ -128,6 +132,7 @@ func (l *Lock) Release() error {
 	if l.f == nil {
 		return nil
 	}
+	//nolint:gosec // G115: same int/uintptr width parity as in Acquire.
 	if err := syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN); err != nil {
 		return fmt.Errorf("unflock: %w", err)
 	}

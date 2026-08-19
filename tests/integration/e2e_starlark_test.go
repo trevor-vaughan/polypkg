@@ -14,15 +14,24 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/cli"
 )
 
-// starlarkTimeoutLimit is a deliberately generous wall-clock cap for the
-// !starlark evaluations these e2e tests trigger. The evaluator isolates each
-// snippet in a re-exec'd subprocess; under `go test -race ./...` that child is
-// the race-instrumented test binary, and dozens spawn concurrently across
-// packages, so the production 2s default (schema.DefaultStarlarkLimits) can be
-// exceeded by process startup alone. These tests assert functional behavior and
-// step-limit enforcement, not wall-clock enforcement, so the cap is set high
-// enough never to be the flaky variable.
-const starlarkTimeoutLimit = "  timeout: 120s\n"
+// starlarkTestLimits pins deliberately generous resource caps for the !starlark
+// evaluations these e2e tests trigger. The evaluator isolates each snippet in a
+// re-exec'd subprocess; under `go test -race ./...` that child is the
+// race-instrumented test binary, and dozens spawn concurrently across packages,
+// so the production defaults (schema.DefaultStarlarkLimits) can be exceeded by
+// process startup alone:
+//
+//   - timeout: the 2s default is exceeded by child startup under load.
+//   - max_memory_bytes (512 MiB): the race detector's shadow memory puts the
+//     child's baseline RSS at ~61-73 MiB, straddling the 64 MiB default, so the
+//     parent's RSS monitor intermittently killed a snippet that had allocated
+//     nothing. The uninstrumented binary peaks near 25 MiB, so the production
+//     default is sound — only the instrumented harness needs the headroom.
+//
+// These tests assert functional behavior and step-limit enforcement, not
+// wall-clock or memory enforcement (subprocess_test.go covers the RSS monitor),
+// so neither cap is ever the flaky variable.
+const starlarkTestLimits = "  timeout: 120s\n  max_memory_bytes: 536870912\n"
 
 func starlarkProfile(url, trustRoot, starlarkBlock string) string {
 	return "schema: polypkg.spec/v1\nname: sl\n" +
@@ -72,7 +81,7 @@ var _ = Describe("starlark", func() {
 			"polypkg.yaml": pkgYAML,
 			"bin/hi":       "#!/bin/sh\necho hi\n",
 		}
-		out, err := runStarlarkApply(t, files, "starlark:\n"+starlarkTimeoutLimit)
+		out, err := runStarlarkApply(t, files, "starlark:\n"+starlarkTestLimits)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("applied generation"))
 
@@ -86,7 +95,7 @@ var _ = Describe("starlark", func() {
 		t := GinkgoTB()
 		pkgYAML := "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\n" +
 			"actions:\n  - phase: post-place\n    action: dir\n    params:\n      path: !starlark |\n        return 123\n"
-		_, err := runStarlarkApply(t, map[string]string{"polypkg.yaml": pkgYAML}, "starlark:\n"+starlarkTimeoutLimit)
+		_, err := runStarlarkApply(t, map[string]string{"polypkg.yaml": pkgYAML}, "starlark:\n"+starlarkTestLimits)
 		Expect(err).To(HaveOccurred())
 		dataHome := os.Getenv("XDG_DATA_HOME")
 		_, statErr := os.Lstat(filepath.Join(dataHome, "polypkg", "active"))
@@ -98,7 +107,7 @@ var _ = Describe("starlark", func() {
 		pkgYAML := "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\n" +
 			"actions:\n  - phase: post-place\n    action: dir\n    params:\n      path: !starlark |\n" +
 			"        n = 0\n        for i in range(1000000):\n            n += i\n        return \"$ACTIVE/\" + str(n)\n"
-		_, err := runStarlarkApply(t, map[string]string{"polypkg.yaml": pkgYAML}, "starlark:\n  max_steps: 200\n"+starlarkTimeoutLimit)
+		_, err := runStarlarkApply(t, map[string]string{"polypkg.yaml": pkgYAML}, "starlark:\n  max_steps: 200\n"+starlarkTestLimits)
 		Expect(err).To(HaveOccurred())
 		dataHome := os.Getenv("XDG_DATA_HOME")
 		_, statErr := os.Lstat(filepath.Join(dataHome, "polypkg", "active"))
