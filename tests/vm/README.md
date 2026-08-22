@@ -59,6 +59,40 @@ task vm:clean   # remove run artifacts (keeps the cached base images)
 Results land in `.test-output/vm/run/<distro>/venom-{install,upgrade}/`
 (gitignored). Cached base images live under `.test-output/vm/images/`.
 
+## Base image pins
+
+Each guest in `guests_test.go` carries an `imageURL` and an `imageSHA256`. The
+harness verifies the checksum before a downloaded image is promoted into the
+cache, so an image that fails the pin never becomes the base for a later run.
+
+The URL must name a **dated compose**, never a rolling alias:
+
+| Distro | Pin this | Not this |
+|--------|----------|----------|
+| CentOS Stream | `…/CentOS-Stream-GenericCloud-10-20260818.0.x86_64.qcow2` | `…-GenericCloud-10-latest.x86_64.qcow2` |
+| Ubuntu | `…/releases/24.04/release-20260814/…` | `…/releases/24.04/release/…` |
+
+Upstream republishes the aliases in place. A checksum pinned against one is
+correct only until the distro cuts its next image, and then every run fails
+verification against an image nobody chose. `TestGuestImagesPinToDatedCompose`
+enforces this under plain `task test` — no QEMU required.
+
+To refresh a pin, take the compose and its published sum together:
+
+```bash
+# CentOS Stream — index: https://cloud.centos.org/centos/10-stream/x86_64/images/
+curl -s https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-20260818.0.x86_64.qcow2.SHA256SUM
+# SHA256 (CentOS-Stream-GenericCloud-10-20260818.0.x86_64.qcow2) = 578ef6128c97…
+
+# Ubuntu — index: https://cloud-images.ubuntu.com/releases/24.04/
+curl -s https://cloud-images.ubuntu.com/releases/24.04/release-20260814/SHA256SUMS | grep server-cloudimg-amd64.img
+# 6e40c07ae715… *ubuntu-24.04-server-cloudimg-amd64.img
+```
+
+Update `imageURL` and `imageSHA256` in the same edit, then delete the stale
+cached image (`.test-output/vm/images/`) so the next run re-downloads. A
+mismatch against an already-cached image names that path in its error.
+
 ## Topology
 
 ```
@@ -179,7 +213,8 @@ test consumers, not widen it.
 | Path | Role |
 |------|------|
 | `harness.go` | always-compiled pure helpers (`accelFor`, `qemuParams`), unit-tested in `harness_unit_test.go` and run under `task test` |
-| `harness_vm_test.go` (`//go:build vm`) | the VM-only plumbing (boot + ssh/scp + image cache + host-side signed-repo build) and the per-distro `guests` descriptors (image URL + sha, seed file, enforcement probe, denial probe, forwarded ssh port). Behind the build tag and in a `_test.go` file so the default `task lint`/`task test` chain excludes the QEMU harness entirely |
+| `harness_vm_test.go` (`//go:build vm`) | the VM-only plumbing (boot + ssh/scp + image cache + host-side signed-repo build). Behind the build tag and in a `_test.go` file so the default `task lint`/`task test` chain excludes the QEMU harness entirely |
+| `guests_test.go` | the per-distro `guests` descriptors (image URL + sha, seed file, enforcement probe, denial probe, forwarded ssh port), plus the pin invariant that guards them. Deliberately **not** behind the `vm` tag, so `task test` catches a bad image pin without needing QEMU — see "Base image pins" below |
 | `vmtest_test.go` (`//go:build vm`) | the `TestLSM` per-distro integration test (build tag `vm`, so it never runs under `task test`) |
 | `seed/centos-user-data.yaml`, `seed/ubuntu-user-data.yaml` | cloud-init seeds |
 | `venom/25-lsm-install.venom.yml`, `venom/26-lsm-upgrade.venom.yml` | in-guest Venom suites |

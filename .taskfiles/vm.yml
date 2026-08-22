@@ -7,6 +7,9 @@ vars:
   BIN_DIR: '{{.VM_DIR}}/.bin'
   DISTRO: '{{.DISTRO | default "centos"}}'
   VENOM_VERSION: '{{.VENOM_VERSION | default "v1.3.0"}}'
+  # Host packages vm:deps installs. Single source of truth: the install command
+  # and the up-to-date check below both read this, so they cannot drift apart.
+  DEP_PKGS: 'qemu-kvm-core qemu-img xorriso edk2-ovmf openssh-clients selinux-policy-devel checkpolicy'
 
 tasks:
   default:
@@ -16,8 +19,17 @@ tasks:
 
   deps:
     desc: Install the QEMU/TCG toolchain and expose qemu-system-x86_64
+    # Skip the privileged dnf transaction when the toolchain is already present.
+    # `task test:vm` runs vm:deps on every invocation, so without this check each
+    # VM run prompts for sudo and opens a dnf transaction that has nothing to do.
+    # `rpm -q` with several arguments exits non-zero if ANY package is missing,
+    # so one command covers the whole set; `status` runs these quietly and marks
+    # the task up-to-date rather than failing it (unlike `preconditions`).
+    status:
+      - rpm -q {{.DEP_PKGS}}
+      - command -v qemu-system-x86_64
     cmds:
-      - sudo dnf install -y qemu-kvm-core qemu-img xorriso edk2-ovmf openssh-clients selinux-policy-devel checkpolicy
+      - sudo dnf install -y {{.DEP_PKGS}}
       - sudo ln -sf /usr/libexec/qemu-kvm /usr/local/bin/qemu-system-x86_64
       - qemu-system-x86_64 --version
 
