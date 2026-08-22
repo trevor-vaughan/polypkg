@@ -17,54 +17,8 @@ import (
 	"github.com/anatol/vmtest"
 )
 
-// guest describes a distro target for the LSM tier. Values were confirmed by
-// the feasibility spike on this host.
-type guest struct {
-	name        string // "centos" | "ubuntu"
-	imageFile   string // basename under VM_IMAGE_DIR
-	imageURL    string // download source
-	imageSHA256 string // checksum to verify the cached base ("" = unpinned, first bring-up)
-	seedFile    string // cloud-init user-data under tests/vm/seed/
-	loginUser   string // "root" (we inject the root key via cloud-init)
-	sshPort     int    // distinct forwarded host port per guest (avoid collisions)
-	// enforceProbe must print "OK" on stdout iff the LSM is enforcing.
-	enforceProbe string
-	// denialProbe must print "CLEAN" iff no LSM denials were recorded since boot.
-	denialProbe string
-	// labelPaths: paths whose SELinux contexts must already match policy
-	// (restorecon -n reports nothing). Empty on non-SELinux guests (AppArmor).
-	labelPaths []string
-}
-
-var guests = map[string]guest{
-	"centos": {
-		name:         "centos",
-		imageFile:    "centos.qcow2",
-		imageURL:     "https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2",
-		imageSHA256:  "f08ee2e1fbfebbaa7726860ca1068a7ba37f2ab8628d1434e1347535d09e77ee", // DevSkim: ignore DS173237 - public CentOS cloud image SHA-256 pin (supply-chain integrity), not a secret
-		seedFile:     "centos-user-data.yaml",
-		loginUser:    "root",
-		sshPort:      2207,
-		enforceProbe: `[ "$(getenforce)" = "Enforcing" ] && echo OK`,
-		// Exclude our own deliberate confinement negative-control denials
-		// (polypkg_consumer*); the gate still catches any real lifecycle denial.
-		denialProbe: `! ausearch -m AVC -ts boot 2>/dev/null | grep -v polypkg_consumer | grep -q . && echo CLEAN`,
-		labelPaths:  []string{"/var/lib/polypkg", "/usr/local/bin/widget", "/etc/polypkg"},
-	},
-	"ubuntu": {
-		name:         "ubuntu",
-		imageFile:    "ubuntu.img",
-		imageURL:     "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img",
-		imageSHA256:  "5fa5b05e5ec239858c4531485d6023b0896448c2df7c63b34f8dae6ea6051a44", // DevSkim: ignore DS173237 - public Ubuntu cloud image SHA-256 pin (supply-chain integrity), not a secret
-		seedFile:     "ubuntu-user-data.yaml",
-		loginUser:    "root",
-		sshPort:      2208,
-		enforceProbe: `aa-enabled >/dev/null 2>&1 && echo OK`,
-		// Exclude our own deliberate confinement negative-control denials
-		// (profile=polypkg_consumer_narrow); the gate still catches any real one.
-		denialProbe: `! journalctl -k --no-pager 2>/dev/null | grep 'apparmor=.DENIED' | grep -v polypkg_consumer | grep -q . && echo CLEAN`,
-	},
-}
+// The guest struct and the guests map live in guests_test.go (untagged) so the
+// image-pin invariant is enforced by the ordinary `task test` run.
 
 // bootedGuest holds a running VM and the connection details to drive it.
 type bootedGuest struct {
@@ -208,20 +162,40 @@ func ensureImage(g guest, imageDir string) (string, error) {
 		if out, e := exec.Command("curl", "-fL", "-o", tmp, g.imageURL).CombinedOutput(); e != nil {
 			return "", fmt.Errorf("download %s: %w: %s", g.imageURL, e, out)
 		}
+		// Verify BEFORE promoting into the cache. Renaming first would leave an
+		// unverified image at the cached path, and every later run takes the
+		// os.Stat fast path — so bad bytes would be trusted as "already cached"
+		// instead of being re-fetched.
+		if err := verifyImage(tmp, g); err != nil {
+			os.Remove(tmp)
+			return "", fmt.Errorf("download from %s: %w", g.imageURL, err)
+		}
 		if err := os.Rename(tmp, path); err != nil {
 			return "", err
 		}
+		return path, nil
 	}
-	sum, err := sha256File(path)
-	if err != nil {
-		return "", err
-	}
-	if g.imageSHA256 == "" {
-		fmt.Printf("WARNING: %s sha256=%s is unpinned; record it in the guests map (harness_vm_test.go)\n", g.imageFile, sum)
-	} else if sum != g.imageSHA256 {
-		return "", fmt.Errorf("%s sha256 mismatch: got %s want %s", g.imageFile, sum, g.imageSHA256)
+	if err := verifyImage(path, g); err != nil {
+		return "", fmt.Errorf("%w\ncached base image does not match the pin; delete %s and re-run to re-download", err, path)
 	}
 	return path, nil
+}
+
+// verifyImage checks path against the guest's pinned sha256. An empty pin means
+// first bring-up: report the computed sum so it can be recorded in guests.
+func verifyImage(path string, g guest) error {
+	sum, err := sha256File(path)
+	if err != nil {
+		return err
+	}
+	if g.imageSHA256 == "" {
+		fmt.Printf("WARNING: %s sha256=%s is unpinned; record it in the guests map (guests_test.go)\n", g.imageFile, sum)
+		return nil
+	}
+	if sum != g.imageSHA256 {
+		return fmt.Errorf("%s sha256 mismatch: got %s want %s", g.imageFile, sum, g.imageSHA256)
+	}
+	return nil
 }
 
 // buildRepoBase produces a signed repo (hello@1.0.0 + the other fixtures) under
