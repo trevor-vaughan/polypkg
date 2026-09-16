@@ -1,0 +1,27 @@
+internal/repo/cache.go
+  s_8d98358caa748b::t_b71073a3ef3e87 126-132
+internal/repo/cache_test.go
+  s_8d98358caa748b::t_a01f189ae24d7f 157-189
+internal/repo/scaffold_test.go
+  s_8d98358caa748b::t_12d3d53cbe379c 103,105
+  s_8d98358caa748b::t_aa62b4fe98b1fb 78-102,104,106-114
+internal/repo/scaffold.go
+  s_8d98358caa748b::t_875d5f7092b7c9 45
+  s_8d98358caa748b::t_f23324e553f195 46-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b68d9859da08d5e9315830f76597386e17f9fcca",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
