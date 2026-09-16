@@ -1,0 +1,23 @@
+.taskfiles/demo/publish.tape
+  s_8d98358caa748b::t_ee569f7a19570c 40-44
+docs/publishing.md
+  s_8d98358caa748b::t_78900cc97220ff 12
+CHANGELOG.md
+  s_8d98358caa748b::t_8eba3ff5b7c6e9 122-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7f4af5e5bb55858882547052cc20dfde56c788e0",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
