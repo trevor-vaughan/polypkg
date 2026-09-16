@@ -1,0 +1,19 @@
+internal/trust/bundle_test.go
+  s_8d98358caa748b::t_0906f54cacac91 389-394
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d4daf6eae609e11dc0b9fd39867b2f0c9c54eb20",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
