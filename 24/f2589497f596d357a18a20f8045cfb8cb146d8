@@ -1,0 +1,19 @@
+internal/repo/build_test.go
+  s_8d98358caa748b::t_63a3c37934d008 1171-1177,1192,1194-1197,1206-1234,1249-1274,1276-1294,1296-1297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "24f2589497f596d357a18a20f8045cfb8cb146d8",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
