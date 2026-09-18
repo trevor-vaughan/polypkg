@@ -1,0 +1,24 @@
+internal/cli/repoaddremove.go
+  s_8d98358caa748b::t_2fcb4d52640ef8 187-193
+  s_8d98358caa748b::t_a0bed97b6b70d1 216
+internal/repo/version_resolve.go
+  s_8d98358caa748b::t_ac14391c0a44fd 13,15-21,44-45
+internal/repo/version_resolve_test.go
+  s_8d98358caa748b::t_c86ccfa72d7c46 24,33-36,52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7f59de94a1780d95cbfc5e2789541b57f3131795",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
