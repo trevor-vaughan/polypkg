@@ -1,0 +1,83 @@
+internal/repo/scaffold.go
+  s_8d98358caa748b::t_f9f87a40d9768d 80
+internal/repo/build_test.go
+  s_8d98358caa748b::t_800a5943a6cec0 43,291,847,986,1066
+  s_8d98358caa748b::t_3e611c6a07a4d8 807
+internal/planner/planner_downgrade_test.go
+  s_8d98358caa748b::t_9af29c4fdbb610 106
+internal/cli/apply_attest_test.go
+  s_8d98358caa748b::t_8e62171d68f6c0 41,102,174
+internal/cli/mirror_test.go
+  s_8d98358caa748b::t_abddb31f3e55ce 462
+  s_8d98358caa748b::t_964b8ce34ee23b 307
+internal/mirror/pull_test.go
+  s_8d98358caa748b::t_4162ac0b69da53 49,158,339,579
+  s_8d98358caa748b::t_85582917b85c35 711
+  s_8d98358caa748b::t_a8371e212814d2 737-738
+  s_8d98358caa748b::t_aa84b458448df0 814,818-819,821-822,824-825
+internal/planner/planner_attest_prebuilt_test.go
+  s_8d98358caa748b::t_4293898f90603f 84-87
+tests/e2e/provenancegen/gen/gen.go
+  s_8d98358caa748b::t_bc5f15bc8104a7 403,587
+internal/cli/repobuild_test.go
+  s_8d98358caa748b::t_912afd713f302f 100
+internal/mirror/pull.go
+  s_8d98358caa748b::t_637535ffd8f4fb 283-285,287
+  s_8d98358caa748b::t_8cdd2ed66cc042 375-377,379
+internal/cli/search_test.go
+  s_8d98358caa748b::t_72bbb1ca92761e 201
+internal/schema/repomanifest_test.go
+  s_8d98358caa748b::t_60a7286e6e1a9f 94-97,105
+  s_8d98358caa748b::t_c2ca293d073b1b 128-131,137
+  s_8d98358caa748b::t_dd4f8ae75320f8 152-153,159
+  s_8d98358caa748b::t_ba4a01c4dbbe88 171-172
+  s_8d98358caa748b::t_3968f34b7d3b16 47
+  s_8d98358caa748b::t_39c2adf6dbf9e6 185-186
+  s_8d98358caa748b::t_ea534f5a075239 214
+  s_8d98358caa748b::t_d9b8b37ae96d5e 18,30
+  s_8d98358caa748b::t_746315f9f7e4ba 200
+  s_8d98358caa748b::t_4e10a587349a08 228
+internal/schema/jsonschema/repo-v1.json
+  s_8d98358caa748b::t_52635981616357 23-43
+internal/planner/fetchcatalog_source_test.go
+  s_8d98358caa748b::t_b5cf95ff2a4bd8 82
+internal/mirror/verify_test.go
+  s_8d98358caa748b::t_d8fe000927981b 47
+internal/schema/repomanifest.go
+  s_8d98358caa748b::t_bf13f3f07edb36 40-43
+  s_8d98358caa748b::t_a2eec334796618 57
+  s_8d98358caa748b::t_6608275deb4185 53-56
+internal/repo/ingest_test.go
+  s_8d98358caa748b::t_53700c4167cbb6 64-66
+  s_8d98358caa748b::t_873e72cb88a334 264-265,267,270
+  s_8d98358caa748b::t_e92dea063e9ebb 263
+internal/repo/manifest_edit.go
+  s_8d98358caa748b::t_84afde765f69aa 33-40,47-59,61,65-66,72
+internal/repo/manifest_edit_test.go
+  s_8d98358caa748b::t_a0c72c7aa11139 57
+  s_8d98358caa748b::t_2f739a5ea75f4f 109-177
+  s_8d98358caa748b::t_c256834e4c0ade 26
+internal/cli/plan_attest_test.go
+  s_8d98358caa748b::t_103964ef078db2 37
+internal/planner/planner_weak_test.go
+  s_8d98358caa748b::t_bb6c751460134e 68
+internal/repo/build.go
+  s_8d98358caa748b::t_4805a2b3ceca29 160-171,173-183,185-186,188,190-199
+  s_8d98358caa748b::t_d23ff029804449 379-387,390-402,405-407,409-413,416-421,424-430,432-436,438-441,443-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e3a0e1a7dabd720159d862ea3dc5178614fb2623",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
