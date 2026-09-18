@@ -1,0 +1,24 @@
+tests/integration/e2e_multiversion_test.go
+  s_8d98358caa748b::t_a17c7084728ba9 1-102
+CHANGELOG.md
+  s_8d98358caa748b::t_72a2c2026d6c67 115-132
+docs/publishing.md
+  s_8d98358caa748b::t_232a713a46c3e7 76-90
+  s_8d98358caa748b::t_82e807962fb21f 270-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0e5d667c79f59767a71e1ea24a9817923d4b0703",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
