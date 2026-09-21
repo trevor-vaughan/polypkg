@@ -1,0 +1,21 @@
+CONTRIBUTING.md
+  s_8d98358caa748b::t_002e91e14eba98 80-88
+tests/integration/e2e_search_picker_test.go
+  s_8d98358caa748b::t_6a259f7ac3010a 1-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "12d6103dec4b8d986c8f27cb08d345531b7c1f7a",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
