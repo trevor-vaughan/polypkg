@@ -1,0 +1,32 @@
+internal/mirror/pull.go
+  s_8d98358caa748b::t_c23aa21f3c8be6 157,164
+  s_8d98358caa748b::t_096e075b653f15 57-63
+  s_8d98358caa748b::t_64248b98328d18 486-492,516,520,523-525,528-529,535,539,543,555,558-560,573,576-600
+docs/publishing.md
+  s_8d98358caa748b::t_ab467d68453684 350-376
+internal/mirror/pull_test.go
+  s_8d98358caa748b::t_f19665477969d4 339,344,349,353
+  s_8d98358caa748b::t_c66f12a072ccc1 366
+  s_8d98358caa748b::t_80b38ca9f10471 377-379,388,399,411
+  s_8d98358caa748b::t_550221893a6593 442-525
+docs/mirroring.md
+  s_8d98358caa748b::t_f32f35391d856c 108-118
+internal/cli/mirror.go
+  s_8d98358caa748b::t_5aee8cfe8413de 320-322
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ed4ba47e47a143e5652fb46de346fbbdd71c7c1c",
+  "prompts": {},
+  "sessions": {
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
