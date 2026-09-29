@@ -1,0 +1,29 @@
+.github/workflows/release.yml
+  s_355cdbf9272b76::t_7aa98b8829a751 42-44,47
+.goreleaser.yaml
+  s_355cdbf9272b76::t_ebb93df759ad8e 45-50
+go.mod
+  s_355cdbf9272b76::t_565df3af262149 3,6,10,32-34,42-46,48-51,94,96
+go.sum
+  s_355cdbf9272b76::t_a72e6ff8b14d5c 1-8,85-86,99-100,103-110,113-116,119-120,123-130,313-314,319-320
+internal/cli/initcmd.go
+  s_355cdbf9272b76::t_c5e8cb8b8e0a6f 12
+internal/cli/search.go
+  s_355cdbf9272b76::t_32a6ca27b23fdb 12,136-140,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fb02c8a37863f2fac9a9961fd24a06eae5ac8a7b",
+  "prompts": {},
+  "sessions": {
+    "s_355cdbf9272b76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
