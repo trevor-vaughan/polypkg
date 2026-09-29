@@ -18,8 +18,10 @@ internal/repo/build_expires_test.go
   s_355cdbf9272b76::t_adb56e23094079 25-28,46-48,58-59,71-72,139-142,251-478
 internal/repo/cache.go
   s_355cdbf9272b76::t_041f72df43ab34 14,65-78,126-132
+  s_8d98358caa748b::t_b71073a3ef3e87 126-132
 internal/repo/cache_test.go
   s_355cdbf9272b76::t_dbeaf2c0091f29 157-189
+  s_8d98358caa748b::t_a01f189ae24d7f 157-189
 internal/repo/keystore.go
   s_355cdbf9272b76::t_1771e10ba6a2aa 14,209-257
 internal/repo/keystore_test.go
@@ -30,8 +32,12 @@ internal/repo/manifest_edit_test.go
   s_355cdbf9272b76::t_b2b4091ad9e5c8 18-23,29-34,46,51-94,98-102
 internal/repo/scaffold.go
   s_355cdbf9272b76::t_ffdd7301e4fb62 45-55
+  s_8d98358caa748b::t_875d5f7092b7c9 45
+  s_8d98358caa748b::t_f23324e553f195 46-55
 internal/repo/scaffold_test.go
   s_355cdbf9272b76::t_190adf76e76cdf 78-114
+  s_8d98358caa748b::t_12d3d53cbe379c 103,105
+  s_8d98358caa748b::t_aa62b4fe98b1fb 78-102,104,106-114
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -43,6 +49,14 @@ internal/repo/scaffold_test.go
       "agent_id": {
         "tool": "claude",
         "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    },
+    "s_8d98358caa748b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6659270c-89d8-4f9f-9ac0-ffcce0f9e13d",
         "model": "claude-opus-5"
       },
       "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
