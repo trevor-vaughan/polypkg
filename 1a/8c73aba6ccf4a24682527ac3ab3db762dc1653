@@ -1,0 +1,76 @@
+.taskfiles/scripts/demo.sh
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-183
+.taskfiles/demo/trust.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-50
+Taskfile.yml
+  s_355cdbf9272b76::t_68e6ecf5944e93 4-5
+docs/dev/architecture.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 15-34,107,128,130-131,136-139,161,166,168,175-183,192-193,199-203,216-249
+README.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 11-49,60-74,86-91,99-105,113-130,135,150-151,157-165,178-367,400,403-404,416,418,420-423,425-429,431-434,436-438,465-467,515,517,519,521-523,527-551,556-563,573,589-595
+.taskfiles/demo/publish.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-60
+CHANGELOG.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 15-20,114-125
+.taskfiles/demo/drift.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-45
+.taskfiles/demo/quickstart.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-84
+docs/authoring.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 6,15-217,220-275
+docs/dev/supply-chain.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-859
+docs/publishing.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 3-6,10-23,25-69,76-80,82-98,100-101,103-153,162-190,215-238,290-309,316-317,361-371,407-408,414-423,426-450,459-465
+docs/dev/README.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 6,11-16,19,23,25-29,32-39
+tests/e2e/README.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 48-73
+.taskfiles/demo/mirror.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-46
+.taskfiles/demo/upgrade.tape
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-49
+docs/trust-policy.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-268
+docs/dev/repo-publisher.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 4-7,10-11,14-25,43-55,58-77,116-122,141-142,147-183,188-214,224-230,237-318,321-326,340-353,363-381,393-404,410,422-433,442-481,497-500,509-515,518,521,525,531,535-541,556,568-613,616-829,835-843,847,850-851,853-863,865,867-885,893-895,897-908,911-912,917-918,922
+docs/verifying.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 3-4,6-7,9,11-61,63-67,69-70,72-92,102-128,131-135,138-265
+CONTRIBUTING.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 24-60,75-76,80-94,97-127
+  s_355cdbf9272b76::t_66a6d87e51e286 128
+.gitattributes
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-8
+docs/mirroring.md
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-268
+.taskfiles/demo.yml
+  s_355cdbf9272b76::t_68e6ecf5944e93 1-47
+docs/demo/drift.gif
+  s_355cdbf9272b76::t_83881a231b6f00 1-3
+docs/demo/mirror.gif
+  s_355cdbf9272b76::t_911010b26c251c 1-3
+docs/demo/publish.gif
+  s_355cdbf9272b76::t_46b62bae6032a2 1-3
+docs/demo/quickstart.gif
+  s_355cdbf9272b76::t_6c2698dee9e5bd 1-3
+docs/demo/trust.gif
+  s_355cdbf9272b76::t_6696709ee0f82b 1-3
+docs/demo/upgrade.gif
+  s_355cdbf9272b76::t_bf4f9c941efcd4 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1a8c73aba6ccf4a24682527ac3ab3db762dc1653",
+  "prompts": {},
+  "sessions": {
+    "s_355cdbf9272b76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
