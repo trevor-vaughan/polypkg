@@ -1,0 +1,37 @@
+internal/cli/repo.go
+  s_355cdbf9272b76::t_5d3bbac358a3a4 13,122-131
+internal/cli/repo_test.go
+  s_355cdbf9272b76::t_842e58f7b0b929 94-143
+internal/repo/scaffold.go
+  s_355cdbf9272b76::t_3691c4bc5c7c05 41-45
+internal/repo/scaffold_test.go
+  s_355cdbf9272b76::t_960b292b4d2230 54-77
+internal/schema/jsonschema/profile-v1.json
+  s_355cdbf9272b76::t_da48e4d41df809 28
+internal/schema/jsonschema/repo-v1.json
+  s_355cdbf9272b76::t_06694299c52496 9
+internal/schema/profile_sourcename_test.go
+  s_355cdbf9272b76::t_7c9fa3d960be04 1-102
+internal/schema/repomanifest.go
+  s_355cdbf9272b76::t_7bc7582dead743 60-66,78-80
+internal/schema/repomanifest_test.go
+  s_355cdbf9272b76::t_ed13fc69afbb26 4,232-278
+internal/schema/sourcename.go
+  s_355cdbf9272b76::t_2e9af4b211592e 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "06ca84480fc68fa8b424ab80e55fe866c3dc382d",
+  "prompts": {},
+  "sessions": {
+    "s_355cdbf9272b76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
