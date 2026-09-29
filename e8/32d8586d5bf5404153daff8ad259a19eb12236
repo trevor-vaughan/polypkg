@@ -1,0 +1,75 @@
+internal/cli/apply_attest_test.go
+  s_355cdbf9272b76::t_87cfe173294524 41,102,174
+internal/planner/planner_weak_test.go
+  s_355cdbf9272b76::t_87cfe173294524 68
+internal/repo/build_test.go
+  s_355cdbf9272b76::t_87cfe173294524 43,291,807,847,986,1066,1170-1298
+internal/schema/repomanifest_test.go
+  s_355cdbf9272b76::t_87cfe173294524 18,30,47,94-97,105,128-131,137,152-153,159,171-172,185-186,200,214,228
+internal/schema/jsonschema/repo-v1.json
+  s_355cdbf9272b76::t_87cfe173294524 23-43
+internal/cli/repobuild_test.go
+  s_355cdbf9272b76::t_87cfe173294524 100
+CHANGELOG.md
+  s_355cdbf9272b76::t_87cfe173294524 115-132
+tests/e2e/provenancegen/gen/gen.go
+  s_355cdbf9272b76::t_87cfe173294524 403,587
+internal/cli/search_test.go
+  s_355cdbf9272b76::t_87cfe173294524 201
+internal/repo/scaffold.go
+  s_355cdbf9272b76::t_87cfe173294524 80
+docs/publishing.md
+  s_355cdbf9272b76::t_87cfe173294524 76-90,270-274
+internal/planner/planner_downgrade_test.go
+  s_355cdbf9272b76::t_87cfe173294524 106
+internal/repo/build.go
+  s_355cdbf9272b76::t_87cfe173294524 160-171,173-183,185-186,188,190-199,379-382,384-392,395-419,422-424,426-430,433-451,454-460,462-466,468-474,476-493
+internal/mirror/pull_test.go
+  s_355cdbf9272b76::t_87cfe173294524 49,158,339,579,711,737-738,814,818-819,821-822,824-825
+internal/repo/manifest_edit_test.go
+  s_355cdbf9272b76::t_87cfe173294524 26,57,109-177,191-289
+internal/cli/mirror_test.go
+  s_355cdbf9272b76::t_87cfe173294524 307,462
+internal/planner/planner_attest_prebuilt_test.go
+  s_355cdbf9272b76::t_87cfe173294524 84-87
+internal/mirror/pull.go
+  s_355cdbf9272b76::t_87cfe173294524 283-285,287,375-377,379
+tests/integration/e2e_multiversion_test.go
+  s_355cdbf9272b76::t_87cfe173294524 1-102
+internal/repo/ingest_test.go
+  s_355cdbf9272b76::t_87cfe173294524 64-66,263-265,267,270
+internal/repo/version_resolve_test.go
+  s_355cdbf9272b76::t_87cfe173294524 1-59
+internal/mirror/verify_test.go
+  s_355cdbf9272b76::t_87cfe173294524 47
+internal/repo/version_resolve.go
+  s_355cdbf9272b76::t_87cfe173294524 1-65
+internal/schema/repomanifest.go
+  s_355cdbf9272b76::t_87cfe173294524 40-43,53-57
+internal/repo/manifest_edit.go
+  s_355cdbf9272b76::t_87cfe173294524 33-40,47-56,58-61,65-66,72,82-133
+  s_355cdbf9272b76::t_138510948176a9 134
+internal/cli/repoaddremove.go
+  s_355cdbf9272b76::t_87cfe173294524 6,8,12,116-121,136,141-158,160,165-169,171-175,179-228
+  s_355cdbf9272b76::t_606b7a17850a5e 229
+internal/planner/fetchcatalog_source_test.go
+  s_355cdbf9272b76::t_87cfe173294524 82
+internal/cli/plan_attest_test.go
+  s_355cdbf9272b76::t_87cfe173294524 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e832d8586d5bf5404153daff8ad259a19eb12236",
+  "prompts": {},
+  "sessions": {
+    "s_355cdbf9272b76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
