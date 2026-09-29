@@ -1,0 +1,51 @@
+internal/cli/repoaddremove.go
+  s_355cdbf9272b76::t_475b38c3bea241 12-33,63-66,70,72-73,76,132-137,140
+internal/cli/repoaddremove_test.go
+  s_355cdbf9272b76::t_dcca54b5988431 4,129-460
+internal/cli/repobuild.go
+  s_355cdbf9272b76::t_676597928329be 6,45-91,95-99,103,107,110-124,128,132-179,203-207
+internal/cli/repobuild_test.go
+  s_355cdbf9272b76::t_0c1db0286f27be 8,171-307
+internal/cli/repokey.go
+  s_355cdbf9272b76::t_9306d5050f9034 27,66
+internal/cli/reporevoke.go
+  s_355cdbf9272b76::t_5ec975da7ab16a 51-56
+internal/cli/reporevoke_test.go
+  s_355cdbf9272b76::t_98f750f91ed2d1 120-166
+internal/repo/build.go
+  s_355cdbf9272b76::t_88ead003044996 22-24,32-46,92-99,111-115,124-127,137,211-217,239-240,242,248-270,458-472,474-476,570,575-589,662-694,696-712
+internal/repo/build_expires_test.go
+  s_355cdbf9272b76::t_adb56e23094079 25-28,46-48,58-59,71-72,139-142,251-478
+internal/repo/cache.go
+  s_355cdbf9272b76::t_041f72df43ab34 14,65-78,126-132
+internal/repo/cache_test.go
+  s_355cdbf9272b76::t_dbeaf2c0091f29 157-189
+internal/repo/keystore.go
+  s_355cdbf9272b76::t_1771e10ba6a2aa 14,209-257
+internal/repo/keystore_test.go
+  s_355cdbf9272b76::t_b6be43c5287fca 9,222-287
+internal/repo/manifest_edit.go
+  s_355cdbf9272b76::t_19cc220fdf8e04 4,11-35,38,44,47-49,52,55,61-82
+internal/repo/manifest_edit_test.go
+  s_355cdbf9272b76::t_b2b4091ad9e5c8 18-23,29-34,46,51-94,98-102
+internal/repo/scaffold.go
+  s_355cdbf9272b76::t_ffdd7301e4fb62 45-55
+internal/repo/scaffold_test.go
+  s_355cdbf9272b76::t_190adf76e76cdf 78-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1d2880785f90ebaa77a70a549632c880d9f22ff0",
+  "prompts": {},
+  "sessions": {
+    "s_355cdbf9272b76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee01a3f7-9634-4cc8-a8d9-6f5d323b0018",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
