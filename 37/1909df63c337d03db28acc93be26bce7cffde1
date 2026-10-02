@@ -1,0 +1,53 @@
+README.md
+  s_cb25ec70e86567::t_a961c323b1a555 152-153
+  s_cb25ec70e86567::t_b7c22b89b11bd5 420
+CHANGELOG.md
+  s_cb25ec70e86567::t_44b311c6b5acc9 152-173
+.taskfiles/scripts/demo.sh
+  s_cb25ec70e86567::t_f249c14899fb44 122-126
+  s_cb25ec70e86567::t_0ee63aef378cd0 130
+internal/cli/source_test.go
+  s_cb25ec70e86567::t_6f3b1015ca9443 384-387
+  s_cb25ec70e86567::t_42888dae83efef 338-342,362,366-373
+  s_cb25ec70e86567::t_c5ebe0a03dbae6 113-132
+  s_cb25ec70e86567::t_4e3cb57e63484c 374
+internal/cli/initcmd.go
+  s_cb25ec70e86567::t_b7ab85202639fd 211-212
+  s_cb25ec70e86567::t_885f36b9bb3a38 182,274-289
+  s_cb25ec70e86567::t_354457d600c1fa 39
+  s_cb25ec70e86567::t_679dbbd9671866 94-98,104
+  s_cb25ec70e86567::t_396f4ccec0251a 194-196,202-203
+  s_cb25ec70e86567::t_aa0ed107dc146e 168-181
+  s_cb25ec70e86567::t_96e2dadb516e13 204
+internal/cli/initcmd_test.go
+  s_cb25ec70e86567::t_d9d3a4ac9171a3 124,130
+  s_cb25ec70e86567::t_2f6ac5e68a4914 236-243,246,253,259,265-299
+  s_cb25ec70e86567::t_9b2eb143821312 244-245,247-252,254,256-258,260-264
+  s_cb25ec70e86567::t_9d9f84ae496cbc 255
+  s_cb25ec70e86567::t_b860b0f3753d07 188-192,195
+internal/cli/source.go
+  s_cb25ec70e86567::t_31cc5377e95755 311-317,320,322,324-326
+  s_cb25ec70e86567::t_12885cbb14aeaf 217-218
+docs/trust-policy.md
+  s_cb25ec70e86567::t_0ea0ad7783a1b9 17-26
+internal/cli/trustroot.go
+  s_cb25ec70e86567::t_7f92303e9f5dac 145-147,150-154,159,163
+  s_cb25ec70e86567::t_8fa46dd5d77b45 100-139,144
+  s_cb25ec70e86567::t_e56ad11b801560 140-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "371909df63c337d03db28acc93be26bce7cffde1",
+  "prompts": {},
+  "sessions": {
+    "s_cb25ec70e86567": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9ae840c-1d3f-49f2-957b-d247e5ef9a04",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
