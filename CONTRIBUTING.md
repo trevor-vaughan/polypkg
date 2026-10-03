@@ -77,6 +77,15 @@ task test:vm          # VM-based LSM-enforcement tier under QEMU
 task fuzz             # mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
 ```
 
+One spec in `task test` is heavier than the rest by design:
+`tests/integration/e2e_search_picker_test.go` drives `polypkg search`'s
+interactive picker through a real pty (`script(1)` from util-linux), because
+that is the only way to reach code gated on `interactiveTTY` — the in-process
+harness the rest of `tests/integration` uses wires `bytes.Buffer` I/O, which
+can never look like a terminal. It builds a real binary and takes ~25s. It is
+Linux-only (BSD `script` has no `-c` flag) and skips cleanly on other
+platforms or when `script` is not on `PATH`.
+
 Both container and VM tiers need host setup that `task check` does not:
 
 - `test:integration` needs rootless `podman` **and** `podman-compose`. Where the

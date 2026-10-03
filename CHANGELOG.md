@@ -114,6 +114,11 @@ and on-disk formats may change in breaking ways.
 
 ### Fixed
 
+- `search`'s interactive picker can install again. The picker ran inside the
+  closure that holds the apply lock, so the install it started could never
+  acquire that lock and failed with `another polypkg command is already running
+  (polypkg search)`. The catalog fetch now returns its rows and releases the
+  lock before anything is printed or picked.
 - `repo init --key-dir <relative-path>` records a key path later commands can
   find. It recorded the path verbatim, but manifest paths resolve against the
   manifest directory while `--key-dir` is relative to your working directory, so
