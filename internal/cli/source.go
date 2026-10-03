@@ -315,6 +315,11 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 	if err != nil {
 		return err
 	}
+	// Whether the anchor already existed decides what a failed edit may undo,
+	// so it has to be observed before the copy overwrites it.
+	_, statErr := os.Stat(managedTrustRootPath(cfgDir, name))
+	anchorPreExisted := statErr == nil
+
 	var trustRootPath string
 	if hasTrustRoot {
 		trustRootPath, err = pinTrustRootFile(trustRoot, cfgDir, name)
@@ -334,6 +339,15 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 		OrderFirst: orderFirst,
 	}})
 	if err != nil {
+		// The anchor was written before the edit, so a source that never made
+		// it into the profile would leave one behind. Only an anchor this run
+		// created is ours to remove: if one was already there, the profile's
+		// existing entry still points at it.
+		if !anchorPreExisted {
+			if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
+			}
+		}
 		return &CLIError{Msg: fmt.Sprintf("cannot add source %q to profile", name), Err: err}
 	}
 
@@ -462,10 +476,10 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 // managedOrphanTrustRoot returns the absolute path of the trust-root key that
 // removing source name would orphan, or "" if nothing should be deleted. A key
 // is eligible only when it is this source's canonical managed key
-// (<configdir>/trust/<name>.pub, as written by `source add --trust-root-url`),
-// the source actually references that path, and no other source references it.
-// Externally-supplied --trust-root files (outside the managed trust dir) and
-// keys shared with another source are never returned.
+// (<configdir>/trust/<name>.pub, as written by every `source add` route), the
+// source actually references that path, and no other source references it. A
+// hand-written trust_root pointing outside the managed trust dir, and a key
+// shared with another source, are never returned.
 func managedOrphanTrustRoot(cmd *cobra.Command, name string, p *schema.Profile) string {
 	b, ok := p.Sources.Sources[name]
 	if !ok || b.TrustRoot == "" {
@@ -476,7 +490,7 @@ func managedOrphanTrustRoot(cmd *cobra.Command, name string, p *schema.Profile) 
 	if err != nil {
 		return ""
 	}
-	managed := filepath.Clean(filepath.Join(cfgDir, "trust", name+".pub"))
+	managed := managedTrustRootPath(cfgDir, name)
 	if filepath.Clean(b.TrustRoot) != managed {
 		return "" // external or non-canonical key; leave it
 	}

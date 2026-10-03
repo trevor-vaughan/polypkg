@@ -130,6 +130,44 @@ var _ = Describe("source commands", func() {
 			Expect(string(saved)).To(Equal(string(original)))
 		})
 
+		// The anchor is copied before the profile is edited, so a failed edit
+		// would otherwise leave a key behind for a source that was never added.
+		It("removes the key it just pinned when the profile edit fails", func() {
+			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
+
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			Expect(err).To(HaveOccurred())
+
+			_, statErr := os.Stat(filepath.Join(tmpDir, "polypkg", "trust", "extra.pub"))
+			Expect(os.IsNotExist(statErr)).To(BeTrue(),
+				"a failed add must not leave a stray anchor; stat err: %v", statErr)
+			_, oErr := os.Stat(extraPub)
+			Expect(oErr).NotTo(HaveOccurred(), "the operator's own file must be untouched")
+		})
+
+		It("keeps an anchor it did not create when the profile edit fails", func() {
+			// Re-adding an existing source must not delete that source's
+			// anchor on a failed edit: the profile still references it.
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
+			Expect(managed).To(BeAnExistingFile())
+
+			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
+			_, err = runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra2",
+				"--trust-root", extraPub,
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(managed).To(BeAnExistingFile())
+		})
+
 		It("normalizes a bare absolute path URL to file://", func() {
 			out, err := runSource(profilePath, "source", "add", "extra",
 				"--url", "/srv/extra",

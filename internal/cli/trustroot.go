@@ -136,6 +136,14 @@ func pinTrustRootFile(path, destDir, source string) (string, error) {
 	return persistTrustRoot(destDir, source, data)
 }
 
+// managedTrustRootPath returns the canonical location of a source's pinned
+// trust root. Every route that persists an anchor writes here, and
+// managedOrphanTrustRoot decides what `source remove` may delete by comparing
+// a profile's recorded path against it — so the formula lives in one place.
+func managedTrustRootPath(cfgDir, source string) string {
+	return filepath.Clean(filepath.Join(cfgDir, "trust", source+".pub"))
+}
+
 // persistTrustRoot writes validated public-key bytes to destDir/trust/<source>.pub
 // atomically and returns that path. Mode 0o644 because this is public key
 // material and carries no secret; the enclosing trust/ dir is 0o700, so under
@@ -145,7 +153,8 @@ func persistTrustRoot(destDir, source string, data []byte) (string, error) {
 	// CLIError.Error() renders Msg alone, so each message names the path it
 	// tried: this is the first write of an init run, and under --scope system
 	// it is where an unprivileged operator lands.
-	trustDir := filepath.Join(destDir, "trust")
+	dest := managedTrustRootPath(destDir, source)
+	trustDir := filepath.Dir(dest)
 	if err := os.MkdirAll(trustDir, 0o700); err != nil {
 		return "", &CLIError{
 			Msg:  fmt.Sprintf("cannot create trust directory %s: %s", trustDir, err),
@@ -153,7 +162,6 @@ func persistTrustRoot(destDir, source string, data []byte) (string, error) {
 			Err:  err,
 		}
 	}
-	dest := filepath.Join(trustDir, source+".pub")
 	tmp := dest + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil { //nolint:gosec // 0o644: public key material; no secrets
 		return "", &CLIError{Msg: fmt.Sprintf("cannot write trust root %s: %s", tmp, err), Err: err}
