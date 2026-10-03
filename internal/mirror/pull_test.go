@@ -46,7 +46,7 @@ func buildLocalRepo(t *testing.T) (outDir, trustRoot string) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func buildLocalRepoWithCarried(t *testing.T) (outDir, trustRoot string, kp *repo
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -336,7 +336,7 @@ func buildLocalRepoWithBundle(t *testing.T) (outDir, trustRoot string, kp *repo.
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -576,7 +576,7 @@ func buildLocalRepoCarriedWithBundle(t *testing.T) (outDir, trustRoot string) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -708,7 +708,7 @@ func TestWritePrebuiltManifestIsBuildable(t *testing.T) {
 		t.Fatalf("generated manifest invalid: %v", err)
 	}
 	pk, ok := m.Packages["hello"]
-	if !ok || pk.Prebuilt == nil {
+	if !ok || len(pk) != 1 || pk[0].Prebuilt == nil {
 		t.Fatalf("generated manifest missing hello.prebuilt: %+v", m.Packages)
 	}
 }
@@ -734,8 +734,8 @@ func TestWritePrebuiltManifestMultiMergesSourcesWithPerSourceBundles(t *testing.
 	}
 	got := string(raw)
 	for _, want := range []string{
-		"foo:\n    prebuilt:\n      artifact: /s1/foo.tar.zst\n      attestations: /s1/atts\n      trust_bundle: /s1/trust-bundle.json\n",
-		"bar:\n    prebuilt:\n      artifact: /s2/bar.tar.zst\n      attestations: /s2/atts\n      trust_bundle: /s2/trust-bundle.json\n",
+		"foo:\n    - prebuilt:\n        artifact: /s1/foo.tar.zst\n        attestations: /s1/atts\n        trust_bundle: /s1/trust-bundle.json\n",
+		"bar:\n    - prebuilt:\n        artifact: /s2/bar.tar.zst\n        attestations: /s2/atts\n        trust_bundle: /s2/trust-bundle.json\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("manifest missing block %q:\n%s", want, got)
@@ -811,18 +811,18 @@ func TestWriteManagementManifestUsesAbsolutePublishedPaths(t *testing.T) {
 		t.Errorf("output (%q) and key.path (%q) must both be absolute", m.Output, m.Key.Path)
 	}
 	pkg, ok := m.Packages["hello"]
-	if !ok || pkg.Prebuilt == nil {
+	if !ok || len(pkg) != 1 || pkg[0].Prebuilt == nil {
 		t.Fatalf("emitted manifest has no prebuilt entry for hello: %+v", m.Packages)
 	}
 	wantArtifact := filepath.Join(out, "pool", "aa.tar.zst")
-	if pkg.Prebuilt.Artifact != wantArtifact {
-		t.Errorf("artifact = %q, want the published pool blob %q", pkg.Prebuilt.Artifact, wantArtifact)
+	if pkg[0].Prebuilt.Artifact != wantArtifact {
+		t.Errorf("artifact = %q, want the published pool blob %q", pkg[0].Prebuilt.Artifact, wantArtifact)
 	}
-	if pkg.Prebuilt.Attestations != filepath.Join(out, "pool") {
-		t.Errorf("attestations = %q, want the published pool dir", pkg.Prebuilt.Attestations)
+	if pkg[0].Prebuilt.Attestations != filepath.Join(out, "pool") {
+		t.Errorf("attestations = %q, want the published pool dir", pkg[0].Prebuilt.Attestations)
 	}
-	if pkg.Prebuilt.TrustBundle != filepath.Join(out, "trust-bundle.json") {
-		t.Errorf("trust_bundle = %q, want the published bundle", pkg.Prebuilt.TrustBundle)
+	if pkg[0].Prebuilt.TrustBundle != filepath.Join(out, "trust-bundle.json") {
+		t.Errorf("trust_bundle = %q, want the published bundle", pkg[0].Prebuilt.TrustBundle)
 	}
 }
 

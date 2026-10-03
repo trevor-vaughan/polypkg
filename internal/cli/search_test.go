@@ -198,7 +198,7 @@ func searchLockEnv(out *bytes.Buffer) (cmd *cobra.Command, scope, stateHome stri
 	Expect(os.WriteFile(mPath, []byte(
 		"schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n"+
 			"key:\n  path: "+keyPath+"\n  kdf: scrypt\n"+
-			"packages:\n  hello:\n    source: ./pkgs/hello\n"), 0o644)).To(Succeed())
+			"packages:\n  hello:\n    - source: ./pkgs/hello\n"), 0o644)).To(Succeed())
 
 	b, err := repo.NewBuilder(mPath, keyDir, "pw")
 	Expect(err).NotTo(HaveOccurred())

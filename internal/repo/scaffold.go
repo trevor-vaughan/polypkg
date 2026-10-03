@@ -77,7 +77,7 @@ func InitRepo(o InitOptions) (InitResult, error) {
 		Source:   o.Source,
 		Output:   "./public",
 		Key:      schema.RepoKey{Path: keyPath, KDF: string(o.KDF)},
-		Packages: map[string]schema.RepoPackage{},
+		Packages: map[string][]schema.RepoPackage{},
 	}
 	raw, err := yaml.Marshal(m)
 	if err != nil {

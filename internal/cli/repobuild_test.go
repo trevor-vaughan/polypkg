@@ -97,7 +97,7 @@ key:
     kdf: scrypt
 packages:
     hello:
-        source: ./pkgs/hello
+        - source: ./pkgs/hello
 `, keyPath)
 }
 

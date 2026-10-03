@@ -103,7 +103,7 @@ func (r *signedRepo) Publish(opts repo.BuildOptions, pkgs map[string]fixturePkg)
 			[]byte("#!/bin/sh\necho "+name+" "+spec.Version+"\n"), 0o755); err != nil {
 			r.tb.Fatal(err)
 		}
-		manifest += "  " + name + ":\n    source: ./pkgs/" + name + "\n"
+		manifest += "  " + name + ":\n    - source: ./pkgs/" + name + "\n"
 	}
 
 	mPath := filepath.Join(r.root, "polypkg-repo.yaml")

@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 // Manifest-mutation invariant for this file:
@@ -110,10 +113,12 @@ func normalizeSrcPath(manifestPath, srcDir string) string {
 
 func newRepoRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove <name>",
-		Short: "Remove a package from the manifest and rebuild",
-		Long:  "Removes packages.<name> from the manifest, then reconciles the repository so the package drops out of the signed index.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "remove <name>[@<version>]",
+		Short: "Remove a package, or one of its versions, from the manifest and rebuild",
+		Long: "Removes packages.<name> from the manifest, or with @<version>, just the entry that " +
+			"publishes that version, then reconciles the repository so the removed package or " +
+			"version drops out of the signed index.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -128,23 +133,97 @@ func newRepoRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-func runRepoRemove(cmd *cobra.Command, name string, format Format) error {
+func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 	pf, err := newBuildPreflight(cmd)
 	if err != nil {
 		return err
 	}
-	edit, err := repo.PlanRemovePackage(pf.manifest, name)
-	if err != nil {
-		return mapPublishError(err)
+
+	name, version, hasVersion := strings.Cut(arg, "@")
+
+	var edit *repo.ManifestEdit
+	if !hasVersion {
+		edit, err = repo.PlanRemovePackage(pf.manifest, name)
+		if err != nil {
+			return mapPublishError(err)
+		}
+	} else {
+		identifier, rerr := resolveVersionIdentifier(pf.manifest, name, version)
+		if rerr != nil {
+			return rerr
+		}
+		edit, err = repo.PlanRemovePackageSource(pf.manifest, name, identifier)
+		if err != nil {
+			return mapPublishError(err)
+		}
 	}
+
 	res, err := pf.buildEdit(cmd, edit)
 	if err != nil {
 		return err
 	}
-	EmitResult(cmd, format, "repo remove",
-		map[string]any{"package": name, "serial": res.SerialAfter},
+	data := map[string]any{"package": name, "serial": res.SerialAfter}
+	if hasVersion {
+		data["version"] = version
+	}
+	EmitResult(cmd, format, "repo remove", data,
 		func(w *bytes.Buffer, d map[string]any) {
-			fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
+			if v, ok := d["version"]; ok {
+				fmt.Fprintf(w, "Removed %s@%s and rebuilt the repository (serial %d)\n", d["package"], v, d["serial"])
+			} else {
+				fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
+			}
 		})
 	return nil
+}
+
+// resolveVersionIdentifier finds which entry registered under name in the
+// manifest at manifestPath declares version, and returns that entry's
+// manifest identifier (repo.EntryIdentifier: a source path or prebuilt
+// artifact path) for repo.PlanRemovePackageSource.
+//
+// The manifest deliberately does not record versions (see
+// internal/repo/version_resolve.go), so resolving "@<version>" costs reading
+// every entry via repo.EntryVersion until one matches - a YAML read for a
+// source entry, a full extraction for a prebuilt one. That cost is accepted
+// rather than routed through the build cache: the cache lives at a path
+// (keyDir + source-derived filename, internal/repo/build.go) that only
+// layoutFor computes, and duplicating that formula here would silently drift
+// if the convention ever changed. `repo remove` is a rare interactive
+// command, so the extraction cost is not worth that coupling.
+func resolveVersionIdentifier(manifestPath, name, version string) (string, error) {
+	f, err := os.Open(manifestPath) //nolint:gosec // G304: path is user-supplied manifest location from --manifest flag
+	if err != nil {
+		return "", &CLIError{Msg: "cannot open repo manifest", Hint: "run `polypkg repo init <dir>` first", Err: err}
+	}
+	defer func() { _ = f.Close() }()
+	m, err := schema.ParseRepoManifest(f)
+	if err != nil {
+		return "", mapPublishError(err)
+	}
+
+	entries, ok := m.Packages[name]
+	if !ok || len(entries) == 0 {
+		return "", &CLIError{
+			Msg:  "package " + name + " is not in the repo manifest",
+			Hint: "run `polypkg repo status` to list registered packages",
+		}
+	}
+
+	manifestDir := filepath.Dir(manifestPath)
+	available := make([]string, 0, len(entries))
+	for _, e := range entries {
+		v, verr := repo.EntryVersion(manifestDir, e)
+		if verr != nil {
+			return "", mapPublishError(verr)
+		}
+		if v == version {
+			return repo.EntryIdentifier(e), nil
+		}
+		available = append(available, v)
+	}
+	return "", &CLIError{
+		Msg:  fmt.Sprintf("package %s has no published version %s", name, version),
+		Hint: fmt.Sprintf("published versions of %s: %s", name, strings.Join(available, ", ")),
+	}
 }

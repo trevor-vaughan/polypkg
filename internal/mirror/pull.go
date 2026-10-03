@@ -280,11 +280,11 @@ func WritePrebuiltManifestMulti(manifestPath string, p PrebuiltManifestParams, r
 				return fmt.Errorf("package %q pulled from more than one source (a repo manifest keys packages by name)", pk.Name)
 			}
 			seen[pk.Name] = true
-			sb.WriteString("  " + pk.Name + ":\n    prebuilt:\n")
-			sb.WriteString("      artifact: " + pk.ArtifactPath + "\n")
-			sb.WriteString("      attestations: " + pk.AttDir + "\n")
+			sb.WriteString("  " + pk.Name + ":\n    - prebuilt:\n")
+			sb.WriteString("        artifact: " + pk.ArtifactPath + "\n")
+			sb.WriteString("        attestations: " + pk.AttDir + "\n")
 			if res.TrustBundlePath != "" {
-				sb.WriteString("      trust_bundle: " + res.TrustBundlePath + "\n")
+				sb.WriteString("        trust_bundle: " + res.TrustBundlePath + "\n")
 			}
 		}
 	}
@@ -372,11 +372,11 @@ func WriteManagementManifest(p PrebuiltManifestParams) error {
 		if len(entries) != 1 {
 			return fmt.Errorf("published index lists %d versions of package %q; a repo manifest holds one prebuilt per name", len(entries), name)
 		}
-		sb.WriteString("  " + name + ":\n    prebuilt:\n")
-		sb.WriteString("      artifact: " + filepath.Join(absOut, filepath.FromSlash(entries[0].Artifact)) + "\n")
-		sb.WriteString("      attestations: " + poolDir + "\n")
+		sb.WriteString("  " + name + ":\n    - prebuilt:\n")
+		sb.WriteString("        artifact: " + filepath.Join(absOut, filepath.FromSlash(entries[0].Artifact)) + "\n")
+		sb.WriteString("        attestations: " + poolDir + "\n")
 		if trustBundle != "" {
-			sb.WriteString("      trust_bundle: " + trustBundle + "\n")
+			sb.WriteString("        trust_bundle: " + trustBundle + "\n")
 		}
 	}
 

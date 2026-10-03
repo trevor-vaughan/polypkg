@@ -157,45 +157,47 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 	// package keys on its fetched artifact's content hash — mirroring Build's two
 	// branches so `repo status` agrees with what a build would actually do.
 	manifestKeys := make(map[string]bool, len(i.layout.manifest.Packages))
-	for name, pkg := range i.layout.manifest.Packages {
-		var cacheKey, fp string
-		if pkg.Prebuilt != nil {
-			artPath := resolveRel(i.layout.manifestDir, pkg.Prebuilt.Artifact)
-			artifact, rerr := os.ReadFile(artPath) //nolint:gosec // G304: artPath is the operator-declared prebuilt artifact
-			if rerr != nil {
-				return false, "", &PublishError{
-					Msg:  fmt.Sprintf("cannot read prebuilt artifact for %q", name),
-					Hint: fmt.Sprintf("check packages.%s.prebuilt.artifact (%s)", name, pkg.Prebuilt.Artifact),
-					Err:  rerr,
-				}
-			}
-			cacheKey = ContentHash(artifact)
-			fp = cacheKey
-		} else {
-			srcDir := resolveRel(i.layout.manifestDir, pkg.Source)
-			f, ferr := SourceFingerprint(srcDir)
-			if ferr != nil {
-				return false, "", &PublishError{
-					Msg:  fmt.Sprintf("cannot fingerprint package %q source", name),
-					Hint: fmt.Sprintf("check that packages.%s.source (%s) exists and is readable", name, pkg.Source),
-					Err:  ferr,
-				}
-			}
-			cacheKey = pkg.Source
-			fp = f
-		}
-		manifestKeys[cacheKey] = true
-
-		prev, ok := cache.Get(cacheKey)
-		if !ok || prev.Fingerprint != fp {
+	for name, entries := range i.layout.manifest.Packages {
+		for _, pkg := range entries {
+			var cacheKey, fp string
 			if pkg.Prebuilt != nil {
-				return true, fmt.Sprintf("package %q prebuilt artifact is new or changed", name), nil
+				artPath := resolveRel(i.layout.manifestDir, pkg.Prebuilt.Artifact)
+				artifact, rerr := os.ReadFile(artPath) //nolint:gosec // G304: artPath is the operator-declared prebuilt artifact
+				if rerr != nil {
+					return false, "", &PublishError{
+						Msg:  fmt.Sprintf("cannot read prebuilt artifact for %q", name),
+						Hint: fmt.Sprintf("check packages.%s.prebuilt.artifact (%s)", name, pkg.Prebuilt.Artifact),
+						Err:  rerr,
+					}
+				}
+				cacheKey = ContentHash(artifact)
+				fp = cacheKey
+			} else {
+				srcDir := resolveRel(i.layout.manifestDir, pkg.Source)
+				f, ferr := SourceFingerprint(srcDir)
+				if ferr != nil {
+					return false, "", &PublishError{
+						Msg:  fmt.Sprintf("cannot fingerprint package %q source", name),
+						Hint: fmt.Sprintf("check that packages.%s.source (%s) exists and is readable", name, pkg.Source),
+						Err:  ferr,
+					}
+				}
+				cacheKey = pkg.Source
+				fp = f
 			}
-			return true, fmt.Sprintf("package %q source is new or changed", name), nil
-		}
-		// Artifact file must still be present in the output dir.
-		if _, statErr := os.Stat(filepath.Join(i.layout.outputDir, prev.Artifact)); statErr != nil {
-			return true, fmt.Sprintf("package %q artifact is missing from the output directory", name), nil
+			manifestKeys[cacheKey] = true
+
+			prev, ok := cache.Get(cacheKey)
+			if !ok || prev.Fingerprint != fp {
+				if pkg.Prebuilt != nil {
+					return true, fmt.Sprintf("package %q prebuilt artifact is new or changed", name), nil
+				}
+				return true, fmt.Sprintf("package %q source is new or changed", name), nil
+			}
+			// Artifact file must still be present in the output dir.
+			if _, statErr := os.Stat(filepath.Join(i.layout.outputDir, prev.Artifact)); statErr != nil {
+				return true, fmt.Sprintf("package %q artifact is missing from the output directory", name), nil
+			}
 		}
 	}
 
@@ -374,83 +376,122 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	var bundleRoots []schema.SigstoreRoot
 
 	for _, name := range names {
-		pkg := lay.manifest.Packages[name]
+		// Two entries resolving to one version cannot both be published: the
+		// index lists versions within a name, so the second would overwrite the
+		// first and the repository would stop matching its manifest.
+		seenVersions := map[string]string{} // version -> the source that declared it
 
-		if pkg.Prebuilt != nil {
-			if pkg.Prebuilt.TrustBundle != "" {
-				if err := mergeCarriedBundle(resolveRel(lay.manifestDir, pkg.Prebuilt.TrustBundle), bundleKeys, &bundleOrder, &bundleRoots); err != nil {
+		for _, pkg := range lay.manifest.Packages[name] {
+			if pkg.Prebuilt != nil {
+				if pkg.Prebuilt.TrustBundle != "" {
+					if err := mergeCarriedBundle(resolveRel(lay.manifestDir, pkg.Prebuilt.TrustBundle), bundleKeys, &bundleOrder, &bundleRoots); err != nil {
+						return Result{}, err
+					}
+				}
+				w, hit, err := b.ingestPackage(lay, name, pkg.Prebuilt, cache)
+				if err != nil {
 					return Result{}, err
 				}
+				// w.version is set on both the cache-hit and cache-miss return paths
+				// of ingestPackage, so checking here (before the reuse branch) catches
+				// a duplicate on a cache-hit build too, not just a fresh pack.
+				if prevSrc, dup := seenVersions[w.version]; dup {
+					return Result{}, &PublishError{
+						Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
+							name, w.version, prevSrc, pkg.Prebuilt.Artifact),
+						Hint: "each entry under a package name must build a distinct version; " +
+							"drop one with `polypkg repo remove " + name + "@" + w.version + "`",
+					}
+				}
+				seenVersions[w.version] = pkg.Prebuilt.Artifact
+				if hit.reuse {
+					idx.Packages[name] = append(idx.Packages[name], hit.entry)
+					newEntries[w.cacheKey] = hit.cacheEntry
+					continue
+				}
+				rev := nextRevision(cache, pubIdx, w.cacheKey, name, w.version, w.contentHash)
+				entry, ce, err := b.emitPackage(lay.outputDir, w, rev)
+				if err != nil {
+					return Result{}, err
+				}
+				idx.Packages[name] = append(idx.Packages[name], entry)
+				newEntries[w.cacheKey] = ce
+				changed = true
+				continue
 			}
-			w, hit, err := b.ingestPackage(lay, name, pkg.Prebuilt, cache)
+
+			srcDir := resolveRel(lay.manifestDir, pkg.Source)
+			fp, err := SourceFingerprint(srcDir)
+			if err != nil {
+				return Result{}, &PublishError{
+					Msg:  fmt.Sprintf("cannot fingerprint package %q source", name),
+					Hint: fmt.Sprintf("check that packages.%s.source (%s) exists and is readable", name, pkg.Source),
+					Err:  err,
+				}
+			}
+
+			if prev, ok := cache.Get(pkg.Source); ok && prev.Fingerprint == fp {
+				if _, statErr := os.Stat(filepath.Join(lay.outputDir, prev.Artifact)); statErr == nil {
+					// A cache hit skips PackArtifact, so the version comes from the
+					// cache entry: the duplicate check must run here too, or a
+					// second entry that also hits cache never reaches the
+					// post-PackArtifact guard below.
+					if prevSrc, dup := seenVersions[prev.Version]; dup {
+						return Result{}, &PublishError{
+							Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
+								name, prev.Version, prevSrc, pkg.Source),
+							Hint: "each entry under a package name must build a distinct version; " +
+								"drop one with `polypkg repo remove " + name + "@" + prev.Version + "`",
+						}
+					}
+					seenVersions[prev.Version] = pkg.Source
+					idx.Packages[name] = append(idx.Packages[name], prev.indexEntry())
+					newEntries[pkg.Source] = prev
+					continue
+				}
+			}
+
+			artifact, pkgParsed, err := PackArtifact(srcDir)
+			if err != nil {
+				return Result{}, &PublishError{
+					Msg:  fmt.Sprintf("cannot pack package %q", name),
+					Hint: fmt.Sprintf("check the package source at packages.%s.source (%s)", name, pkg.Source),
+					Err:  err,
+				}
+			}
+			if pkgParsed.Name != name {
+				return Result{}, &PublishError{
+					Msg:  fmt.Sprintf("manifest key %q does not match package name %q", name, pkgParsed.Name),
+					Hint: "the key in packages.<name> must match the name field in the package's polypkg.yaml",
+				}
+			}
+			if prevSrc, dup := seenVersions[pkgParsed.Version]; dup {
+				return Result{}, &PublishError{
+					Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
+						name, pkgParsed.Version, prevSrc, pkg.Source),
+					Hint: "each entry under a package name must build a distinct version; " +
+						"drop one with `polypkg repo remove " + name + "@" + pkgParsed.Version + "`",
+				}
+			}
+			seenVersions[pkgParsed.Version] = pkg.Source
+			ch := ContentHash(artifact)
+			refs, blobs, err := b.sourceAttestations(srcDir, pkg.Source, name, pkgParsed.Version, ch, artifact, opts.SkipAttestations)
 			if err != nil {
 				return Result{}, err
 			}
-			if hit.reuse {
-				idx.Packages[name] = []schema.IndexEntry{hit.entry}
-				newEntries[w.cacheKey] = hit.cacheEntry
-				continue
+			w := packageWork{
+				name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
+				fingerprint: fp, cacheKey: pkg.Source, attRefs: refs, attBlobs: blobs, pkg: pkgParsed,
 			}
-			rev := nextRevision(cache, pubIdx, w.cacheKey, name, w.version, w.contentHash)
+			rev := nextRevision(cache, pubIdx, pkg.Source, name, pkgParsed.Version, ch)
 			entry, ce, err := b.emitPackage(lay.outputDir, w, rev)
 			if err != nil {
 				return Result{}, err
 			}
-			idx.Packages[name] = []schema.IndexEntry{entry}
-			newEntries[w.cacheKey] = ce
+			idx.Packages[name] = append(idx.Packages[name], entry)
+			newEntries[pkg.Source] = ce
 			changed = true
-			continue
 		}
-
-		srcDir := resolveRel(lay.manifestDir, pkg.Source)
-		fp, err := SourceFingerprint(srcDir)
-		if err != nil {
-			return Result{}, &PublishError{
-				Msg:  fmt.Sprintf("cannot fingerprint package %q source", name),
-				Hint: fmt.Sprintf("check that packages.%s.source (%s) exists and is readable", name, pkg.Source),
-				Err:  err,
-			}
-		}
-
-		if prev, ok := cache.Get(pkg.Source); ok && prev.Fingerprint == fp {
-			if _, statErr := os.Stat(filepath.Join(lay.outputDir, prev.Artifact)); statErr == nil {
-				idx.Packages[name] = []schema.IndexEntry{prev.indexEntry()}
-				newEntries[pkg.Source] = prev
-				continue
-			}
-		}
-
-		artifact, pkgParsed, err := PackArtifact(srcDir)
-		if err != nil {
-			return Result{}, &PublishError{
-				Msg:  fmt.Sprintf("cannot pack package %q", name),
-				Hint: fmt.Sprintf("check the package source at packages.%s.source (%s)", name, pkg.Source),
-				Err:  err,
-			}
-		}
-		if pkgParsed.Name != name {
-			return Result{}, &PublishError{
-				Msg:  fmt.Sprintf("manifest key %q does not match package name %q", name, pkgParsed.Name),
-				Hint: "the key in packages.<name> must match the name field in the package's polypkg.yaml",
-			}
-		}
-		ch := ContentHash(artifact)
-		refs, blobs, err := b.sourceAttestations(srcDir, pkg.Source, name, pkgParsed.Version, ch, artifact, opts.SkipAttestations)
-		if err != nil {
-			return Result{}, err
-		}
-		w := packageWork{
-			name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
-			fingerprint: fp, cacheKey: pkg.Source, attRefs: refs, attBlobs: blobs, pkg: pkgParsed,
-		}
-		rev := nextRevision(cache, pubIdx, pkg.Source, name, pkgParsed.Version, ch)
-		entry, ce, err := b.emitPackage(lay.outputDir, w, rev)
-		if err != nil {
-			return Result{}, err
-		}
-		idx.Packages[name] = []schema.IndexEntry{entry}
-		newEntries[pkg.Source] = ce
-		changed = true
 	}
 
 	// Stamp the freshness bound (D13). computeExpires reuses the published

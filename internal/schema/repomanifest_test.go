@@ -15,7 +15,7 @@ key:
   kdf: scrypt
 packages:
   hello:
-    source: ./pkgs/hello
+    - source: ./pkgs/hello
 `
 	m, err := ParseRepoManifest(strings.NewReader(in))
 	if err != nil {
@@ -27,7 +27,7 @@ packages:
 	if m.Key.KDF != "scrypt" || m.Key.Path != "keys/example.key" {
 		t.Fatalf("unexpected key: %+v", m.Key)
 	}
-	if got := m.Packages["hello"].Source; got != "./pkgs/hello" {
+	if got := m.Packages["hello"][0].Source; got != "./pkgs/hello" {
 		t.Fatalf("hello source = %q", got)
 	}
 	if m.Schema != "polypkg.repo/v1" {
@@ -44,7 +44,7 @@ key:
   kdf: scrypt
 packages:
   hello:
-    source: ./pkgs/hello
+    - source: ./pkgs/hello
 `)
 	f.Add(`schema: polypkg.repo/v1
 source: s
@@ -91,10 +91,10 @@ key:
   kdf: scrypt
 packages:
   hello:
-    prebuilt:
-      artifact: ./staging/hello.tar.zst
-      attestations: ./staging/hello-atts
-      trust_bundle: ./staging/trust-bundle.json
+    - prebuilt:
+        artifact: ./staging/hello.tar.zst
+        attestations: ./staging/hello-atts
+        trust_bundle: ./staging/trust-bundle.json
 `
 
 func TestParseRepoManifestAcceptsPrebuilt(t *testing.T) {
@@ -102,7 +102,7 @@ func TestParseRepoManifestAcceptsPrebuilt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse prebuilt manifest: %v", err)
 	}
-	p := m.Packages["hello"]
+	p := m.Packages["hello"][0]
 	if p.Source != "" {
 		t.Fatalf("prebuilt entry set source = %q, want empty", p.Source)
 	}
@@ -125,16 +125,16 @@ key:
   kdf: scrypt
 packages:
   hello:
-    prebuilt:
-      artifact: ./staging/hello.tar.zst
-      attestations: ./staging/hello-atts
-      native_attestation: some/path.att.json
+    - prebuilt:
+        artifact: ./staging/hello.tar.zst
+        attestations: ./staging/hello-atts
+        native_attestation: some/path.att.json
 `
 	m, err := ParseRepoManifest(strings.NewReader(in))
 	if err != nil {
 		t.Fatalf("parse native_attestation manifest: %v", err)
 	}
-	p := m.Packages["hello"]
+	p := m.Packages["hello"][0]
 	if p.Prebuilt == nil {
 		t.Fatal("prebuilt entry parsed with nil Prebuilt")
 	}
@@ -149,13 +149,14 @@ source: example
 output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
-  hello: {source: ./pkgs/hello}
+  hello:
+    - {source: ./pkgs/hello}
 `
 	m, err := ParseRepoManifest(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("parse source manifest: %v", err)
 	}
-	if m.Packages["hello"].Prebuilt != nil {
+	if m.Packages["hello"][0].Prebuilt != nil {
 		t.Fatal("source entry parsed a non-nil Prebuilt")
 	}
 }
@@ -167,8 +168,8 @@ output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
   hello:
-    source: ./pkgs/hello
-    prebuilt: {artifact: ./a.tar.zst, attestations: ./atts}
+    - source: ./pkgs/hello
+      prebuilt: {artifact: ./a.tar.zst, attestations: ./atts}
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: entry declares both source and prebuilt")
@@ -181,7 +182,8 @@ source: example
 output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
-  hello: {}
+  hello:
+    - {}
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: entry declares neither source nor prebuilt")
@@ -195,7 +197,7 @@ output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
   hello:
-    prebuilt: {attestations: ./atts}
+    - prebuilt: {attestations: ./atts}
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: prebuilt missing required artifact")
@@ -209,7 +211,7 @@ output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
   hello:
-    prebuilt: {artifact: ./a.tar.zst}
+    - prebuilt: {artifact: ./a.tar.zst}
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: prebuilt missing required attestations")
@@ -223,7 +225,7 @@ output: ./public
 key: {path: /k, kdf: scrypt}
 packages:
   hello:
-    prebuilt: {artifact: ./a.tar.zst, attestations: ./atts, bogus: x}
+    - prebuilt: {artifact: ./a.tar.zst, attestations: ./atts, bogus: x}
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: unknown prebuilt sub-field")

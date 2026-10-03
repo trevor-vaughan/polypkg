@@ -30,28 +30,46 @@ type ManifestEdit struct {
 // YAML comments are not preserved because the manifest is machine-managed.
 func (e *ManifestEdit) Commit() error { return writeAtomic(e.path, e.body) }
 
-// PlanAddPackage computes the manifest at path with packages.<name>.source
-// registered (or updated), writing nothing.
+// PlanAddPackage computes the manifest at path with source registered under
+// name, writing nothing. Entries are deduplicated by source path: re-adding the
+// same path updates that entry in place, a new path appends a version.
+//
+// Deduplicating by source rather than by version keeps this function free of
+// I/O — reading a version means parsing the source tree, or extracting a
+// prebuilt artifact. Two entries declaring the same version is therefore
+// possible here and is rejected by Build, which already parses every entry.
 func PlanAddPackage(path, name, source string) (*ManifestEdit, error) {
 	m, err := loadManifestForEdit(path)
 	if err != nil {
 		return nil, err
 	}
 	if m.Packages == nil {
-		m.Packages = map[string]schema.RepoPackage{}
+		m.Packages = map[string][]schema.RepoPackage{}
 	}
-	m.Packages[name] = schema.RepoPackage{Source: source}
+	entries := m.Packages[name]
+	replaced := false
+	for i := range entries {
+		if entries[i].Source == source {
+			entries[i] = schema.RepoPackage{Source: source}
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		entries = append(entries, schema.RepoPackage{Source: source})
+	}
+	m.Packages[name] = entries
 	return planEdit(path, m)
 }
 
-// PlanRemovePackage computes the manifest at path with packages.<name> dropped,
-// writing nothing. It errors if the package is not registered.
+// PlanRemovePackage computes the manifest at path with every entry for name
+// dropped, writing nothing. It errors if the package is not registered.
 func PlanRemovePackage(path, name string) (*ManifestEdit, error) {
 	m, err := loadManifestForEdit(path)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := m.Packages[name]; !ok {
+	if len(m.Packages[name]) == 0 {
 		return nil, &PublishError{
 			Msg:  "package " + name + " is not in the repo manifest",
 			Hint: "run `polypkg repo status` to list registered packages",
@@ -59,6 +77,59 @@ func PlanRemovePackage(path, name string) (*ManifestEdit, error) {
 	}
 	delete(m.Packages, name)
 	return planEdit(path, m)
+}
+
+// PlanRemovePackageSource computes the manifest at path with the single entry
+// for name whose identifier is identifier dropped, writing nothing. Removing
+// the last entry deletes the name: the schema requires at least one entry per
+// name, so an empty list would not round-trip.
+//
+// identifier is matched against EntryIdentifier(e): a source entry's Source,
+// or a prebuilt entry's artifact path. Both are manifest-authored strings, so
+// one string argument covers either kind without the caller needing to know
+// which one a given entry is — the caller (runRepoRemove) learns the right
+// identifier the same way it learns the version, by reading it off the entry
+// EntryVersion resolved.
+func PlanRemovePackageSource(path, name, identifier string) (*ManifestEdit, error) {
+	m, err := loadManifestForEdit(path)
+	if err != nil {
+		return nil, err
+	}
+	entries := m.Packages[name]
+	kept := make([]schema.RepoPackage, 0, len(entries))
+	found := false
+	for _, e := range entries {
+		if !found && EntryIdentifier(e) == identifier {
+			found = true
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if !found {
+		return nil, &PublishError{
+			Msg:  "package " + name + " has no entry with source " + identifier,
+			Hint: "run `polypkg repo status` to list registered packages",
+		}
+	}
+	if len(kept) == 0 {
+		delete(m.Packages, name)
+	} else {
+		m.Packages[name] = kept
+	}
+	return planEdit(path, m)
+}
+
+// EntryIdentifier returns the manifest-authored path that identifies a
+// package entry: a source entry's Source, or a prebuilt entry's artifact
+// path. The two are mutually exclusive (schema oneOf), so exactly one is
+// non-empty. Exported so callers resolving "@<version>" (internal/cli) can
+// recover the identifier for the entry EntryVersion matched, without
+// reimplementing the Source/Prebuilt branch.
+func EntryIdentifier(e schema.RepoPackage) string {
+	if e.Prebuilt != nil {
+		return e.Prebuilt.Artifact
+	}
+	return e.Source
 }
 
 // planEdit renders the edited manifest to the bytes Commit will write and

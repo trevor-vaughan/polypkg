@@ -112,6 +112,24 @@ and on-disk formats may change in breaking ways.
   a GoReleaser release pipeline producing Cosign-signed checksums, per-archive
   Syft SBOMs, and GitHub SLSA build-provenance attestations.
 
+### Changed
+
+- **Breaking (`polypkg-repo.yaml`):** `packages:` maps each name to a *list* of
+  entries, so one repository can publish several versions of a package:
+
+  ```yaml
+  packages:
+      hello:
+          - source: ./pkgs/hello-1.0.0
+          - source: ./pkgs/hello-1.1.0
+  ```
+
+  Existing manifests need each entry turned into a one-item list. `repo add`
+  appends a new source and updates a repeated one; `repo remove <name>` drops
+  every version and `repo remove <name>@<version>` drops one. An exact client
+  pin now stays resolvable after the publisher ships a newer version, which is
+  what the README's held-back wording has always described.
+
 ### Fixed
 
 - `search`'s interactive picker can install again. The picker ran inside the

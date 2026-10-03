@@ -40,7 +40,7 @@ func newTestRepo(t *testing.T) (string, string) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestBuildRefusesLintErrorPackage(t *testing.T) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -804,7 +804,7 @@ func TestBuildDropsRemovedPackageFromIndex(t *testing.T) {
 	// Manifest with both packages.
 	twoPackageManifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n  world:\n    source: ./pkgs/world\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n  world:\n    - source: ./pkgs/world\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(twoPackageManifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -844,7 +844,7 @@ func TestBuildDropsRemovedPackageFromIndex(t *testing.T) {
 	// Rewrite manifest with only hello.
 	onePackageManifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	if err := os.WriteFile(mPath, []byte(onePackageManifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func TestBuildPublishesDependsRelations(t *testing.T) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -1063,7 +1063,7 @@ func TestBuildPublishesWeakDependencies(t *testing.T) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -1166,4 +1166,133 @@ func TestWriteAtomicBatchCommitsAll(t *testing.T) {
 			t.Fatalf("%s.tmp left behind after commit", name)
 		}
 	}
+}
+
+// writeDupVersionSources lays out two package source directories under
+// root/pkgs/{a,b}, both named hello and both at version 1.0.0 — the shared
+// fixture for the duplicate-version guard tests below, where one manifest
+// entry per source declaring the same version is exactly what the guard
+// rejects.
+func writeDupVersionSources(t *testing.T, root string) {
+	t.Helper()
+	for _, sub := range []string{"a", "b"} {
+		dir := filepath.Join(root, "pkgs", sub)
+		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		manifest := "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\nactions: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hello"),
+			[]byte("#!/bin/sh\necho "+sub+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// writeDupVersionKey generates and saves a scrypt-encrypted signing key under
+// keyDir for the duplicate-version guard tests, returning its path.
+func writeDupVersionKey(t *testing.T, keyDir string) string {
+	t.Helper()
+	kp, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "repo.key")
+	if err := SaveKey(keyPath, kp, "pw", KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	return keyPath
+}
+
+// assertDupVersionError fails t unless err mentions the duplicated version and
+// both offending source paths, so a publisher can identify and fix the
+// manifest from the error alone.
+func assertDupVersionError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Build accepted two entries declaring hello 1.0.0; want an error")
+	}
+	for _, want := range []string{"1.0.0", "./pkgs/a", "./pkgs/b"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q; the publisher needs both sources named", err, want)
+		}
+	}
+}
+
+// TestBuildRejectsDuplicateVersions covers two manifest entries under one name
+// resolving to the same version. The index keys versions within a name, so one
+// would silently overwrite the other and the repository would not match the
+// manifest that produced it. Both entries are fresh packs, exercising the
+// post-PackArtifact guard.
+func TestBuildRejectsDuplicateVersions(t *testing.T) {
+	root := t.TempDir()
+	keyDir := t.TempDir()
+
+	writeDupVersionSources(t, root)
+	keyPath := writeDupVersionKey(t, keyDir)
+
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	body := "schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/a\n    - source: ./pkgs/b\n"
+	if err := os.WriteFile(mPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = b.Build(BuildOptions{SkipAttestations: true})
+	assertDupVersionError(t, err)
+}
+
+// TestBuildRejectsDuplicateVersionsOnCacheHit covers the same duplicate as
+// TestBuildRejectsDuplicateVersions, but forces source "a" through the build
+// cache instead of a fresh pack: build once with only "a", then add "b"
+// (same version) and rebuild. The source branch's cache-hit continue returns
+// before PackArtifact runs, so the post-PackArtifact duplicate-version guard
+// never executes for a cached entry — that path needs its own guard, added at
+// the cache-hit continue itself. Without this test, that guard could regress
+// unnoticed: nothing else in the suite reaches it.
+func TestBuildRejectsDuplicateVersionsOnCacheHit(t *testing.T) {
+	root := t.TempDir()
+	keyDir := t.TempDir()
+
+	writeDupVersionSources(t, root)
+	keyPath := writeDupVersionKey(t, keyDir)
+
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+
+	// First build: only source "a", so it lands in the build cache.
+	body1 := "schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/a\n"
+	if err := os.WriteFile(mPath, []byte(body1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b1, err := NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b1.Build(BuildOptions{SkipAttestations: true}); err != nil {
+		t.Fatalf("first build: %v", err)
+	}
+
+	// Second build: add source "b" declaring the same version. "a" is now a
+	// cache hit; "b" is a fresh pack.
+	body2 := "schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/a\n    - source: ./pkgs/b\n"
+	if err := os.WriteFile(mPath, []byte(body2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b2, err := NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = b2.Build(BuildOptions{SkipAttestations: true})
+	assertDupVersionError(t, err)
 }

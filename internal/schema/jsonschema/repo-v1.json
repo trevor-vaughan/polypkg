@@ -20,23 +20,27 @@
     "packages": {
       "type": "object",
       "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "oneOf": [
-          { "required": ["source"] },
-          { "required": ["prebuilt"] }
-        ],
-        "properties": {
-          "source": { "type": "string", "minLength": 1 },
-          "prebuilt": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["artifact", "attestations"],
-            "properties": {
-              "artifact": { "type": "string", "minLength": 1 },
-              "attestations": { "type": "string", "minLength": 1 },
-              "trust_bundle": { "type": "string", "minLength": 1 },
-              "native_attestation": { "type": "string", "minLength": 1 }
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "oneOf": [
+            { "required": ["source"] },
+            { "required": ["prebuilt"] }
+          ],
+          "properties": {
+            "source": { "type": "string", "minLength": 1 },
+            "prebuilt": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["artifact", "attestations"],
+              "properties": {
+                "artifact": { "type": "string", "minLength": 1 },
+                "attestations": { "type": "string", "minLength": 1 },
+                "trust_bundle": { "type": "string", "minLength": 1 },
+                "native_attestation": { "type": "string", "minLength": 1 }
+              }
             }
           }
         }

@@ -79,7 +79,7 @@ func buildSignedLocalRepoWithKeypair(t testing.TB, sourceName string, opts repo.
 
 	manifest := "schema: polypkg.repo/v1\nsource: " + sourceName + "\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)

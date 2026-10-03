@@ -81,10 +81,10 @@ func buildSignedPrebuiltNativeRepo(t testing.TB, sourceName string) (outputDir, 
 
 	manifest := "schema: polypkg.repo/v1\nsource: " + sourceName + "\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    prebuilt:\n" +
-		"      artifact: " + artPath + "\n" +
-		"      attestations: " + attDir + "\n" +
-		"      native_attestation: " + nativePath + "\n"
+		"packages:\n  hello:\n    - prebuilt:\n" +
+		"        artifact: " + artPath + "\n" +
+		"        attestations: " + attDir + "\n" +
+		"        native_attestation: " + nativePath + "\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)

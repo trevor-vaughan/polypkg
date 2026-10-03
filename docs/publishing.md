@@ -73,6 +73,21 @@ The repository is described declaratively by `polypkg-repo.yaml`; `add`/`remove`
 are sugar that edit it then reconcile, exactly like `install`/`apply` on the
 client side.
 
+`packages:` maps each name to a *list* of entries, one per published version,
+so one repository can publish several versions of the same package:
+
+```yaml
+packages:
+    hello:
+        - source: ./pkgs/hello-1.0.0
+        - source: ./pkgs/hello-1.1.0
+```
+
+`repo add` appends a new version to that list (or updates the entry already
+there if the version repeats). `repo remove hello` withdraws every version of
+`hello`; `repo remove hello@1.0.0` withdraws only that one, leaving the rest
+published.
+
 **A failed `add` or `remove` leaves `polypkg-repo.yaml` byte-identical** — for
 *any* failure, not just a rejected flag. The reconcile runs against an in-memory
 manifest and the file is written only once that build has succeeded, so a build
@@ -252,11 +267,11 @@ never both:
 ```yaml
 packages:
   hello:
-    prebuilt:
-      artifact: ./staging/hello.tar.zst           # a fetched, verified polypkg artifact
-      attestations: ./staging/hello-atts          # dir of its carried *.att.json blobs
-      trust_bundle: ./staging/trust-bundle.json   # optional: carried forward under the local key
-      native_attestation: ./staging/hello-1.0.att.json  # optional: mint a native attestation for it
+    - prebuilt:
+        artifact: ./staging/hello.tar.zst           # a fetched, verified polypkg artifact
+        attestations: ./staging/hello-atts          # dir of its carried *.att.json blobs
+        trust_bundle: ./staging/trust-bundle.json   # optional: carried forward under the local key
+        native_attestation: ./staging/hello-1.0.att.json  # optional: mint a native attestation for it
 ```
 
 `repo build` copies `artifact` into the pool **content-addressed and

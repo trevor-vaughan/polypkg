@@ -37,8 +37,10 @@ type RepoPrebuilt struct {
 	NativeAttestation string `yaml:"native_attestation,omitempty" json:"native_attestation,omitempty"`
 }
 
-// RepoPackage is one package registered in a repo manifest: either a local
-// source tree (Source) or a pre-built ingest (Prebuilt), never both.
+// RepoPackage is one version of one package registered in a repo manifest:
+// either a local source tree (Source) or a pre-built ingest (Prebuilt), never
+// both. A manifest maps each package name to a list of these, one per published
+// version — see RepoManifest.Packages.
 type RepoPackage struct {
 	Source   string        `yaml:"source,omitempty"   json:"source,omitempty"`
 	Prebuilt *RepoPrebuilt `yaml:"prebuilt,omitempty" json:"prebuilt,omitempty"`
@@ -48,11 +50,11 @@ type RepoPackage struct {
 // (polypkg.repo/v1). It is the single source of truth a `repo build` reconciles
 // the output directory against.
 type RepoManifest struct {
-	Schema   string                 `yaml:"schema"             json:"schema"`
-	Source   string                 `yaml:"source"             json:"source"`
-	Output   string                 `yaml:"output"             json:"output"`
-	Key      RepoKey                `yaml:"key"                json:"key"`
-	Packages map[string]RepoPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
+	Schema   string                   `yaml:"schema"             json:"schema"`
+	Source   string                   `yaml:"source"             json:"source"`
+	Output   string                   `yaml:"output"             json:"output"`
+	Key      RepoKey                  `yaml:"key"                json:"key"`
+	Packages map[string][]RepoPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
 }
 
 // ParseRepoManifest reads a YAML repo manifest, rejects unknown fields, and
