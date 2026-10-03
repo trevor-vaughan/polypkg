@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -677,5 +679,252 @@ func TestMirrorPullRevocationsAreCumulative(t *testing.T) {
 	}
 	if !revs.IsBuilderKeyRevoked(revKey) {
 		t.Fatalf("mirror does not honor still-advertised revoked builder key %s", revKey)
+	}
+}
+
+func TestMirrorPullRejectsNonSlugRepoSource(t *testing.T) {
+	for _, src := range []string{"../../pwned", "a/b", "..", "https://mymirror.local/repo"} {
+		t.Run(src, func(t *testing.T) {
+			_, err := runRepo(t, nil, "mirror", "pull",
+				"--source-url", "file:///x", "--trust-root", "r.pub",
+				"--repo-source", src, "--output-dir", t.TempDir(),
+				"--key", filepath.Join(t.TempDir(), "k.key"))
+			if err == nil {
+				t.Fatalf("mirror pull must refuse --repo-source %q", src)
+			}
+			var ce *CLIError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected CLIError, got %T: %v", err, err)
+			}
+			if !strings.Contains(ce.Msg, "is not a valid slug") {
+				t.Fatalf("want a slug error, got %q", ce.Msg)
+			}
+			if !strings.Contains(ce.Hint, "not a URL") {
+				t.Fatalf("hint must say --repo-source takes a name, not a URL; got %q", ce.Hint)
+			}
+		})
+	}
+}
+
+// Finding 9: a --key path that does not exist used to be reported byte-for-byte
+// like a wrong passphrase, sending the operator after the password instead of
+// the file. The two cases must now be distinguishable, and the missing-file one
+// must name the path polypkg actually opened.
+func TestMirrorPullMissingKeyFileIsNotReportedAsWrongPassword(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepo(t)
+	keyPath, keyDir := makeLocalKey(t)
+	absent := filepath.Join(keyDir, "not-there.key")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	missingOut, missingErr := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", filepath.Join(t.TempDir(), "out"),
+		"--key", absent, "--key-dir", keyDir)
+	if missingErr == nil {
+		t.Fatalf("expected mirror pull to fail with an absent --key (out=%s)", missingOut)
+	}
+	if !strings.Contains(missingErr.Error(), "signing key file not found") ||
+		!strings.Contains(missingErr.Error(), absent) {
+		t.Fatalf("missing-key error = %q, want it to say the file was not found and name %s", missingErr, absent)
+	}
+
+	badPwEnv := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "definitely-wrong"}
+	wrongOut, wrongErr := runRepo(t, badPwEnv, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", filepath.Join(t.TempDir(), "out"),
+		"--key", keyPath, "--key-dir", keyDir)
+	if wrongErr == nil {
+		t.Fatalf("expected mirror pull to fail with a wrong password (out=%s)", wrongOut)
+	}
+	if !strings.Contains(wrongErr.Error(), "cannot unlock signing key") {
+		t.Fatalf("wrong-password error = %q, want the unlock message", wrongErr)
+	}
+	if missingErr.Error() == wrongErr.Error() {
+		t.Fatal("missing key file and wrong password produce identical errors")
+	}
+}
+
+// Finding 12, mirror pull's copy of --valid-for: the same non-positive window
+// that repo build and repo revoke now refuse must be refused here too, before
+// any upstream is fetched.
+func TestMirrorPullRejectsNonPositiveValidFor(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepo(t)
+	keyPath, keyDir := makeLocalKey(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	outputDir := filepath.Join(t.TempDir(), "out")
+
+	out, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir, "--valid-for", "-1h")
+	if err == nil {
+		t.Fatalf("expected an error for --valid-for -1h (out=%s)", out)
+	}
+	if !strings.Contains(err.Error(), "--valid-for must be a positive duration") {
+		t.Fatalf("error = %q, want it to name the flag", err)
+	}
+	if _, statErr := os.Stat(outputDir); statErr == nil {
+		t.Fatal("a rejected --valid-for still published into --output-dir")
+	}
+}
+
+// mirrorBuilderKeyID returns the id of the builder key the upstream's published
+// trust bundle vouches for, so a revocation test has a real target.
+func mirrorBuilderKeyID(t *testing.T, outputDir string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(outputDir, "trust-bundle.json"))
+	if err != nil {
+		t.Fatalf("read carried trust bundle: %v", err)
+	}
+	tb, err := schema.ParseTrustBundle(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse carried trust bundle: %v", err)
+	}
+	if len(tb.BuilderKeys) == 0 {
+		t.Fatal("carried trust bundle has no builder keys")
+	}
+	return tb.BuilderKeys[0].KeyID
+}
+
+// Finding 3: `mirror pull` wrote its generated polypkg-repo.yaml into the
+// staging root, which defaults to a temp dir it deletes on the way out. The
+// mirror therefore had no manifest, and `repo revoke` — the exact command
+// docs/publishing.md tells the operator to run against it — could not open one.
+// The manifest now lands in --output-dir and must actually drive the repo
+// commands, not merely exist.
+func TestMirrorPullWritesManageableManifestIntoOutputDir(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepoWithBundle(t)
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "local-repo")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	out, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "upstream",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("mirror pull: %v (out=%s)", err, out)
+	}
+
+	mPath := filepath.Join(outputDir, "polypkg-repo.yaml")
+	if _, statErr := os.Stat(mPath); statErr != nil {
+		t.Fatalf("mirror pull left no polypkg-repo.yaml in --output-dir: %v", statErr)
+	}
+
+	// repo status must agree the mirror is up to date (exit 0), not error out on
+	// a prebuilt artifact whose staging copy is gone.
+	if sOut, sErr := runRepo(t, nil, "repo", "status", "--manifest", mPath, "--key-dir", keyDir); sErr != nil {
+		t.Fatalf("repo status against the emitted manifest: %v (out=%s)", sErr, sOut)
+	}
+
+	// repo key show and repo export-bundle must both resolve through it.
+	if kOut, kErr := runRepo(t, env, "repo", "key", "show", "--manifest", mPath, "--key-dir", keyDir); kErr != nil {
+		t.Fatalf("repo key show: %v (out=%s)", kErr, kOut)
+	}
+	bundle := filepath.Join(t.TempDir(), "mirror.tar")
+	if bOut, bErr := runRepo(t, env, "repo", "export-bundle", "--manifest", mPath, "--key-dir", keyDir, "-o", bundle); bErr != nil {
+		t.Fatalf("repo export-bundle: %v (out=%s)", bErr, bOut)
+	}
+	if vErr := func() error {
+		_, e := runRepo(t, nil, "mirror", "verify", bundle, "--trust-root", filepath.Join(outputDir, "trust_root.pub"))
+		return e
+	}(); vErr != nil {
+		t.Fatalf("bundle exported via the emitted manifest does not verify: %v", vErr)
+	}
+
+	// The documented revocation-prune procedure must work end to end.
+	keyID := mirrorBuilderKeyID(t, outputDir)
+	if rOut, rErr := runRepo(t, env, "repo", "revoke", "--builder-key", keyID,
+		"--manifest", mPath, "--key-dir", keyDir); rErr != nil {
+		t.Fatalf("repo revoke --builder-key %s: %v (out=%s)", keyID, rErr, rOut)
+	}
+	rl := loadMirrorRevocations(t, outputDir)
+	if !rl.IsBuilderKeyRevoked(keyID) {
+		t.Fatalf("builder key %s is not in the published revocation list", keyID)
+	}
+	if rOut, rErr := runRepo(t, env, "repo", "revoke", "--remove-builder-key", keyID,
+		"--manifest", mPath, "--key-dir", keyDir); rErr != nil {
+		t.Fatalf("repo revoke --remove-builder-key %s: %v (out=%s)", keyID, rErr, rOut)
+	}
+}
+
+// A rebuild through the emitted manifest must be a true no-op: it points at the
+// published pool, so every package is a build-cache hit and the serial holds.
+func TestMirrorPullEmittedManifestRebuildsAsNoOp(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepoWithBundle(t)
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "local-repo")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	if out, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "upstream",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("mirror pull: %v (out=%s)", err, out)
+	}
+	before, err := os.ReadFile(filepath.Join(outputDir, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mPath := filepath.Join(outputDir, "polypkg-repo.yaml")
+	out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("repo build through the emitted manifest: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "already up to date") {
+		t.Fatalf("rebuild through the emitted manifest was not a no-op:\n%s", out)
+	}
+	after, err := os.ReadFile(filepath.Join(outputDir, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("rebuild rewrote the published index:\nbefore=%s\nafter=%s", before, after)
+	}
+	// The carried upstream builder keys must survive the rebuild.
+	if _, statErr := os.Stat(filepath.Join(outputDir, "trust-bundle.json")); statErr != nil {
+		t.Fatalf("rebuild dropped the carried trust bundle: %v", statErr)
+	}
+}
+
+// docs/publishing.md's example passes relative --output-dir and --key. Those
+// were written verbatim into a manifest that lives in the staging temp dir, so
+// they resolved against /tmp/polypkg-mirror-pull-*; the pull published into the
+// temp tree and deleted it. Absolute paths in the emitted manifest also make it
+// usable from any cwd.
+func TestMirrorPullResolvesRelativeOutputAndKeyAgainstCwd(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepo(t)
+	work := t.TempDir()
+	keyDir := filepath.Join(work, "keys")
+	if err := os.MkdirAll(keyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveKey(filepath.Join(keyDir, "local.key"), kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	t.Chdir(work)
+	if out, perr := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", "./mirror-repo",
+		"--key", "./keys/local.key", "--key-dir", "./keys"); perr != nil {
+		t.Fatalf("mirror pull with relative paths: %v (out=%s)", perr, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(work, "mirror-repo", "index.json")); statErr != nil {
+		t.Fatalf("relative --output-dir did not publish under the cwd: %v", statErr)
+	}
+
+	mPath := filepath.Join(work, "mirror-repo", "polypkg-repo.yaml")
+	t.Chdir(t.TempDir()) // an unrelated cwd: only absolute paths can still resolve
+	if out, sErr := runRepo(t, nil, "repo", "status", "--manifest", mPath, "--key-dir", keyDir); sErr != nil {
+		t.Fatalf("repo status from an unrelated cwd: %v (out=%s)", sErr, out)
+	}
+	if out, kErr := runRepo(t, env, "repo", "key", "show", "--manifest", mPath, "--key-dir", keyDir); kErr != nil {
+		t.Fatalf("repo key show from an unrelated cwd: %v (out=%s)", kErr, out)
 	}
 }

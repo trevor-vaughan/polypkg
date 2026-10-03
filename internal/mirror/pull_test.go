@@ -768,3 +768,113 @@ func TestStagedPkgDirNoDelimiterCollision(t *testing.T) {
 		t.Fatalf("distinct packages collide on the same staging dir: %q", a)
 	}
 }
+
+// writeIndexJSON writes a minimal signed-shape index.json into dir for the
+// WriteManagementManifest tests. Only the fields the manifest emitter reads
+// matter; the document is never signature-checked here.
+func writeIndexJSON(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteManagementManifestUsesAbsolutePublishedPaths(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "mirror")
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
+	if err := os.WriteFile(filepath.Join(out, "trust-bundle.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
+	})
+	if err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(out, ManagementManifestName))
+	if err != nil {
+		t.Fatalf("manifest not written: %v", err)
+	}
+	m, perr := schema.ParseRepoManifest(bytesReader(raw))
+	if perr != nil {
+		t.Fatalf("emitted manifest fails schema parse: %v\n%s", perr, raw)
+	}
+	if m.Source != "mymirror" {
+		t.Errorf("source = %q, want mymirror", m.Source)
+	}
+	if !filepath.IsAbs(m.Output) || !filepath.IsAbs(m.Key.Path) {
+		t.Errorf("output (%q) and key.path (%q) must both be absolute", m.Output, m.Key.Path)
+	}
+	pkg, ok := m.Packages["hello"]
+	if !ok || pkg.Prebuilt == nil {
+		t.Fatalf("emitted manifest has no prebuilt entry for hello: %+v", m.Packages)
+	}
+	wantArtifact := filepath.Join(out, "pool", "aa.tar.zst")
+	if pkg.Prebuilt.Artifact != wantArtifact {
+		t.Errorf("artifact = %q, want the published pool blob %q", pkg.Prebuilt.Artifact, wantArtifact)
+	}
+	if pkg.Prebuilt.Attestations != filepath.Join(out, "pool") {
+		t.Errorf("attestations = %q, want the published pool dir", pkg.Prebuilt.Attestations)
+	}
+	if pkg.Prebuilt.TrustBundle != filepath.Join(out, "trust-bundle.json") {
+		t.Errorf("trust_bundle = %q, want the published bundle", pkg.Prebuilt.TrustBundle)
+	}
+}
+
+// A --fresh mirror publishes no trust bundle; the manifest must not reference
+// one that does not exist (repo build would refuse to open it).
+func TestWriteManagementManifestOmitsAbsentTrustBundle(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "mirror")
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
+
+	if err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
+	}); err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, ManagementManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "trust_bundle") {
+		t.Fatalf("manifest references an absent trust bundle:\n%s", raw)
+	}
+}
+
+func TestWriteManagementManifestRefusesWithoutPublishedIndex(t *testing.T) {
+	out := t.TempDir()
+	err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
+	})
+	if err == nil {
+		t.Fatal("expected an error when no index.json has been published")
+	}
+	if !strings.Contains(err.Error(), "read published index") {
+		t.Fatalf("error = %v, want it to name the missing index", err)
+	}
+}
+
+// A repo manifest holds exactly one prebuilt per package name. An index that
+// lists two versions of a name cannot be expressed, so refuse rather than pick.
+func TestWriteManagementManifestRefusesMultiVersionPackage(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "mirror")
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},{"version":"2.0.0","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
+
+	err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
+	})
+	if err == nil {
+		t.Fatal("expected an error for a package with two published versions")
+	}
+	if !strings.Contains(err.Error(), "one prebuilt per name") {
+		t.Fatalf("error = %v, want it to explain the one-version constraint", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, ManagementManifestName)); statErr == nil {
+		t.Fatal("a refused emit still wrote a manifest")
+	}
+}
