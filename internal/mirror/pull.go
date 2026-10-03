@@ -646,9 +646,9 @@ func narrowingNote(name string, entries []schema.IndexEntry, picked string) stri
 		return ""
 	}
 	var skipped []string
-	for _, e := range entries {
-		if e.Version != picked {
-			skipped = append(skipped, e.Version)
+	for i := range entries {
+		if entries[i].Version != picked {
+			skipped = append(skipped, entries[i].Version)
 		}
 	}
 	sort.Strings(skipped)
