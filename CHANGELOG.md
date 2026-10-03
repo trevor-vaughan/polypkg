@@ -42,6 +42,9 @@ and on-disk formats may change in breaking ways.
   tarball of a built repository, `repo pull` fetches upstream packages and
   re-publishes them into one, and `mirror verify` checks a bundle's manifest
   signature, freshness, and completeness before use.
+- `mirror pull --all-versions` mirrors every published version of an unpinned
+  package instead of only the latest; an explicit `name@version` selector
+  still wins.
 
 - Trust-bundle and revocation-list primitives (`polypkg.trust-bundle`,
   `polypkg.revocation-list`), anchored by the source trust root and loaded with

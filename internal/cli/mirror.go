@@ -89,6 +89,13 @@ every upstream package is pulled. A 'name' selector pulls the latest of that
 package; 'name@version' pulls one version. --package is repeatable and unions
 with --from-file. (Multi-source selection is per-entry in the sources file.)
 
+--all-versions mirrors every published version of an unpinned package instead
+of only the latest: with no --package it is every version of every package;
+combined with a bare '--package name' it is every version of that name. An
+explicit 'name@version' still selects only that version: the pin already says
+what you want. Bundles grow with every version mirrored, so only pass this
+where the air-gapped site's clients hold pins against exact versions.
+
 --fresh produces a clone with NO upstream provenance: upstream attestations and
 upstream builder keys/roots are dropped and the repo re-anchors on your key
 alone. A downstream 'require' policy then correctly fails closed on the missing
@@ -117,6 +124,7 @@ is a no-op; refresh content by re-running 'mirror pull'.`,
 	cmd.Flags().String("accept-expiry-until", "", "RFC3339 deadline: accept expired upstream metadata up to this time (freshness grace)")
 	cmd.Flags().StringArray("package", nil, "Select a package to pull: name or name@version (repeatable, single-source mode)")
 	cmd.Flags().String("from-file", "", "Read additional selectors, one per line (single-source mode)")
+	cmd.Flags().Bool("all-versions", false, "Mirror every published version of an unpinned package instead of only the latest; bundles grow accordingly (single-source mode)")
 	// Upstream (multi source)
 	cmd.Flags().String("sources-file", "", "YAML file listing multiple upstream sources (mutually exclusive with --source-url)")
 	// Local re-publish
@@ -168,11 +176,11 @@ func resolveMirrorPullInputs(cmd *cobra.Command) (pullInputs, error) {
 	}
 
 	if sourcesFile != "" {
-		for _, f := range []string{"trust-root", "source-type", "source-name", "accept-expiry-until", "package", "from-file"} {
+		for _, f := range []string{"trust-root", "source-type", "source-name", "accept-expiry-until", "package", "from-file", "all-versions"} {
 			if cmd.Flags().Changed(f) {
 				return pullInputs{}, &CLIError{
 					Msg:  "--" + f + " cannot be combined with --sources-file",
-					Hint: "with --sources-file, set trust_root/source_type/source_name/accept_expiry_until/packages per entry inside the file",
+					Hint: "with --sources-file, set trust_root/source_type/source_name/accept_expiry_until/packages/all_versions per entry inside the file",
 				}
 			}
 		}
@@ -201,9 +209,11 @@ func resolveMirrorPullInputs(cmd *cobra.Command) (pullInputs, error) {
 			}
 			selectors = append(selectors, more...)
 		}
+		allVersions, _ := cmd.Flags().GetBool("all-versions")
 		sources = []mirror.SourceSpec{{
 			URL: sourceURL, TrustRoot: trustRoot, SourceType: sType,
 			SourceName: sName, AcceptExpiryUntil: acceptUntil, Packages: selectors,
+			AllVersions: allVersions,
 		}}
 	}
 
@@ -309,13 +319,17 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		res, perr := mirror.Pull(context.Background(), mirror.PullOptions{
 			URL: s.URL, TrustRoot: s.TrustRoot, SourceType: s.SourceType,
 			SourceName: s.SourceName, AcceptExpiryUntil: s.AcceptExpiryUntil,
-			Selectors: s.Packages, StageDir: filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
+			Selectors: s.Packages, AllVersions: s.AllVersions,
+			StageDir: filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
 		})
 		if perr != nil {
 			return perr
 		}
 		for _, note := range res.Graced {
 			fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: upstream %s accepted under freshness grace: %s\n", s.URL, note)
+		}
+		for _, note := range res.Narrowed {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: upstream %s: %s\n", s.URL, note)
 		}
 		results = append(results, res)
 	}

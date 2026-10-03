@@ -37,7 +37,13 @@ type PullOptions struct {
 	SourceName        string   // logical name (verifier context)
 	AcceptExpiryUntil string   // optional 2e-1 freshness grace deadline (RFC3339)
 	Selectors         []string // empty ⇒ latest of every package; "name" ⇒ latest of name; "name@version" ⇒ that one
-	StageDir          string   // root under which staging/ is written
+	// AllVersions widens what an unpinned selection means, from "latest" to
+	// "every published version": with no selectors, every version of every
+	// package; with a bare "name" selector, every version of that name. An
+	// explicit "name@version" selector still wins regardless of this flag —
+	// it is already unambiguous.
+	AllVersions bool
+	StageDir    string // root under which staging/ is written
 }
 
 // PulledPackage records one verified (and, from Task 2, staged) package.
@@ -54,6 +60,13 @@ type PullResult struct {
 	Packages        []PulledPackage
 	TrustBundlePath string   // staged trust-bundle.json — set by Task 3
 	Graced          []string // freshness-graced doc notes (surfaced loudly by callers)
+	// Narrowed lists the packages for which this pull mirrored only the
+	// latest upstream version even though the upstream published more than
+	// one (an empty selector set or a bare "name" selector both resolve to
+	// "latest"). Kept separate from Graced: that field is specifically about
+	// freshness grace, and folding a completeness signal into a security
+	// signal would muddy both.
+	Narrowed []string
 	// RevokedAttestations / RevokedBuilderKeys are the upstream's revoked sets as
 	// loaded and verified during this pull (nil when the upstream published no
 	// revocation list). Callers propagate their union into the mirror's own
@@ -147,13 +160,14 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		return nil, fmt.Errorf("fetch revocation list: %w", rerr)
 	}
 
-	selected, err := resolvePullSelection(index, opts.Selectors)
+	selected, narrowed, err := resolvePullSelection(index, opts.Selectors, opts.AllVersions)
 	if err != nil {
 		return nil, err
 	}
 	stagingRoot := filepath.Join(opts.StageDir, "staging")
 	res := &PullResult{
 		Graced:              graced,
+		Narrowed:            narrowed,
 		RevokedAttestations: revocations.RevokedAttestationHashes(),
 		RevokedBuilderKeys:  revocations.RevokedBuilderKeyIDs(),
 	}
@@ -260,11 +274,13 @@ func WritePrebuiltManifest(manifestPath string, p PrebuiltManifestParams, res *P
 // whose packages are the prebuilt entries from every PullResult (one per upstream
 // source). Each package references ITS OWN source's staged trust bundle, so
 // `repo build` ingest (mergeCarriedBundle) folds the per-source builder keys
-// together (dedup by key_id; a conflicting key_id fails closed). Refuses two
-// sources that stage the same package name — a repo manifest keys packages by
-// name, so a cross-source collision is ambiguous and fails closed. Paths are
-// written as-is from PullResult (absolute), so the manifest is buildable from any
-// cwd.
+// together (dedup by key_id; a conflicting key_id fails closed). Several
+// versions of the same package name from ONE source are grouped under a single
+// "name:" YAML key with one "- prebuilt:" list item per version. Refuses two
+// DIFFERENT sources that both stage the same package name — a repo manifest
+// keys packages by name, so a cross-source collision is ambiguous and fails
+// closed. Paths are written as-is from PullResult (absolute), so the manifest
+// is buildable from any cwd.
 func WritePrebuiltManifestMulti(manifestPath string, p PrebuiltManifestParams, results []*PullResult) error {
 	var sb strings.Builder
 	sb.WriteString("schema: polypkg.repo/v1\n")
@@ -272,19 +288,33 @@ func WritePrebuiltManifestMulti(manifestPath string, p PrebuiltManifestParams, r
 	sb.WriteString("output: " + p.Output + "\n")
 	sb.WriteString("key:\n  path: " + p.KeyPath + "\n  kdf: " + p.KeyKDF + "\n")
 	sb.WriteString("packages:\n")
-	seen := map[string]bool{}
-	for _, res := range results {
+	// claimedBy tracks which results-slice index (source) first staged a given
+	// package name, so two versions of one name from the SAME source group
+	// together while two DIFFERENT sources staging the same name still collide.
+	claimedBy := map[string]int{}
+	for ri, res := range results {
+		order := make([]string, 0, len(res.Packages))
+		byName := map[string][]*PulledPackage{}
 		for i := range res.Packages {
 			pk := &res.Packages[i]
-			if seen[pk.Name] {
+			if prev, ok := claimedBy[pk.Name]; ok && prev != ri {
 				return fmt.Errorf("package %q pulled from more than one source (a repo manifest keys packages by name)", pk.Name)
 			}
-			seen[pk.Name] = true
-			sb.WriteString("  " + pk.Name + ":\n    - prebuilt:\n")
-			sb.WriteString("        artifact: " + pk.ArtifactPath + "\n")
-			sb.WriteString("        attestations: " + pk.AttDir + "\n")
-			if res.TrustBundlePath != "" {
-				sb.WriteString("        trust_bundle: " + res.TrustBundlePath + "\n")
+			claimedBy[pk.Name] = ri
+			if _, ok := byName[pk.Name]; !ok {
+				order = append(order, pk.Name)
+			}
+			byName[pk.Name] = append(byName[pk.Name], pk)
+		}
+		for _, name := range order {
+			sb.WriteString("  " + name + ":\n")
+			for _, pk := range byName[name] {
+				sb.WriteString("    - prebuilt:\n")
+				sb.WriteString("        artifact: " + pk.ArtifactPath + "\n")
+				sb.WriteString("        attestations: " + pk.AttDir + "\n")
+				if res.TrustBundlePath != "" {
+					sb.WriteString("        trust_bundle: " + res.TrustBundlePath + "\n")
+				}
 			}
 		}
 	}
@@ -369,14 +399,14 @@ func WriteManagementManifest(p PrebuiltManifestParams) error {
 	sb.WriteString("packages:\n")
 	for _, name := range names {
 		entries := idx.Packages[name]
-		if len(entries) != 1 {
-			return fmt.Errorf("published index lists %d versions of package %q; a repo manifest holds one prebuilt per name", len(entries), name)
-		}
-		sb.WriteString("  " + name + ":\n    - prebuilt:\n")
-		sb.WriteString("        artifact: " + filepath.Join(absOut, filepath.FromSlash(entries[0].Artifact)) + "\n")
-		sb.WriteString("        attestations: " + poolDir + "\n")
-		if trustBundle != "" {
-			sb.WriteString("        trust_bundle: " + trustBundle + "\n")
+		sb.WriteString("  " + name + ":\n")
+		for i := range entries {
+			sb.WriteString("    - prebuilt:\n")
+			sb.WriteString("        artifact: " + filepath.Join(absOut, filepath.FromSlash(entries[i].Artifact)) + "\n")
+			sb.WriteString("        attestations: " + poolDir + "\n")
+			if trustBundle != "" {
+				sb.WriteString("        trust_bundle: " + trustBundle + "\n")
+			}
 		}
 	}
 
@@ -450,11 +480,28 @@ type pullSelection struct {
 	entry   schema.IndexEntry
 }
 
-// resolvePullSelection resolves selectors against the verified index to ONE entry
-// per package name (§10.11 D-2e3b-4): empty ⇒ latest of every package; "name" ⇒
-// latest of that name; "name@version" ⇒ that exact version. Refuses selecting the
-// same name twice (a repo manifest keys packages by name).
-func resolvePullSelection(index *schema.Index, selectors []string) ([]pullSelection, error) {
+// resolvePullSelection resolves selectors against the verified index: empty ⇒
+// latest of every package; "name" ⇒ latest of that name; "name@version" ⇒ that
+// exact version. A repo manifest now holds a list of versions per name, so
+// selecting two distinct versions of the same name (e.g. "hello@1.0.0" and
+// "hello@1.1.0") is coherent and resolves to two selections. What is still
+// refused is a genuine conflict: the same selector repeated, or a bare name
+// paired with an explicit version of that name (the bare form means "latest",
+// so pairing it with a pin is ambiguous about which resolution the operator
+// wants).
+//
+// It also returns narrowing notes: whenever a "latest" resolution (empty
+// selectors, or a bare "name" selector) picks a winner from an upstream name
+// that published more than one version, the older versions silently would
+// not be mirrored. An explicit "name@version" selector never produces a
+// note — the operator chose that outcome. Neither does an unpinned name
+// under allVersions — nothing was dropped, so there is nothing to report.
+//
+// allVersions widens what an unpinned selection (empty selectors, or a bare
+// "name") means, from "latest" to "every published version". It does not
+// touch an explicit "name@version" selector: that is already unambiguous,
+// so it is honoured as written regardless of allVersions.
+func resolvePullSelection(index *schema.Index, selectors []string, allVersions bool) ([]pullSelection, []string, error) {
 	pick := func(name string) (pullSelection, error) {
 		entries, ok := index.Packages[name]
 		if !ok || len(entries) == 0 {
@@ -476,32 +523,101 @@ func resolvePullSelection(index *schema.Index, selectors []string) ([]pullSelect
 		}
 		return pullSelection{name: name, version: entries[best].Version, entry: entries[best]}, nil
 	}
-	if len(selectors) == 0 {
-		var out []pullSelection
-		for name := range index.Packages {
-			sel, err := pick(name)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, sel)
+	// pickAll is pick's sibling for the --all-versions path: it returns every
+	// entry for name instead of the single newest one, so it cannot share
+	// pick's return shape. Order is fixed newest-first (matching pick's own
+	// preference) rather than left as map/index order, because the emitted
+	// manifest must be byte-stable across runs; the resolver only needs the
+	// set, so this ordering exists for a human reading index.json.
+	pickAll := func(name string) ([]pullSelection, error) {
+		entries, ok := index.Packages[name]
+		if !ok || len(entries) == 0 {
+			return nil, fmt.Errorf("package %q not found in the upstream index", name)
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+		versions := make([]*semver.Version, len(entries))
+		for i := range entries {
+			v, err := semver.NewVersion(entries[i].Version)
+			if err != nil {
+				return nil, fmt.Errorf("package %q version %q is not semver", name, entries[i].Version)
+			}
+			versions[i] = v
+		}
+		order := make([]int, len(entries))
+		for i := range order {
+			order[i] = i
+		}
+		sort.Slice(order, func(i, j int) bool { return versions[order[i]].GreaterThan(versions[order[j]]) })
+		out := make([]pullSelection, len(entries))
+		for i, idx := range order {
+			out[i] = pullSelection{name: name, version: entries[idx].Version, entry: entries[idx]}
+		}
 		return out, nil
 	}
-	seen := map[string]bool{}
-	var out []pullSelection
-	for _, s := range selectors {
-		name, ver, hasVer := strings.Cut(s, "@")
-		if seen[name] {
-			return nil, fmt.Errorf("package %q selected more than once (one version per name)", name)
-		}
-		seen[name] = true
-		if !hasVer {
+	if len(selectors) == 0 {
+		var out []pullSelection
+		var notes []string
+		for name := range index.Packages {
+			if allVersions {
+				sels, err := pickAll(name)
+				if err != nil {
+					return nil, nil, err
+				}
+				out = append(out, sels...)
+				continue
+			}
 			sel, err := pick(name)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			out = append(out, sel)
+			if note := narrowingNote(name, index.Packages[name], sel.version); note != "" {
+				notes = append(notes, note)
+			}
+		}
+		// Stable: preserves pickAll's newest-first order within a name across
+		// the by-name sort (which only orders distinct names).
+		sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
+		sort.Strings(notes)
+		return out, notes, nil
+	}
+	seenSelector := map[string]bool{}      // exact selector string, catches an outright repeat
+	seenBareName := map[string]bool{}      // name selected bare (⇒ latest)
+	seenVersionedName := map[string]bool{} // name selected with an explicit version
+	var out []pullSelection
+	var notes []string
+	for _, s := range selectors {
+		name, ver, hasVer := strings.Cut(s, "@")
+		if seenSelector[s] {
+			return nil, nil, fmt.Errorf("selector %q given more than once", s)
+		}
+		seenSelector[s] = true
+		if hasVer && seenBareName[name] || !hasVer && seenVersionedName[name] {
+			return nil, nil, fmt.Errorf(
+				"package %q selected both bare and by explicit version: ambiguous, because a bare name means \"latest\" (pick one form)",
+				name)
+		}
+		if hasVer {
+			seenVersionedName[name] = true
+		} else {
+			seenBareName[name] = true
+		}
+		if !hasVer {
+			if allVersions {
+				sels, err := pickAll(name)
+				if err != nil {
+					return nil, nil, err
+				}
+				out = append(out, sels...)
+				continue
+			}
+			sel, err := pick(name)
+			if err != nil {
+				return nil, nil, err
+			}
+			out = append(out, sel)
+			if note := narrowingNote(name, index.Packages[name], sel.version); note != "" {
+				notes = append(notes, note)
+			}
 			continue
 		}
 		entries := index.Packages[name]
@@ -514,8 +630,32 @@ func resolvePullSelection(index *schema.Index, selectors []string) ([]pullSelect
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("package %q version %q not found in the upstream index", name, ver)
+			return nil, nil, fmt.Errorf("package %q version %q not found in the upstream index", name, ver)
 		}
 	}
-	return out, nil
+	return out, notes, nil
+}
+
+// narrowingNote returns an actionable note when a "latest" resolution for
+// name picked a winner (picked) out of an upstream entries list that
+// published more than one version, naming exactly what this pull did not
+// mirror and how to get it. Returns "" when there is nothing to report (the
+// upstream published only one version of name).
+func narrowingNote(name string, entries []schema.IndexEntry, picked string) string {
+	if len(entries) <= 1 {
+		return ""
+	}
+	var skipped []string
+	for _, e := range entries {
+		if e.Version != picked {
+			skipped = append(skipped, e.Version)
+		}
+	}
+	sort.Strings(skipped)
+	if len(skipped) == 1 {
+		return fmt.Sprintf("%s: mirrored %s, did not mirror %s (select it with --package %s@%s)",
+			name, picked, skipped[0], name, skipped[0])
+	}
+	return fmt.Sprintf("%s: mirrored %s, did not mirror %s (select each with --package %s@<version>)",
+		name, picked, strings.Join(skipped, ", "), name)
 }

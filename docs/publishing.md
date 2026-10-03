@@ -347,15 +347,33 @@ any builder key carried in the trust bundle — is revoked, so a mirror hop can
 never launder an upstream revocation (which the consumer treats as absolute).
 Any mismatch refuses the whole pull.
 
-Selection resolves to one version per package name: no selectors pulls the
-latest of every package in the index; `name` pulls the latest of that name;
-`name@version` pins an exact version. Verified bytes land under a staging
-directory (`<name>-<version>/<name>.tar.zst` plus an `attestations/` dir of
-`.att.json` blobs), alongside the source's `trust-bundle.json` when it
-publishes one. `mirror.WritePrebuiltManifest` then writes a `repo
-build`-ready manifest whose packages are `prebuilt:` entries pointing at
-those staged files — running `repo build` against it re-publishes the pull
-verbatim under your own signing key, per the `prebuilt:` mechanics above.
+A repository manifest holds a list of versions per package name, so selection
+is per selector, not per name: no selectors pulls the latest of every package
+in the index; `name` pulls the latest of that name; `name@version` pins an
+exact version. Selecting two distinct versions of the same name (for example
+`--package hello@1.0.0 --package hello@1.1.0`) mirrors both — that is not a
+conflict. What is refused is a genuinely ambiguous request: the same selector
+given twice, or a bare `name` paired with an explicit `name@version` (the
+bare form means "latest", so pairing it with a pin does not resolve to one
+outcome).
+
+Because a default pull (no selectors, or a bare `name`) always takes the
+newest version of a name, it silently narrows any upstream that has published
+more than one version — the older releases simply are not mirrored. `Pull`
+reports this instead of hiding it: each narrowed package gets a note naming
+the version mirrored, the version(s) skipped, and the `--package
+name@version` selector that would have pulled them. `polypkg mirror pull`
+prints each note to stderr prefixed `note:`. Pin the versions you need
+explicitly (`name@version`) to avoid narrowing a version a downstream client
+depends on.
+
+Verified bytes land under a staging directory (`<name>/<version>/<name>.tar.zst`
+plus an `attestations/` dir of `.att.json` blobs), alongside the source's
+`trust-bundle.json` when it publishes one. `mirror.WritePrebuiltManifest` then
+writes a `repo build`-ready manifest whose packages are `prebuilt:` entries
+pointing at those staged files — running `repo build` against it re-publishes
+the pull verbatim under your own signing key, per the `prebuilt:` mechanics
+above.
 
 A pull only verifies that the fetched bytes are authentically the upstream
 source's; it does not re-bind provenance digests itself (that is `repo

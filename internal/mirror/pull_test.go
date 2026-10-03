@@ -63,6 +63,56 @@ func buildLocalRepo(t *testing.T) (outDir, trustRoot string) {
 	return outDir, trustRoot
 }
 
+// buildLocalRepoTwoVersions builds an upstream publishing hello 1.0.0 and
+// 1.1.0, and returns its public dir and trust root. Mirrors buildLocalRepo,
+// which publishes a single version.
+func buildLocalRepoTwoVersions(t *testing.T) (outDir, trustRoot string) {
+	t.Helper()
+	root := t.TempDir()
+	keyDir := t.TempDir()
+
+	for _, v := range []string{"1.0.0", "1.1.0"} {
+		dir := filepath.Join(root, "pkgs", "hello-"+v)
+		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pm := "schema: polypkg.package/v1\nname: hello\nversion: " + v + "\nactions: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(pm), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hi"),
+			[]byte("#!/bin/sh\necho "+v+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "example.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/hello-1.0.0\n    - source: ./pkgs/hello-1.1.0\n"
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Build(repo.BuildOptions{}); err != nil {
+		t.Fatalf("build fixture repo: %v", err)
+	}
+	outDir = filepath.Join(root, "public")
+	trustRoot = filepath.Join(outDir, "trust_root.pub")
+	return outDir, trustRoot
+}
+
 func TestPullVerifiesTrustAndIndex(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t)
 	stage := t.TempDir()
@@ -286,22 +336,350 @@ func TestResolvePullSelectionLatestPerName(t *testing.T) {
 		"foo": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "2.0.0", ContentHash: "blake3:b"}},
 	}}
 	// bare name → latest (2.0.0)
-	got, err := resolvePullSelection(idx, []string{"foo"})
+	got, _, err := resolvePullSelection(idx, []string{"foo"}, false)
 	if err != nil || len(got) != 1 || got[0].version != "2.0.0" {
 		t.Fatalf("bare name: got %+v err %v, want foo@2.0.0", got, err)
 	}
 	// name@version → exact
-	got, err = resolvePullSelection(idx, []string{"foo@1.0.0"})
+	got, _, err = resolvePullSelection(idx, []string{"foo@1.0.0"}, false)
 	if err != nil || len(got) != 1 || got[0].version != "1.0.0" {
 		t.Fatalf("pinned: got %+v err %v, want foo@1.0.0", got, err)
 	}
 	// missing version → error
-	if _, err := resolvePullSelection(idx, []string{"foo@9.9.9"}); err == nil {
+	if _, _, err := resolvePullSelection(idx, []string{"foo@9.9.9"}, false); err == nil {
 		t.Fatal("expected error for missing version")
 	}
 	// duplicate name → error
-	if _, err := resolvePullSelection(idx, []string{"foo", "foo@1.0.0"}); err == nil {
+	if _, _, err := resolvePullSelection(idx, []string{"foo", "foo@1.0.0"}, false); err == nil {
 		t.Fatal("expected error for duplicate-name selection")
+	}
+}
+
+// TestResolvePullSelectionMultipleVersionsSameName proves a coherent
+// multi-version request works now that a repo manifest holds a list of
+// versions per name: selecting two distinct versions of "hello" is not a
+// conflict, it is two selections.
+func TestResolvePullSelectionMultipleVersionsSameName(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	got, notes, err := resolvePullSelection(idx, []string{"hello@1.0.0", "hello@1.1.0"}, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d selections, want 2: %+v", len(got), got)
+	}
+	haveVersion := map[string]bool{got[0].version: true, got[1].version: true}
+	if !haveVersion["1.0.0"] || !haveVersion["1.1.0"] {
+		t.Fatalf("selections = %+v, want both hello@1.0.0 and hello@1.1.0", got)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (both versions explicitly selected)", notes)
+	}
+}
+
+// TestResolvePullSelectionRefusesDuplicateVersion covers the still-genuine
+// conflict: the same exact version named twice.
+func TestResolvePullSelectionRefusesDuplicateVersion(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}},
+	}}
+	if _, _, err := resolvePullSelection(idx, []string{"hello@1.0.0", "hello@1.0.0"}, false); err == nil {
+		t.Fatal("expected refusal: the same name@version selected twice")
+	}
+}
+
+// TestResolvePullSelectionRefusesDuplicateBareName covers the same bare
+// selector repeated, which is also unambiguous but still a duplicate.
+func TestResolvePullSelectionRefusesDuplicateBareName(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}},
+	}}
+	if _, _, err := resolvePullSelection(idx, []string{"hello", "hello"}, false); err == nil {
+		t.Fatal("expected refusal: the same bare selector repeated")
+	}
+}
+
+// TestResolvePullSelectionRefusesBarePlusVersioned covers genuine ambiguity:
+// a bare selector means "latest", so pairing it with an explicit version of
+// the same name does not resolve to a coherent request.
+func TestResolvePullSelectionRefusesBarePlusVersioned(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	_, _, err := resolvePullSelection(idx, []string{"hello", "hello@1.0.0"}, false)
+	if err == nil {
+		t.Fatal("expected refusal: bare name plus an explicit version of the same name")
+	}
+	if !strings.Contains(err.Error(), "latest") {
+		t.Fatalf("error should explain the ambiguity (bare name means latest): %v", err)
+	}
+}
+
+// TestPullAcceptsBothVersionsOfSameName is the end-to-end proof: pulling two
+// distinct versions of the same package name from a real multi-version
+// upstream must succeed and stage both. This fails before the Part 1 fix,
+// because resolvePullSelection refused any name selected twice regardless of
+// which version.
+func TestPullAcceptsBothVersionsOfSameName(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		Selectors: []string{"hello@1.0.0", "hello@1.1.0"},
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Packages) != 2 {
+		t.Fatalf("pulled = %+v, want both hello@1.0.0 and hello@1.1.0", res.Packages)
+	}
+	gotVersions := map[string]bool{res.Packages[0].Version: true, res.Packages[1].Version: true}
+	if !gotVersions["1.0.0"] || !gotVersions["1.1.0"] {
+		t.Fatalf("pulled = %+v, want both hello@1.0.0 and hello@1.1.0", res.Packages)
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (operator explicitly chose both versions)", res.Narrowed)
+	}
+}
+
+// TestPullEmptySelectorsNarrowsMultiVersionUpstream proves that pulling "all
+// packages, latest of each" against an upstream with more than one version of
+// a name produces an actionable note naming what got left behind, instead of
+// silently narrowing the mirror.
+func TestPullEmptySelectorsNarrowsMultiVersionUpstream(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Packages) != 1 || res.Packages[0].Version != "1.1.0" {
+		t.Fatalf("pulled = %+v, want only hello@1.1.0 (latest)", res.Packages)
+	}
+	if len(res.Narrowed) != 1 {
+		t.Fatalf("Narrowed = %v, want exactly one note", res.Narrowed)
+	}
+	note := res.Narrowed[0]
+	if !strings.Contains(note, "hello") || !strings.Contains(note, "1.1.0") || !strings.Contains(note, "1.0.0") {
+		t.Fatalf("note = %q, want it to name hello, the mirrored version 1.1.0, and the skipped version 1.0.0", note)
+	}
+}
+
+// TestPullBareNameNarrowsMultiVersionUpstream covers the same silent-latest
+// pick via an explicit bare selector rather than the empty-selectors case.
+func TestPullBareNameNarrowsMultiVersionUpstream(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		Selectors: []string{"hello"},
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Narrowed) != 1 {
+		t.Fatalf("Narrowed = %v, want exactly one note", res.Narrowed)
+	}
+	note := res.Narrowed[0]
+	if !strings.Contains(note, "hello") || !strings.Contains(note, "1.1.0") || !strings.Contains(note, "1.0.0") {
+		t.Fatalf("note = %q, want it to name hello, the mirrored version 1.1.0, and the skipped version 1.0.0", note)
+	}
+}
+
+// TestPullExplicitVersionProducesNoNarrowingNote proves an operator who pins
+// an exact version never gets a narrowing note: they chose explicitly, there
+// is nothing silent about it.
+func TestPullExplicitVersionProducesNoNarrowingNote(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		Selectors: []string{"hello@1.0.0"},
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (operator explicitly chose the version)", res.Narrowed)
+	}
+}
+
+// TestPullSingleVersionUpstreamProducesNoNarrowingNote proves an upstream
+// that only ever published one version never triggers a note: there is
+// nothing to narrow away.
+func TestPullSingleVersionUpstreamProducesNoNarrowingNote(t *testing.T) {
+	outDir, trustRoot := buildLocalRepo(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (upstream has only one version)", res.Narrowed)
+	}
+}
+
+// TestResolvePullSelectionAllVersionsNoSelectors proves --all-versions with no
+// selectors mirrors every version of every package instead of only the
+// latest, and that resolving under it never produces a narrowing note —
+// nothing was left behind, so there is nothing to report.
+func TestResolvePullSelectionAllVersionsNoSelectors(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	got, notes, err := resolvePullSelection(idx, nil, true)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d selections, want 2: %+v", len(got), got)
+	}
+	haveVersion := map[string]bool{got[0].version: true, got[1].version: true}
+	if !haveVersion["1.0.0"] || !haveVersion["1.1.0"] {
+		t.Fatalf("selections = %+v, want both hello@1.0.0 and hello@1.1.0", got)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (--all-versions dropped nothing)", notes)
+	}
+}
+
+// TestResolvePullSelectionAllVersionsBareName covers the same widening via an
+// explicit bare "--package hello" rather than empty selectors.
+func TestResolvePullSelectionAllVersionsBareName(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	got, notes, err := resolvePullSelection(idx, []string{"hello"}, true)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d selections, want 2: %+v", len(got), got)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (--all-versions dropped nothing)", notes)
+	}
+}
+
+// TestResolvePullSelectionAllVersionsExplicitPinWins proves --all-versions
+// does not override an explicit pin: "hello@1.0.0" is already unambiguous, so
+// it still resolves to exactly that one version.
+func TestResolvePullSelectionAllVersionsExplicitPinWins(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	got, notes, err := resolvePullSelection(idx, []string{"hello@1.0.0"}, true)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if len(got) != 1 || got[0].version != "1.0.0" {
+		t.Fatalf("got %+v, want exactly hello@1.0.0", got)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (explicit pin, not a latest resolution)", notes)
+	}
+}
+
+// TestResolvePullSelectionAllVersionsRefusesDuplicateBareName proves the
+// existing duplicate guard still applies under --all-versions: the same bare
+// selector repeated is still a duplicate, not "select all versions twice".
+func TestResolvePullSelectionAllVersionsRefusesDuplicateBareName(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {{Version: "1.0.0", ContentHash: "blake3:a"}, {Version: "1.1.0", ContentHash: "blake3:b"}},
+	}}
+	if _, _, err := resolvePullSelection(idx, []string{"hello", "hello"}, true); err == nil {
+		t.Fatal("expected refusal: the same bare selector repeated, even under --all-versions")
+	}
+}
+
+// TestPullAllVersionsSingleVersionUpstreamNoNotes proves --all-versions
+// against an upstream that only ever published one version mirrors that one
+// version and produces no narrowing note (there was nothing to widen).
+func TestPullAllVersionsSingleVersionUpstreamNoNotes(t *testing.T) {
+	outDir, trustRoot := buildLocalRepo(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		AllVersions: true,
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Packages) != 1 {
+		t.Fatalf("pulled = %+v, want exactly one package", res.Packages)
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (upstream has only one version)", res.Narrowed)
+	}
+}
+
+// TestPullAllVersionsStagesBothVersionsAndManifestCarriesBoth is the
+// end-to-end proof: --all-versions against a real multi-version upstream
+// stages every version, and the manifest WritePrebuiltManifestMulti emits
+// from the result carries every version too. Parsed through
+// schema.ParseRepoManifest rather than substring-matched, so a duplicate
+// mapping key or bad indentation is caught — an earlier round of this work
+// shipped a duplicate "hello:" key that substring assertions sailed past.
+func TestPullAllVersionsStagesBothVersionsAndManifestCarriesBoth(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		AllVersions: true,
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(res.Packages) != 2 {
+		t.Fatalf("pulled = %+v, want both hello@1.0.0 and hello@1.1.0", res.Packages)
+	}
+	gotVersions := map[string]bool{res.Packages[0].Version: true, res.Packages[1].Version: true}
+	if !gotVersions["1.0.0"] || !gotVersions["1.1.0"] {
+		t.Fatalf("pulled = %+v, want both hello@1.0.0 and hello@1.1.0", res.Packages)
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (--all-versions dropped nothing)", res.Narrowed)
+	}
+
+	keyDir := t.TempDir()
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "local.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	localOut := filepath.Join(stage, "republished")
+	mPath := filepath.Join(stage, "polypkg-repo.yaml")
+	if err := WritePrebuiltManifestMulti(mPath, PrebuiltManifestParams{
+		Source: "local", Output: localOut, KeyPath: keyPath, KeyKDF: "scrypt",
+	}, []*PullResult{res}); err != nil {
+		t.Fatal(err)
+	}
+	mRaw, err := os.ReadFile(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, perr := schema.ParseRepoManifest(bytesReader(mRaw))
+	if perr != nil {
+		t.Fatalf("emitted manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, mRaw)
+	}
+	pk, ok := manifest.Packages["hello"]
+	if !ok || len(pk) != 2 {
+		t.Fatalf("manifest carries %d entries for hello, want 2: %+v", len(pk), manifest.Packages["hello"])
+	}
+	if pk[0].Prebuilt == nil || pk[1].Prebuilt == nil {
+		t.Fatalf("both hello entries must be prebuilt: %+v", pk)
+	}
+	if pk[0].Prebuilt.Artifact == pk[1].Prebuilt.Artifact {
+		t.Fatalf("both hello entries point at the same artifact %q; distinct versions must publish distinct pool blobs", pk[0].Prebuilt.Artifact)
 	}
 }
 
@@ -754,6 +1132,59 @@ func TestWritePrebuiltManifestMultiRejectsDuplicatePackageName(t *testing.T) {
 	}
 }
 
+// TestWritePrebuiltManifestMultiKeepsAllVersionsFromOneSource pulls two real,
+// separately-staged versions of "hello" from the SAME upstream (two Pull calls
+// against one source, merged into one PullResult the way a caller assembling a
+// single source's selections would) and proves WritePrebuiltManifestMulti does
+// NOT treat them as a cross-source collision, and emits "hello:" exactly once
+// with two "- prebuilt:" list items rather than a duplicated YAML mapping key.
+func TestWritePrebuiltManifestMultiKeepsAllVersionsFromOneSource(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	r1, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
+		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
+		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := &PullResult{Packages: append(append([]PulledPackage{}, r1.Packages...), r2.Packages...)}
+
+	mPath := filepath.Join(stage, "polypkg-repo.yaml")
+	if err := WritePrebuiltManifestMulti(mPath, PrebuiltManifestParams{
+		Source: "local", Output: filepath.Join(stage, "out"), KeyPath: "/keys/local.key", KeyKDF: "scrypt",
+	}, []*PullResult{merged}); err != nil {
+		t.Fatalf("two versions of one name from the SAME source must not collide: %v", err)
+	}
+
+	f, err := os.Open(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	m, err := schema.ParseRepoManifest(f)
+	if err != nil {
+		t.Fatalf("generated manifest invalid (duplicate YAML key?): %v\npath: %s", err, mPath)
+	}
+	pk, ok := m.Packages["hello"]
+	if !ok || len(pk) != 2 {
+		t.Fatalf("want 2 prebuilt entries for hello, got %+v", m.Packages["hello"])
+	}
+	if pk[0].Prebuilt == nil || pk[0].Prebuilt.Artifact != r1.Packages[0].ArtifactPath {
+		t.Errorf("entry 0 artifact = %+v, want %q (1.0.0)", pk[0].Prebuilt, r1.Packages[0].ArtifactPath)
+	}
+	if pk[1].Prebuilt == nil || pk[1].Prebuilt.Artifact != r2.Packages[0].ArtifactPath {
+		t.Errorf("entry 1 artifact = %+v, want %q (1.1.0)", pk[1].Prebuilt, r2.Packages[0].ArtifactPath)
+	}
+}
+
 func TestStagedPkgDirNoDelimiterCollision(t *testing.T) {
 	root := t.TempDir()
 	a, err := stagedPkgDir(root, "a", "b-1.0.0")
@@ -859,22 +1290,131 @@ func TestWriteManagementManifestRefusesWithoutPublishedIndex(t *testing.T) {
 	}
 }
 
-// A repo manifest holds exactly one prebuilt per package name. An index that
-// lists two versions of a name cannot be expressed, so refuse rather than pick.
-func TestWriteManagementManifestRefusesMultiVersionPackage(t *testing.T) {
+// A repo manifest holds a LIST of prebuilts per package name (one per
+// published version), so a published index listing two versions of a name
+// must emit two "- prebuilt:" list items under one "hello:" key, not an error.
+func TestWriteManagementManifestEmitsOnePrebuiltPerPublishedVersion(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "mirror")
-	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},{"version":"2.0.0","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},{"version":"1.1.0","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
+	if err := os.WriteFile(filepath.Join(out, "trust-bundle.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	err := WriteManagementManifest(PrebuiltManifestParams{
 		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
 	})
-	if err == nil {
-		t.Fatal("expected an error for a package with two published versions")
+	if err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
 	}
-	if !strings.Contains(err.Error(), "one prebuilt per name") {
-		t.Fatalf("error = %v, want it to explain the one-version constraint", err)
+
+	raw, err := os.ReadFile(filepath.Join(out, ManagementManifestName))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(filepath.Join(out, ManagementManifestName)); statErr == nil {
-		t.Fatal("a refused emit still wrote a manifest")
+	m, perr := schema.ParseRepoManifest(bytesReader(raw))
+	if perr != nil {
+		t.Fatalf("emitted manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, raw)
+	}
+	pkg, ok := m.Packages["hello"]
+	if !ok || len(pkg) != 2 {
+		t.Fatalf("want 2 prebuilt entries for hello, got %+v", m.Packages["hello"])
+	}
+	wantArt0 := filepath.Join(out, "pool", "aa.tar.zst")
+	wantArt1 := filepath.Join(out, "pool", "bb.tar.zst")
+	if pkg[0].Prebuilt == nil || pkg[0].Prebuilt.Artifact != wantArt0 {
+		t.Errorf("entry 0 artifact = %+v, want %q", pkg[0].Prebuilt, wantArt0)
+	}
+	if pkg[1].Prebuilt == nil || pkg[1].Prebuilt.Artifact != wantArt1 {
+		t.Errorf("entry 1 artifact = %+v, want %q", pkg[1].Prebuilt, wantArt1)
+	}
+}
+
+// TestPullTwoVersionsSurviveMirrorRepublish is the real end-to-end path: pull
+// two real, separately-staged versions of "hello" from one upstream, merge
+// them into a single source's PullResult, write the prebuilt manifest, run
+// them through `repo build` (the actual ingest path production code uses),
+// then regenerate the management manifest from what was actually published.
+// Both versions must survive every hop.
+func TestPullTwoVersionsSurviveMirrorRepublish(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoTwoVersions(t)
+	stage := t.TempDir()
+	r1, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
+		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
+		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := &PullResult{Packages: append(append([]PulledPackage{}, r1.Packages...), r2.Packages...)}
+
+	keyDir := t.TempDir()
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "local.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	localOut := filepath.Join(stage, "republished")
+	mPath := filepath.Join(stage, "polypkg-repo.yaml")
+	if err := WritePrebuiltManifestMulti(mPath, PrebuiltManifestParams{
+		Source: "local", Output: localOut, KeyPath: keyPath, KeyKDF: "scrypt",
+	}, []*PullResult{merged}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatalf("new builder on the pulled manifest: %v", err)
+	}
+	if _, err := b.Build(repo.BuildOptions{}); err != nil {
+		t.Fatalf("repo build (ingest) on the pulled manifest failed: %v", err)
+	}
+
+	// The published index carries both versions forward.
+	idxRaw, err := os.ReadFile(filepath.Join(localOut, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := schema.ParseIndex(bytesReader(idxRaw))
+	if err != nil {
+		t.Fatalf("published index invalid: %v", err)
+	}
+	if len(idx.Packages["hello"]) != 2 {
+		t.Fatalf("published index carries %d version(s) of hello, want 2:\n%s", len(idx.Packages["hello"]), idxRaw)
+	}
+
+	// Regenerating the management manifest from the published index emits both
+	// versions as list items under one "hello:" key rather than erroring or
+	// emitting a duplicate mapping key.
+	if err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "local", Output: localOut, KeyPath: keyPath, KeyKDF: "scrypt",
+	}); err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
+	}
+	mgmtRaw, err := os.ReadFile(filepath.Join(localOut, ManagementManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgmt, perr := schema.ParseRepoManifest(bytesReader(mgmtRaw))
+	if perr != nil {
+		t.Fatalf("management manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, mgmtRaw)
+	}
+	pk, ok := mgmt.Packages["hello"]
+	if !ok || len(pk) != 2 {
+		t.Fatalf("management manifest carries %d prebuilt(s) for hello, want 2: %+v", len(pk), mgmt.Packages["hello"])
+	}
+	if pk[0].Prebuilt == nil || pk[1].Prebuilt == nil {
+		t.Fatalf("both hello entries must be prebuilt: %+v", pk)
+	}
+	if pk[0].Prebuilt.Artifact == pk[1].Prebuilt.Artifact {
+		t.Fatalf("both hello entries point at the same artifact %q; distinct versions must publish distinct pool blobs", pk[0].Prebuilt.Artifact)
 	}
 }

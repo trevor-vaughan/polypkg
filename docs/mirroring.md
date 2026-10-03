@@ -105,8 +105,28 @@ Three flags in that command name a source, and they are not interchangeable:
 
 `--package` is repeatable and takes `name` (latest version) or `name@version`
 (pinned); with no selectors the latest version of every upstream package is
-pulled. Verify the exported bundle with `polypkg mirror verify
+pulled. Selecting more than one version of the same name (`--package
+foo@1.0.0 --package foo@1.1.0`) pulls both. If an upstream has published more
+than one version of a name and you did not pin it, the pull takes the
+newest and says so on stderr:
+
+```
+note: upstream https://upstream.example/repo: foo: mirrored 1.1.0, did not mirror 1.0.0 (select it with --package foo@1.0.0)
+```
+
+Pin the versions a downstream client depends on rather than relying on the
+default. Verify the exported bundle with `polypkg mirror verify
 mirror-bundle.tar`.
+
+Pass `--all-versions` to mirror every published version of an unpinned
+package instead of only the latest: with no `--package` it is every version
+of every package; combined with a bare `--package foo` it is every version of
+`foo`. An explicit `name@version` selector still wins: the pin already says
+which version you want, so it is honoured as written. Because nothing is
+left behind under `--all-versions`, an unpinned selection resolved under it
+produces no narrowing note. Bundles grow with every version mirrored, so
+reach for this only where the air-gapped site's clients hold pins against
+exact versions.
 
 ## What gets re-signed
 
@@ -184,12 +204,17 @@ List them in a YAML file and pass `--sources-file` (mutually exclusive with
   packages: [podman@5.0.0]
 ```
 
+Add `all_versions: true` to an entry for the same widening `--all-versions`
+gives single-source mode: every version of every package in that entry's
+`packages` list (or of every upstream package, if `packages` is omitted),
+except a `name@version` entry, which still selects only that version.
+
 Parsing enforces only `url` and `trust_root`; `source_name`, `source_type`,
-`accept_expiry_until`, and `packages` are all optional to the schema. In
-practice, set `source_name` on every entry anyway. It has to match the source
-name bound into that upstream's signed trust document, and an omitted one is not
-caught at parse time — the pull starts, fetches, and fails part-way through
-against the empty name:
+`accept_expiry_until`, `packages`, and `all_versions` are all optional to the
+schema. In practice, set `source_name` on every entry anyway. It has to match
+the source name bound into that upstream's signed trust document, and an
+omitted one is not caught at parse time — the pull starts, fetches, and fails
+part-way through against the empty name:
 
 ```
 error: verify trust document: trust document is for source "upstream-a", expected ""
