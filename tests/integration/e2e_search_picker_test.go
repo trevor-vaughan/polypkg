@@ -47,6 +47,26 @@ var _ = Describe("search picker (real pty)", func() {
 		}
 
 		t := GinkgoTB()
+
+		// Build before anything sandboxes the environment. GOMODCACHE and
+		// GOCACHE both derive from HOME when unset, so building under the
+		// sandboxed HOME set below would populate a fresh module and build
+		// cache inside the temp dir -- and the toolchain writes those
+		// read-only, which makes the t.TempDir cleanup fail on unlinkat with
+		// permission denied. Only the binary under test needs the sandbox;
+		// the toolchain that compiles it does not.
+		repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(filepath.Join(repoRoot, "go.mod")).To(BeAnExistingFile(),
+			"expected ../.. from the test's working directory to be the module root")
+
+		bin := filepath.Join(t.TempDir(), "polypkg")
+		build := exec.Command("go", "build", "-o", bin, "./cmd/polypkg")
+		build.Dir = repoRoot
+		build.Env = append(os.Environ(), "GOTOOLCHAIN=auto")
+		buildOut, err := build.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "go build ./cmd/polypkg: %s", buildOut)
+
 		sandboxRoot := IsolatedEnv(t)
 		// HOME is sandboxed defensively alongside the four XDG_* vars: nothing
 		// in this path reads it today, but the subprocess must never be able
@@ -77,18 +97,6 @@ var _ = Describe("search picker (real pty)", func() {
 		Expect(err).NotTo(HaveOccurred(), "search: %s", searchOut)
 		Expect(searchOut).To(ContainSubstring("hello"),
 			"setup and the pty subprocess must agree on the sandbox; search found nothing")
-
-		repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(filepath.Join(repoRoot, "go.mod")).To(BeAnExistingFile(),
-			"expected ../.. from the test's working directory to be the module root")
-
-		bin := filepath.Join(t.TempDir(), "polypkg")
-		build := exec.Command("go", "build", "-o", bin, "./cmd/polypkg")
-		build.Dir = repoRoot
-		build.Env = append(os.Environ(), "GOTOOLCHAIN=auto")
-		buildOut, err := build.CombinedOutput()
-		Expect(err).NotTo(HaveOccurred(), "go build ./cmd/polypkg: %s", buildOut)
 
 		// Space toggles the (only) match in the multi-select, Enter confirms.
 		// The pipeline feeds those keystrokes into the pty script(1)
