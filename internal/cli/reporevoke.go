@@ -48,6 +48,12 @@ func runRepoRevoke(cmd *cobra.Command, attestations, builderKeys, removeAtts, re
 	if err != nil {
 		return err
 	}
+	// Validate before unlocking the key so a bad window costs nothing and
+	// nothing is published.
+	validFor, err := resolveValidFor(cmd)
+	if err != nil {
+		return err
+	}
 	pw, err := repoKeyPassword(cmd)
 	if err != nil {
 		return err
@@ -56,7 +62,6 @@ func runRepoRevoke(cmd *cobra.Command, attestations, builderKeys, removeAtts, re
 	if err != nil {
 		return mapPublishError(err)
 	}
-	validFor, _ := cmd.Flags().GetDuration("valid-for")
 	res, err := b.Revoke(repo.RevokeOptions{
 		Attestations:       attestations,
 		BuilderKeys:        builderKeys,

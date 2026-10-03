@@ -42,7 +42,17 @@ func InitRepo(o InitOptions) (InitResult, error) {
 	// the encrypted signing key out of the KeyDir the operator chose. Callers
 	// reaching InitRepo through the CLI have already had the name rejected by
 	// schema.ValidateSourceName; this is the guard at the interpolation site.
-	keyPath := filepath.Join(o.KeyDir, filepath.Base(o.Source)+".key")
+	//
+	// Absolute because this path is recorded in the manifest, and manifest
+	// paths resolve against the manifest directory while KeyDir is relative to
+	// the process working directory. Recording KeyDir verbatim made
+	// `repo init ./myrepo --key-dir ./keys` write ./keys/<source>.key and every
+	// later command look for ./myrepo/keys/<source>.key. An absolute KeyDir
+	// already behaved this way; this makes both forms agree.
+	keyPath, kerr := filepath.Abs(filepath.Join(o.KeyDir, filepath.Base(o.Source)+".key"))
+	if kerr != nil {
+		return InitResult{}, kerr
+	}
 	if err := guardKeyNotInOutput(outputDir, keyPath, o.KeyDir); err != nil {
 		return InitResult{}, err
 	}

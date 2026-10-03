@@ -154,3 +154,36 @@ func TestLoadBuildCacheCorruptIsCold(t *testing.T) {
 		t.Fatal("corrupt cache should yield empty entries")
 	}
 }
+
+// TestBuildCacheSaveCreatesParentDir covers the default --key-dir.
+//
+// `repo add` without --key-dir points the build cache at an XDG data path that
+// need not exist yet. Save wrote the temp file straight into it and failed:
+//
+//	error: save build cache: write build cache:
+//	  open ~/.local/share/polypkg/repo-keys/demo.build-cache.json.tmp:
+//	  no such file or directory
+//
+// By then the repository had been built, signed, and published, so the command
+// reported failure for work that had already succeeded.
+func TestBuildCacheSaveCreatesParentDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo-keys") // deliberately not created
+	path := filepath.Join(dir, "demo.build-cache.json")
+
+	if err := NewBuildCache().Save(path); err != nil {
+		t.Fatalf("Save into a missing directory: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("cache not written: %v", err)
+	}
+
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("parent dir not created: %v", err)
+	}
+	// The cache sits beside the encrypted signing key, so the directory must
+	// not be group- or world-readable.
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("parent dir mode = %04o, want 0700 (it holds the signing key)", perm)
+	}
+}

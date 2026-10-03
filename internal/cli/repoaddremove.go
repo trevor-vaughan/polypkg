@@ -9,6 +9,28 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 )
 
+// Manifest-mutation invariant for this file:
+//
+//	A `repo add` or `repo remove` that exits non-zero has not modified
+//	polypkg-repo.yaml.
+//
+// Both commands edit the manifest and reconcile the repository, so anything that
+// can fail after the edit reaches disk turns a rejected command into a staged
+// one: the operator sees a clear error and a non-zero exit, but the edit
+// survives and the next bare `repo build` publishes — or unpublishes — it. That
+// is how `repo remove hello --valid-for 0` used to silently queue an unpublish,
+// and how a build that died while packing or signing used to leave a package
+// half-added.
+//
+// Nothing writes the manifest until everything that could fail has run.
+// Preconditions are settled first — the package source directory
+// (repo.ReadPackageSource), --manifest, --key-dir, --valid-for, the key
+// password, and the unlocking of the signing key itself (newBuildPreflight) —
+// and then the edit is computed in memory (repo.PlanAddPackage /
+// repo.PlanRemovePackage), reconciled against, and persisted only on success
+// (buildPreflight.buildEdit). Keep it that way: new work belongs before the
+// commit, not after it.
+
 func newRepoAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <package-source-dir>",
@@ -30,7 +52,6 @@ func newRepoAddCmd() *cobra.Command {
 }
 
 func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
-	manifest, _ := cmd.Flags().GetString("manifest")
 	pkg, err := repo.ReadPackageSource(srcDir)
 	if err != nil {
 		return &CLIError{
@@ -39,15 +60,20 @@ func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
 			Err:  err,
 		}
 	}
+	pf, err := newBuildPreflight(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Normalize srcDir to be manifest-relative so Build resolves it correctly
 	// regardless of the cwd that `repo add` was run from.
-	storedSrc := normalizeSrcPath(manifest, srcDir)
+	storedSrc := normalizeSrcPath(pf.manifest, srcDir)
 
-	if err := repo.AddPackage(manifest, pkg.Name, storedSrc); err != nil {
+	edit, err := repo.PlanAddPackage(pf.manifest, pkg.Name, storedSrc)
+	if err != nil {
 		return mapPublishError(err)
 	}
-	res, err := buildRepo(cmd)
+	res, err := pf.buildEdit(cmd, edit)
 	if err != nil {
 		return err
 	}
@@ -103,11 +129,15 @@ func newRepoRemoveCmd() *cobra.Command {
 }
 
 func runRepoRemove(cmd *cobra.Command, name string, format Format) error {
-	manifest, _ := cmd.Flags().GetString("manifest")
-	if err := repo.RemovePackage(manifest, name); err != nil {
+	pf, err := newBuildPreflight(cmd)
+	if err != nil {
+		return err
+	}
+	edit, err := repo.PlanRemovePackage(pf.manifest, name)
+	if err != nil {
 		return mapPublishError(err)
 	}
-	res, err := buildRepo(cmd)
+	res, err := pf.buildEdit(cmd, edit)
 	if err != nil {
 		return err
 	}

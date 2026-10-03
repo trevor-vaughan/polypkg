@@ -24,7 +24,7 @@ func newRepoKeyCmd() *cobra.Command {
 func newRepoKeyShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
-		Short: "Print the public signing key and its fingerprint (never the secret)",
+		Short: "Print the public signing key and its key id (never the secret)",
 		Long:  "Decrypts the signing key and prints only its public key material and key id; the private key is never written to output.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -63,7 +63,7 @@ func runRepoKeyShow(cmd *cobra.Command, format Format) error {
 	}
 	kp, err := repo.LoadKey(keyPath, pw)
 	if err != nil {
-		return &CLIError{Msg: "cannot unlock signing key", Hint: "set POLYPKG_REPO_KEY_PASSWORD or pass --key-password-file", Err: err}
+		return mapPublishError(repo.LoadKeyError(keyPath, err))
 	}
 	EmitResult(cmd, format, "repo key show",
 		map[string]any{"key_id": kp.KeyIDHex(), "pubkey": kp.PublicKeyBase64()},

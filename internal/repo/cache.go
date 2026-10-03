@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -61,6 +62,20 @@ type BuildCache struct {
 	Schema  string                `json:"schema"`
 	Serial  uint64                `json:"serial"`
 	Entries map[string]CacheEntry `json:"entries"`
+	// ValidFor is the validity window (in nanoseconds) that the currently
+	// published index.json/trust.json expiry was stamped with. The published
+	// documents carry the expiry but not the window that produced it — index.json
+	// has no issued_at, and trust.json's is pinned to the epoch for deterministic
+	// signatures — so the window is recorded here, next to the serial, and read
+	// back by both Build and Inspector.Pending to apply the D13 half-life rule
+	// against the real window rather than a guess.
+	//
+	// Zero means "not recorded": a cache written before this field existed, or a
+	// cold one. effectiveWindow resolves that to DefaultValidFor, the window the
+	// half-life rule assumed before it was recorded. Adding the field needs no
+	// schema bump for that reason — an old cache stays readable and keeps its
+	// previous behaviour.
+	ValidFor time.Duration `json:"valid_for,omitempty"`
 }
 
 // NewBuildCache returns an empty cache.
@@ -107,6 +122,13 @@ func (c *BuildCache) Save(path string) error {
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
+	}
+	// The default --key-dir is an XDG data path that need not exist yet, and by
+	// the time Save runs the repository is already built, signed, and
+	// published. Failing here would report failure for completed work. 0700
+	// because this directory also holds the encrypted signing key.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create build cache dir: %w", err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {

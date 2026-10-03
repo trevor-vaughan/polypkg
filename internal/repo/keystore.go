@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"golang.org/x/crypto/scrypt"
@@ -204,4 +205,53 @@ func LoadKey(path, password string) (*Keypair, error) {
 	var id [8]byte
 	copy(id[:], idBytes)
 	return KeypairFromSeed(seed, id)
+}
+
+// LoadKeyError frames a LoadKey failure for the operator. LoadKey returns four
+// distinguishable classes of failure and every caller used to flatten them into
+// "cannot unlock signing key", so a key file that simply was not there read as a
+// wrong passphrase and sent the operator hunting the password. Each class gets
+// its own message, and every message names the path that was actually opened
+// (which the caller resolved from --key, --key-dir, or the manifest's key.path,
+// so it is rarely the string the operator typed).
+func LoadKeyError(path string, err error) *PublishError {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return &PublishError{
+			Msg:  fmt.Sprintf("signing key file not found at %s", path),
+			Hint: "create one with `polypkg repo init <dir> --key-dir <dir>`, or point --key/--key-dir at the existing key file",
+			Err:  err,
+		}
+	case isPathError(err):
+		// Permission denied, a directory in place of the file, an I/O error:
+		// the bytes never arrived, so no password verdict is possible.
+		return &PublishError{
+			Msg:  fmt.Sprintf("cannot read signing key at %s", path),
+			Hint: "check the file's ownership and permissions (polypkg writes signing keys mode 0600)",
+			Err:  err,
+		}
+	case errors.Is(err, ErrWrongPassword):
+		return &PublishError{
+			Msg:  "cannot unlock signing key",
+			Hint: fmt.Sprintf("the key file at %s was read but did not decrypt: set POLYPKG_REPO_KEY_PASSWORD or pass --key-password-file with the correct password", path),
+			Err:  err,
+		}
+	default:
+		// Malformed container: bad JSON, an unexpected schema, out-of-range KDF
+		// parameters. The password is irrelevant.
+		return &PublishError{
+			Msg:  fmt.Sprintf("signing key file at %s is not a valid polypkg key file", path),
+			Hint: "expected a polypkg.repo-key/v1 container as written by `polypkg repo init`; the file may be truncated or from another tool",
+			Err:  err,
+		}
+	}
+}
+
+// isPathError reports whether err came from the filesystem read rather than
+// from decoding or decrypting the container. LoadKey wraps os.ReadFile's
+// *fs.PathError, and nothing downstream of the read produces one, so its
+// presence is an exact marker for "the bytes never arrived".
+func isPathError(err error) bool {
+	var pe *fs.PathError
+	return errors.As(err, &pe)
 }

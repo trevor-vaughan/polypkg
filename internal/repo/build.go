@@ -19,9 +19,9 @@ import (
 const buildTimestamp = "1970-01-01T00:00:00Z"
 
 // DefaultValidFor is the validity window stamped into the signed index and
-// trust document when --valid-for is not given (D13/D-C1). Pending() uses it
-// to predict the half-window renewal restamp, so `repo status` and
-// `repo build` agree on whether an expiry refresh is due.
+// trust document when --valid-for is not given (D13/D-C1). It is also the
+// fallback window for a build cache that has no window recorded yet (see
+// effectiveWindow).
 const DefaultValidFor = 720 * time.Hour
 
 // Result reports what a Build did.
@@ -29,6 +29,21 @@ type Result struct {
 	Changed      bool
 	SerialBefore uint64
 	SerialAfter  uint64
+	// Expires is the freshness bound now stamped into the published index
+	// (RFC3339). On a no-op rebuild that reused the previous window this is that
+	// earlier window, not one derived from this call's ValidFor.
+	Expires string
+	// ValidForApplied reports whether this call's ValidFor was stamped into the
+	// published metadata. It is false exactly when the D13 half-life rule reused
+	// the still-fresh published window, which silently discards the caller's
+	// requested duration.
+	ValidForApplied bool
+	// RestampAfter is the RFC3339 instant past which the next build re-stamps
+	// Expires: the half-life of the window Expires was actually issued with,
+	// which is not derivable from ValidFor when this call reused an earlier
+	// window. Callers report it so an operator whose --valid-for was dropped can
+	// see when it stops being dropped.
+	RestampAfter string
 }
 
 // BuildOptions tunes one Build invocation.
@@ -74,6 +89,14 @@ func loadLayout(manifestPath, keyDir string) (repoLayout, error) {
 		}
 	}
 
+	return layoutFor(m, manifestPath, keyDir)
+}
+
+// layoutFor derives the output and cache paths for an already-parsed manifest
+// and runs the key-not-in-output guard. Split out of loadLayout so a caller
+// holding a manifest that is not on disk yet (Builder.SetManifest) resolves
+// paths and clears the guard through exactly the same code.
+func layoutFor(m *schema.RepoManifest, manifestPath, keyDir string) (repoLayout, error) {
 	manifestDir := filepath.Dir(manifestPath)
 	outputDir := resolveRel(manifestDir, m.Output)
 
@@ -85,7 +108,11 @@ func loadLayout(manifestPath, keyDir string) (repoLayout, error) {
 		manifestDir: manifestDir,
 		manifest:    m,
 		outputDir:   outputDir,
-		cachePath:   filepath.Join(keyDir, m.Source+".build-cache.json"),
+		// filepath.Base on the source name keeps a stray separator from
+		// relocating the build cache out of keyDir. ParseRepoManifest has
+		// already rejected any non-slug source; this is the guard at the
+		// interpolation site.
+		cachePath: filepath.Join(keyDir, filepath.Base(m.Source)+".build-cache.json"),
 	}, nil
 }
 
@@ -94,6 +121,10 @@ func loadLayout(manifestPath, keyDir string) (repoLayout, error) {
 // not write any files.
 type Inspector struct {
 	layout repoLayout
+	// now is the clock the D13 half-life decision reads. Always time.Now in
+	// production; tests replace it to cross the half-life boundary of a real
+	// published window without sleeping through it.
+	now func() time.Time
 }
 
 // NewInspector loads and validates the manifest at manifestPath without
@@ -103,7 +134,7 @@ func NewInspector(manifestPath, keyDir string) (*Inspector, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Inspector{layout: lay}, nil
+	return &Inspector{layout: lay, now: time.Now}, nil
 }
 
 // Pending reports whether Build() would change anything without writing any
@@ -177,12 +208,13 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 	}
 
 	// No content change — but Build restamps expires (and bumps the serial)
-	// when the published window is absent, unparseable, or below its half-life
-	// (D13/D-C1 renewal), so status must report that as pending too. Uses the
-	// default window: `repo status` has no --valid-for flag.
-	if exp := publishedExpires(i.layout.outputDir); exp == "" {
-		return true, "metadata expiry refresh due", nil
-	} else if t, perr := time.Parse(time.RFC3339, exp); perr != nil || time.Until(t) <= DefaultValidFor/2 {
+	// when the published expiry is absent, unparseable, or below its half-life
+	// (D13/D-C1 renewal), so status must report that as pending too. The window
+	// comes from the build cache, which records what the build that published
+	// that expiry actually used: `repo status` has no --valid-for flag, and
+	// assuming the 720h default here made every repository published with a
+	// shorter window report pending the instant it was built.
+	if !expiryFresh(i.now(), publishedExpires(i.layout.outputDir), effectiveWindow(cache.ValidFor)) {
 		return true, "metadata expiry refresh due", nil
 	}
 
@@ -204,16 +236,36 @@ func NewBuilder(manifestPath, keyDir, password string) (*Builder, error) {
 		return nil, err
 	}
 
-	kp, err := LoadKey(resolveRel(insp.layout.manifestDir, insp.layout.manifest.Key.Path), password)
+	keyPath := resolveRel(insp.layout.manifestDir, insp.layout.manifest.Key.Path)
+	kp, err := LoadKey(keyPath, password)
 	if err != nil {
-		return nil, &PublishError{
-			Msg:  "cannot unlock signing key",
-			Hint: "set POLYPKG_REPO_KEY_PASSWORD or pass --key-password-file with the correct password",
-			Err:  err,
-		}
+		return nil, LoadKeyError(keyPath, err)
 	}
 
 	return &Builder{insp: insp, key: kp}, nil
+}
+
+// SetManifest points this Builder at an in-memory manifest, keeping the signing
+// key it already decrypted. It exists for callers that must reconcile against a
+// manifest edit before that edit is persisted (`repo add`, `repo remove`): they
+// construct the Builder first, so a manifest that will not parse or a key that
+// will not unlock is rejected before anything is written; then they build
+// against the edited manifest and write polypkg-repo.yaml only once the build
+// has succeeded. A build that fails therefore leaves the manifest untouched,
+// and the key is decrypted once either way.
+//
+// manifestPath and keyDir must name the manifest and build cache the Builder
+// was constructed with; passing a different pair repoints the Builder rather
+// than re-basing it.
+func (b *Builder) SetManifest(m *schema.RepoManifest, manifestPath, keyDir string) error {
+	lay, err := layoutFor(m, manifestPath, keyDir)
+	if err != nil {
+		return err
+	}
+	// Assign into the existing Inspector rather than replacing it, so the clock
+	// the half-life rule reads survives the repoint.
+	b.insp.layout = lay
+	return nil
 }
 
 // Pending delegates to the embedded Inspector so that callers of Builder can
@@ -403,11 +455,25 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 
 	// Stamp the freshness bound (D13). computeExpires reuses the published
 	// expiry on a pure no-op rebuild so the byte-compare below still sees
-	// identical index bytes (serial-stable); a content change or a window past
-	// its half-life restamps, and the byte-compare then bumps the serial —
-	// TUF-style re-signing.
-	expires := computeExpires(lay.outputDir, changed, opts.ValidFor)
+	// identical index bytes (serial-stable); a content change, or a published
+	// document past its own half-life, restamps, and the byte-compare then bumps
+	// the serial — TUF-style re-signing.
+	//
+	// window tracks the validity window that the expiry we end up publishing was
+	// stamped with: the one already recorded in the cache if we reuse that
+	// expiry, this call's ValidFor if we restamp. It is saved back to the cache
+	// below so the next build — and `repo status`, which has no --valid-for flag
+	// of its own — applies the half-life rule against the real window.
+	now := b.insp.now()
+	window := effectiveWindow(cache.ValidFor)
+	expires, reusedExpires := computeExpires(now, lay.outputDir, changed, opts.ValidFor, window)
+	if !reusedExpires {
+		window = opts.ValidFor
+	}
 	idx.Expires = expires
+	// Reuse is observable to the caller: opts.ValidFor was not honored, and the
+	// CLI says so rather than exiting 0 on a flag it dropped.
+	validForApplied := !reusedExpires
 
 	// Marshal the index.
 	idxJSON, err := json.Marshal(&idx)
@@ -501,11 +567,26 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	// Persist updated cache (removed packages drop out via newEntries replacement).
 	cache.Serial = serial
 	cache.Entries = newEntries
+	cache.ValidFor = window
 	if err := cache.Save(lay.cachePath); err != nil {
 		return Result{}, fmt.Errorf("save build cache: %w", err)
 	}
 
-	return Result{Changed: changed, SerialBefore: before, SerialAfter: serial}, nil
+	// The published expiry is our own freshly formatted value, so the parse
+	// cannot fail; guard anyway rather than report a bogus instant.
+	restampAfter := ""
+	if t, perr := time.Parse(time.RFC3339, expires); perr == nil {
+		restampAfter = t.Add(-window / 2).UTC().Format(time.RFC3339)
+	}
+
+	return Result{
+		Changed:         changed,
+		SerialBefore:    before,
+		SerialAfter:     serial,
+		Expires:         expires,
+		ValidForApplied: validForApplied,
+		RestampAfter:    restampAfter,
+	}, nil
 }
 
 // writeAtomic writes body to path via a temp file + rename so a partial write
@@ -578,21 +659,57 @@ func pruneOrphanTrustBundle(outputDir string) error {
 	return nil
 }
 
-// computeExpires returns the RFC3339 expiry for this publish. It reuses the
-// currently published expiry when nothing changed and more than half the
-// validity window remains, so no-op rebuilds stay byte-identical (and
-// serial-stable); otherwise it stamps a fresh now+validFor (D13/D-C1).
-func computeExpires(outputDir string, contentChanged bool, validFor time.Duration) string {
-	if !contentChanged {
-		if cur := publishedExpires(outputDir); cur != "" {
-			if t, err := time.Parse(time.RFC3339, cur); err == nil {
-				if time.Until(t) > validFor/2 {
-					return cur
-				}
-			}
-		}
+// effectiveWindow resolves a validity window recorded in the build cache,
+// falling back to the 720h default when none is recorded — a cache written
+// before the window was recorded, or one that was reset. That fallback is the
+// assumption the half-life rule made before the window was recorded at all, so
+// an unrecorded window keeps its previous behaviour rather than acquiring a new
+// one.
+func effectiveWindow(window time.Duration) time.Duration {
+	if window <= 0 {
+		return DefaultValidFor
 	}
-	return time.Now().UTC().Add(validFor).Format(time.RFC3339)
+	return window
+}
+
+// expiryFresh reports whether a published expiry is still above its own
+// half-life. It is the single implementation of the D13/D-C1 renewal rule:
+// Build calls it to decide whether to reuse the published expiry, and
+// Inspector.Pending calls it to predict that decision. One function is what
+// keeps `repo status` and `repo build` from disagreeing about whether an expiry
+// refresh is due.
+//
+// window is the validity window the published expiry was stamped with (from the
+// build cache, resolved through effectiveWindow) — NOT the window the current
+// call requested. A document is reused until it passes its own half-life;
+// measuring against the caller's window instead would let a build with a
+// shorter window restamp a document that is still fresh, and a probe with no
+// window at all (`repo status`) guess wrong every time.
+//
+// An empty or unparseable expiry is not fresh: Build restamps it, so Pending
+// must report it.
+func expiryFresh(now time.Time, publishedExpiry string, window time.Duration) bool {
+	t, err := time.Parse(time.RFC3339, publishedExpiry)
+	if err != nil {
+		return false
+	}
+	return t.Sub(now) > window/2
+}
+
+// computeExpires returns the RFC3339 expiry for this publish, and whether it
+// reused the currently published one. It reuses when nothing changed and the
+// published document is still above its own half-life, so no-op rebuilds stay
+// byte-identical (and serial-stable); otherwise it stamps a fresh now+validFor
+// (D13/D-C1).
+//
+// publishedWindow is the window the currently published expiry was stamped
+// with; validFor is the window to stamp if this call does restamp.
+func computeExpires(now time.Time, outputDir string, contentChanged bool, validFor, publishedWindow time.Duration) (expires string, reused bool) {
+	cur := publishedExpires(outputDir)
+	if !contentChanged && expiryFresh(now, cur, publishedWindow) {
+		return cur, true
+	}
+	return now.UTC().Add(validFor).Format(time.RFC3339), false
 }
 
 // publishedExpires reads the expires of the currently published index, ""
