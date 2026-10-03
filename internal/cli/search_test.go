@@ -2,12 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
+
+	"github.com/trevor-vaughan/polypkg/internal/lock"
+	"github.com/trevor-vaughan/polypkg/internal/planner"
+	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 var _ = Describe("formatVersionList", func() {
@@ -164,5 +172,113 @@ var _ = Describe("search picker gate", func() {
 		err := emitSearchResult(cmd, FormatText, "zzz", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.String()).To(ContainSubstring(`no packages matching "zzz"`))
+	})
+})
+
+// searchLockEnv publishes a signed one-package repo, points a profile at it,
+// and returns a search command wired to out plus the scope and state home that
+// runSearch would resolve.
+func searchLockEnv(out *bytes.Buffer) (cmd *cobra.Command, scope, stateHome string) {
+	root := GinkgoT().TempDir()
+	keyDir := GinkgoT().TempDir()
+
+	pkgDir := filepath.Join(root, "pkgs", "hello")
+	Expect(os.MkdirAll(filepath.Join(pkgDir, "content", "bin"), 0o755)).To(Succeed())
+	Expect(os.WriteFile(filepath.Join(pkgDir, "polypkg.yaml"),
+		[]byte("schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\nactions: []\n"), 0o644)).To(Succeed())
+	Expect(os.WriteFile(filepath.Join(pkgDir, "content", "bin", "hello"),
+		[]byte("#!/bin/sh\necho hi\n"), 0o755)).To(Succeed())
+
+	kp, err := repo.GenerateKeypair()
+	Expect(err).NotTo(HaveOccurred())
+	keyPath := filepath.Join(keyDir, "repo.key")
+	Expect(repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt)).To(Succeed())
+
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	Expect(os.WriteFile(mPath, []byte(
+		"schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n"+
+			"key:\n  path: "+keyPath+"\n  kdf: scrypt\n"+
+			"packages:\n  hello:\n    - source: ./pkgs/hello\n"), 0o644)).To(Succeed())
+
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = b.Build(repo.BuildOptions{SkipAttestations: true})
+	Expect(err).NotTo(HaveOccurred())
+	publicDir := filepath.Join(root, "public")
+
+	env := GinkgoT().TempDir()
+	GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(env, "data"))
+	GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(env, "state"))
+	GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(env, "config"))
+
+	profilePath := filepath.Join(env, "profile.yaml")
+	Expect(os.WriteFile(profilePath, []byte(
+		"schema: polypkg.spec/v1\nname: searchlock\n"+
+			"scopes:\n  user:\n    substrate: store\n"+
+			"sources:\n  order: [repo]\n  repo:\n    type: polypkg-native\n"+
+			"    url: file://"+publicDir+"\n"+
+			"    trust_root: "+filepath.Join(publicDir, "trust_root.pub")+"\n"+
+			"packages:\n  user:\n    hello:\n      version: \">=1.0.0\"\n"), 0o644)).To(Succeed())
+	GinkgoT().Setenv("POLYPKG_PROFILE", profilePath)
+
+	cmd = newSearchCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	scope, _, stateHome, err = resolveListScope(cmd, bestEffortProfile(cmd))
+	Expect(err).NotTo(HaveOccurred())
+	return cmd, scope, stateHome
+}
+
+var _ = Describe("search picker lock scope", func() {
+	// The interactive picker installs the ticked packages through runInstall,
+	// and runInstall takes the apply lock itself. Anything that reaches the
+	// picker therefore has to run after search's own lock is released.
+	//
+	// It did not. emitSearchResult — which calls the picker — ran inside the
+	// withCatalog closure, so every install started from the picker died on
+	// "another polypkg command is already running (polypkg search, pid N)".
+	//
+	// The huh form is not exercised here: interactiveTTY requires stdin and
+	// stdout to be character devices, which an in-process test cannot supply,
+	// so the form itself needs a pty harness. These pin the boundary it needs.
+
+	It("holds the apply lock for the duration of the catalog fetch", func() {
+		// Establishes the hazard the fix works around: anything invoked from
+		// inside the closure cannot take the lock.
+		var out bytes.Buffer
+		cmd, scope, stateHome := searchLockEnv(&out)
+
+		var lockedInside bool
+		err := withCatalog(cmd, scope, stateHome, "search", "polypkg search",
+			func(_ *schema.Profile, _ string, _ *planner.FetchResult) error {
+				_, aerr := lock.Acquire(context.Background(),
+					filepath.Join(stateHome, "apply.lock"),
+					lock.Options{TxID: "install", Command: "polypkg install"})
+				lockedInside = aerr != nil
+				return nil
+			})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(lockedInside).To(BeTrue(),
+			"the apply lock is expected to be held here; if it is not, the "+
+				"reason emitSearchResult must stay outside searchRows is gone")
+	})
+
+	It("does not emit from inside the locked catalog fetch", func() {
+		// The regression guard. searchRows must collect rows and nothing else:
+		// emitting is what reaches the picker, and the picker installs. Moving
+		// emitSearchResult back inside the closure puts output here and fails.
+		var out bytes.Buffer
+		cmd, scope, stateHome := searchLockEnv(&out)
+
+		rows, err := searchRows(cmd, "hello", scope, stateHome, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rows).To(HaveLen(1))
+		Expect(rows[0].Name).To(Equal("hello"))
+		Expect(rows[0].Versions).To(ContainElement("1.0.0"))
+
+		Expect(out.String()).To(BeEmpty(),
+			"searchRows wrote output, so it is emitting under the apply lock; "+
+				"the picker that emitting reaches cannot install from there")
 	})
 })

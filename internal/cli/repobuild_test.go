@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -96,7 +97,7 @@ key:
     kdf: scrypt
 packages:
     hello:
-        source: ./pkgs/hello
+        - source: ./pkgs/hello
 `, keyPath)
 }
 
@@ -165,5 +166,142 @@ func TestRepoStatusNeedsNoPassword(t *testing.T) {
 	// status after build with NO password must exit 0 (clean).
 	if _, err := runRepo(t, nil, "repo", "status", "--manifest", mPath, "--key-dir", keyDir); err != nil {
 		t.Fatalf("status after build without password: want exit 0, got %v", err)
+	}
+}
+
+// initHelloRepo scaffolds a repository with one buildable package and returns
+// the manifest path and key dir. Used by the --valid-for tests below.
+func initHelloRepo(t *testing.T) (mPath, keyDir string) {
+	t.Helper()
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir = t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath = filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	writeHelloPkgSource(t, repoDir)
+	mraw, err := os.ReadFile(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mPath, []byte(injectHelloPackage(t, repoDir, keyDir, mraw)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return mPath, keyDir
+}
+
+// Finding 12: a non-positive --valid-for was silently replaced by the 720h
+// default, so the operator got something entirely different from what they
+// typed and no indication of it.
+func TestRepoBuildRejectsNonPositiveValidFor(t *testing.T) {
+	mPath, keyDir := initHelloRepo(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	for _, bad := range []string{"-48h", "0"} {
+		out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir, "--valid-for", bad)
+		if err == nil {
+			t.Fatalf("--valid-for %s: expected an error, got success (out=%s)", bad, out)
+		}
+		if !strings.Contains(err.Error(), "--valid-for must be a positive duration") {
+			t.Fatalf("--valid-for %s: error = %q, want it to name the flag", bad, err)
+		}
+	}
+}
+
+// Finding 12: a positive but absurdly short window publishes metadata that
+// consumers treat as expired almost immediately. That is legal (an operator may
+// want it) but must not be silent.
+func TestRepoBuildWarnsOnVeryShortValidFor(t *testing.T) {
+	mPath, keyDir := initHelloRepo(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir, "--valid-for", "1s")
+	if err != nil {
+		t.Fatalf("repo build --valid-for 1s: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "warning: --valid-for 1s is shorter than") {
+		t.Fatalf("expected a short-window warning, got:\n%s", out)
+	}
+}
+
+// Finding 13: a no-op rebuild reuses the still-fresh published window (correct,
+// D13 half-life reuse) but used to exit 0 saying "already up to date" while
+// silently discarding an explicitly-passed --valid-for.
+func TestRepoBuildNotesValidForNotAppliedOnNoOpRebuild(t *testing.T) {
+	mPath, keyDir := initHelloRepo(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	if out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("first build: %v (out=%s)", err, out)
+	}
+	out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir, "--valid-for", "48h")
+	if err != nil {
+		t.Fatalf("second build: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "Repository already up to date") {
+		t.Fatalf("expected a no-op rebuild, got:\n%s", out)
+	}
+	if !strings.Contains(out, "note: --valid-for not applied") {
+		t.Fatalf("expected a note that --valid-for was ignored, got:\n%s", out)
+	}
+	if !strings.Contains(out, "re-stamps on the next build after ") {
+		t.Fatalf("note must say when the window does get re-stamped, got:\n%s", out)
+	}
+}
+
+// The note must NOT appear when the build actually applied the window, nor when
+// the operator never passed the flag.
+func TestRepoBuildDoesNotNoteValidForWhenApplied(t *testing.T) {
+	mPath, keyDir := initHelloRepo(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir, "--valid-for", "48h")
+	if err != nil {
+		t.Fatalf("first build: %v (out=%s)", err, out)
+	}
+	if strings.Contains(out, "note: --valid-for not applied") {
+		t.Fatalf("first build applied the window; note must not appear:\n%s", out)
+	}
+	out, err = runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("second build: %v (out=%s)", err, out)
+	}
+	if strings.Contains(out, "note: --valid-for not applied") {
+		t.Fatalf("--valid-for was not passed; note must not appear:\n%s", out)
+	}
+}
+
+// TestRepoStatusHalfLifeUsesBuiltWindow pins that the D13 expiry-refresh
+// half-life is measured against the window the build actually stamped, not
+// against the 720h default. `repo status` has no --valid-for flag, so it used to
+// assume the default: any build with a window under 720h reported
+// "metadata expiry refresh due" at exit 2 the moment it finished, which made
+// exit 2 useless for anyone not on the default.
+//
+// The second half of each case pins the other side of the same rule: `repo
+// build` must agree with `repo status`. A bare rebuild is a no-op exactly when
+// status says nothing is pending.
+func TestRepoStatusHalfLifeUsesBuiltWindow(t *testing.T) {
+	for _, validFor := range []string{"24h", "720h"} {
+		t.Run("valid-for="+validFor, func(t *testing.T) {
+			mPath, keyDir := initHelloRepo(t)
+			env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+			if out, err := runRepo(t, env, "repo", "build",
+				"--manifest", mPath, "--key-dir", keyDir, "--valid-for", validFor); err != nil {
+				t.Fatalf("build --valid-for %s: %v (out=%s)", validFor, err, out)
+			}
+
+			out, statusErr := runRepo(t, nil, "repo", "status", "--manifest", mPath, "--key-dir", keyDir)
+			if code := exitCodeOf(statusErr); code != 0 {
+				t.Fatalf("status right after `build --valid-for %s` = exit %d, want 0 (out=%s err=%v)",
+					validFor, code, out, statusErr)
+			}
+
+			out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir)
+			if err != nil {
+				t.Fatalf("bare rebuild after --valid-for %s: %v (out=%s)", validFor, err, out)
+			}
+			if !strings.Contains(out, "Repository already up to date") {
+				t.Fatalf("status reported nothing pending, so the bare rebuild must be a no-op; got:\n%s", out)
+			}
+		})
 	}
 }

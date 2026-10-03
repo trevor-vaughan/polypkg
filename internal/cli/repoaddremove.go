@@ -3,11 +3,36 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
+
+// Manifest-mutation invariant for this file:
+//
+//	A `repo add` or `repo remove` that exits non-zero has not modified
+//	polypkg-repo.yaml.
+//
+// Both commands edit the manifest and reconcile the repository, so anything that
+// can fail after the edit reaches disk turns a rejected command into a staged
+// one: the operator sees a clear error and a non-zero exit, but the edit
+// survives and the next bare `repo build` publishes — or unpublishes — it. That
+// is how `repo remove hello --valid-for 0` used to silently queue an unpublish,
+// and how a build that died while packing or signing used to leave a package
+// half-added.
+//
+// Nothing writes the manifest until everything that could fail has run.
+// Preconditions are settled first — the package source directory
+// (repo.ReadPackageSource), --manifest, --key-dir, --valid-for, the key
+// password, and the unlocking of the signing key itself (newBuildPreflight) —
+// and then the edit is computed in memory (repo.PlanAddPackage /
+// repo.PlanRemovePackage), reconciled against, and persisted only on success
+// (buildPreflight.buildEdit). Keep it that way: new work belongs before the
+// commit, not after it.
 
 func newRepoAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -30,7 +55,6 @@ func newRepoAddCmd() *cobra.Command {
 }
 
 func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
-	manifest, _ := cmd.Flags().GetString("manifest")
 	pkg, err := repo.ReadPackageSource(srcDir)
 	if err != nil {
 		return &CLIError{
@@ -39,15 +63,20 @@ func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
 			Err:  err,
 		}
 	}
+	pf, err := newBuildPreflight(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Normalize srcDir to be manifest-relative so Build resolves it correctly
 	// regardless of the cwd that `repo add` was run from.
-	storedSrc := normalizeSrcPath(manifest, srcDir)
+	storedSrc := normalizeSrcPath(pf.manifest, srcDir)
 
-	if err := repo.AddPackage(manifest, pkg.Name, storedSrc); err != nil {
+	edit, err := repo.PlanAddPackage(pf.manifest, pkg.Name, storedSrc)
+	if err != nil {
 		return mapPublishError(err)
 	}
-	res, err := buildRepo(cmd)
+	res, err := pf.buildEdit(cmd, edit)
 	if err != nil {
 		return err
 	}
@@ -84,10 +113,12 @@ func normalizeSrcPath(manifestPath, srcDir string) string {
 
 func newRepoRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove <name>",
-		Short: "Remove a package from the manifest and rebuild",
-		Long:  "Removes packages.<name> from the manifest, then reconciles the repository so the package drops out of the signed index.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "remove <name>[@<version>]",
+		Short: "Remove a package, or one of its versions, from the manifest and rebuild",
+		Long: "Removes packages.<name> from the manifest, or with @<version>, just the entry that " +
+			"publishes that version, then reconciles the repository so the removed package or " +
+			"version drops out of the signed index.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -102,19 +133,97 @@ func newRepoRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-func runRepoRemove(cmd *cobra.Command, name string, format Format) error {
-	manifest, _ := cmd.Flags().GetString("manifest")
-	if err := repo.RemovePackage(manifest, name); err != nil {
-		return mapPublishError(err)
-	}
-	res, err := buildRepo(cmd)
+func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
+	pf, err := newBuildPreflight(cmd)
 	if err != nil {
 		return err
 	}
-	EmitResult(cmd, format, "repo remove",
-		map[string]any{"package": name, "serial": res.SerialAfter},
+
+	name, version, hasVersion := strings.Cut(arg, "@")
+
+	var edit *repo.ManifestEdit
+	if !hasVersion {
+		edit, err = repo.PlanRemovePackage(pf.manifest, name)
+		if err != nil {
+			return mapPublishError(err)
+		}
+	} else {
+		identifier, rerr := resolveVersionIdentifier(pf.manifest, name, version)
+		if rerr != nil {
+			return rerr
+		}
+		edit, err = repo.PlanRemovePackageSource(pf.manifest, name, identifier)
+		if err != nil {
+			return mapPublishError(err)
+		}
+	}
+
+	res, err := pf.buildEdit(cmd, edit)
+	if err != nil {
+		return err
+	}
+	data := map[string]any{"package": name, "serial": res.SerialAfter}
+	if hasVersion {
+		data["version"] = version
+	}
+	EmitResult(cmd, format, "repo remove", data,
 		func(w *bytes.Buffer, d map[string]any) {
-			fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
+			if v, ok := d["version"]; ok {
+				fmt.Fprintf(w, "Removed %s@%s and rebuilt the repository (serial %d)\n", d["package"], v, d["serial"])
+			} else {
+				fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
+			}
 		})
 	return nil
+}
+
+// resolveVersionIdentifier finds which entry registered under name in the
+// manifest at manifestPath declares version, and returns that entry's
+// manifest identifier (repo.EntryIdentifier: a source path or prebuilt
+// artifact path) for repo.PlanRemovePackageSource.
+//
+// The manifest deliberately does not record versions (see
+// internal/repo/version_resolve.go), so resolving "@<version>" costs reading
+// every entry via repo.EntryVersion until one matches - a YAML read for a
+// source entry, a full extraction for a prebuilt one. That cost is accepted
+// rather than routed through the build cache: the cache lives at a path
+// (keyDir + source-derived filename, internal/repo/build.go) that only
+// layoutFor computes, and duplicating that formula here would silently drift
+// if the convention ever changed. `repo remove` is a rare interactive
+// command, so the extraction cost is not worth that coupling.
+func resolveVersionIdentifier(manifestPath, name, version string) (string, error) {
+	f, err := os.Open(manifestPath) //nolint:gosec // G304: path is user-supplied manifest location from --manifest flag
+	if err != nil {
+		return "", &CLIError{Msg: "cannot open repo manifest", Hint: "run `polypkg repo init <dir>` first", Err: err}
+	}
+	defer func() { _ = f.Close() }()
+	m, err := schema.ParseRepoManifest(f)
+	if err != nil {
+		return "", mapPublishError(err)
+	}
+
+	entries, ok := m.Packages[name]
+	if !ok || len(entries) == 0 {
+		return "", &CLIError{
+			Msg:  "package " + name + " is not in the repo manifest",
+			Hint: "run `polypkg repo status` to list registered packages",
+		}
+	}
+
+	manifestDir := filepath.Dir(manifestPath)
+	available := make([]string, 0, len(entries))
+	for _, e := range entries {
+		v, verr := repo.EntryVersion(manifestDir, e)
+		if verr != nil {
+			return "", mapPublishError(verr)
+		}
+		if v == version {
+			return repo.EntryIdentifier(e), nil
+		}
+		available = append(available, v)
+	}
+	return "", &CLIError{
+		Msg:  fmt.Sprintf("package %s has no published version %s", name, version),
+		Hint: fmt.Sprintf("published versions of %s: %s", name, strings.Join(available, ", ")),
+	}
 }

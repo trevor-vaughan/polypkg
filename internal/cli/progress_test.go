@@ -22,7 +22,7 @@ var _ = Describe("progress (non-TTY path)", func() {
 		Expect(lines).To(ConsistOf(
 			"fetching trust: https://example.com",
 			"fetching index: https://example.com",
-			"resolving: ",
+			"resolving",
 		))
 	})
 
@@ -81,13 +81,81 @@ var _ = Describe("progress (non-TTY path)", func() {
 		_ = before
 	})
 
-	It("stage with empty detail prints a trailing colon-space", func() {
+	It("stage with empty detail prints the label alone, with no dangling colon", func() {
 		var buf bytes.Buffer
 		p := newProgress(&buf)
 		p.Update("projecting", "")
 		lines := nonBlankLines(buf.String())
 		Expect(lines).To(HaveLen(1))
-		Expect(lines[0]).To(Equal("projecting: "))
+		Expect(lines[0]).To(Equal("projecting"))
+	})
+
+	It("stage with a detail keeps the colon separator", func() {
+		var buf bytes.Buffer
+		p := newProgress(&buf)
+		p.Update("fetching", "hello-1.0 (1/2)")
+		lines := nonBlankLines(buf.String())
+		Expect(lines).To(HaveLen(1))
+		Expect(lines[0]).To(Equal("fetching: hello-1.0 (1/2)"))
+	})
+
+	It("still deduplicates label-only updates", func() {
+		var buf bytes.Buffer
+		p := newProgress(&buf)
+		p.Update("linking", "")
+		p.Update("linking", "")
+		Expect(nonBlankLines(buf.String())).To(ConsistOf("linking"))
+	})
+})
+
+var _ = Describe("progress (TTY spinner path)", func() {
+	// The spinner goroutine only starts for an *os.File on a terminal, so the
+	// frame renderer is exercised directly. lastCols is what Done() uses to size
+	// its clear, so it must track the line actually written.
+	newTTYProgress := func(buf *bytes.Buffer) *progress {
+		return &progress{w: buf, tty: true}
+	}
+
+	It("renders a label-only frame with no dangling colon and sizes the clear to it", func() {
+		var buf bytes.Buffer
+		p := newTTYProgress(&buf)
+		p.stage, p.detail = "committing", ""
+
+		p.renderFrame(0)
+
+		Expect(buf.String()).To(Equal("\r" + spinnerFrames[0] + " committing"))
+		Expect(p.lastCols).To(Equal(utf8.RuneCountInString("committing")))
+	})
+
+	It("renders a frame with a detail using the colon separator", func() {
+		var buf bytes.Buffer
+		p := newTTYProgress(&buf)
+		p.stage, p.detail = "placing", "pre-place 1/3"
+
+		p.renderFrame(3)
+
+		Expect(buf.String()).To(Equal("\r" + spinnerFrames[3] + " placing: pre-place 1/3"))
+		Expect(p.lastCols).To(Equal(utf8.RuneCountInString("placing: pre-place 1/3")))
+	})
+
+	It("writes nothing and leaves the clear width alone before any stage is set", func() {
+		var buf bytes.Buffer
+		p := newTTYProgress(&buf)
+
+		p.renderFrame(0)
+
+		Expect(buf.String()).To(BeEmpty())
+		Expect(p.lastCols).To(BeZero())
+	})
+})
+
+var _ = Describe("progressLine", func() {
+	It("joins stage and detail with a colon and a space", func() {
+		Expect(progressLine("fetching", "hello-1.0")).To(Equal("fetching: hello-1.0"))
+	})
+
+	It("drops the separator entirely when the detail is empty", func() {
+		Expect(progressLine("resolving", "")).To(Equal("resolving"))
 	})
 })
 

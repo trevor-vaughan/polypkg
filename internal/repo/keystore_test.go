@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -216,5 +217,71 @@ func TestKeyStoreUnknownSchemaRejected(t *testing.T) {
 	_, err := LoadKey(path, "any")
 	if err == nil {
 		t.Fatal("expected error for unknown schema, got nil")
+	}
+}
+
+func TestLoadKeyErrorDistinguishesMissingFileFromWrongPassword(t *testing.T) {
+	dir := t.TempDir()
+	kp, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := filepath.Join(dir, "present.key")
+	if err := SaveKey(present, kp, "right", KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "absent.key")
+
+	_, loadErr := LoadKey(missing, "right")
+	missingPE := LoadKeyError(missing, loadErr)
+	if !strings.Contains(missingPE.Msg, "signing key file not found") {
+		t.Fatalf("missing-file Msg = %q, want it to name the missing file", missingPE.Msg)
+	}
+	if !strings.Contains(missingPE.Msg, missing) {
+		t.Fatalf("missing-file Msg = %q, want it to name the resolved path %s", missingPE.Msg, missing)
+	}
+	if strings.Contains(missingPE.HintText(), "POLYPKG_REPO_KEY_PASSWORD") {
+		t.Fatalf("missing-file hint blames the password: %q", missingPE.HintText())
+	}
+
+	_, loadErr = LoadKey(present, "wrong")
+	wrongPE := LoadKeyError(present, loadErr)
+	if !strings.Contains(wrongPE.Msg, "cannot unlock signing key") {
+		t.Fatalf("wrong-password Msg = %q", wrongPE.Msg)
+	}
+	if !strings.Contains(wrongPE.HintText(), "POLYPKG_REPO_KEY_PASSWORD") ||
+		!strings.Contains(wrongPE.HintText(), present) {
+		t.Fatalf("wrong-password hint = %q, want the password remedy and the resolved path", wrongPE.HintText())
+	}
+	if missingPE.Msg == wrongPE.Msg {
+		t.Fatal("missing-file and wrong-password errors are indistinguishable")
+	}
+}
+
+func TestLoadKeyErrorUnreadableFileIsNotReportedAsWrongPassword(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	dir := t.TempDir()
+	kp, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "locked.key")
+	if err := SaveKey(path, kp, "right", KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	_, loadErr := LoadKey(path, "right")
+	pe := LoadKeyError(path, loadErr)
+	if !strings.Contains(pe.Msg, "cannot read signing key") {
+		t.Fatalf("unreadable-file Msg = %q, want a read failure, not a password verdict", pe.Msg)
+	}
+	if strings.Contains(pe.HintText(), "POLYPKG_REPO_KEY_PASSWORD") {
+		t.Fatalf("unreadable-file hint blames the password: %q", pe.HintText())
 	}
 }

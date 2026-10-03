@@ -400,7 +400,7 @@ func buildSigstoreTree(dir string, content, bundleJSON []byte, sroot schema.Sigs
 
 	manifest := "schema: polypkg.repo/v1\nsource: " + genuineSourceName + "\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  " + genuinePackageName + ":\n    source: ./pkgs/" + genuinePackageName + "\n"
+		"packages:\n  " + genuinePackageName + ":\n    - source: ./pkgs/" + genuinePackageName + "\n"
 	mPath := filepath.Join(dir, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o600); err != nil {
 		return Tree{}, fmt.Errorf("write repo manifest: %w", err)
@@ -584,7 +584,7 @@ func buildTree(dir string, slsaEnv []byte, bundleKeys []schema.BuilderKey, allow
 
 	manifest := "schema: polypkg.repo/v1\nsource: " + genuineSourceName + "\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  " + genuinePackageName + ":\n    source: ./pkgs/" + genuinePackageName + "\n"
+		"packages:\n  " + genuinePackageName + ":\n    - source: ./pkgs/" + genuinePackageName + "\n"
 	mPath := filepath.Join(dir, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o600); err != nil {
 		return Tree{}, fmt.Errorf("write repo manifest: %w", err)

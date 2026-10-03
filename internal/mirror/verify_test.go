@@ -44,7 +44,7 @@ func buildBundle(t *testing.T) (string, string) {
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    source: ./pkgs/hello\n"
+		"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

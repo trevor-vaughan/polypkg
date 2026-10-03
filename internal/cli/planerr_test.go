@@ -7,7 +7,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/planner"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 var _ = Describe("planExecError resolver translation", func() {
@@ -59,5 +61,58 @@ var _ = Describe("planExecError resolver translation", func() {
 
 	It("passes a nil error through as nil", func() {
 		Expect(planExecError(nil)).To(BeNil())
+	})
+})
+
+var _ = Describe("planExecError attestation translation", func() {
+	const sarif = "https://polypkg.dev/attestation/sarif/v1"
+	const slsa = "https://slsa.dev/provenance/v1"
+
+	It("explains a source-change posture regression and offers a remedy other than pinning", func() {
+		pfe := &planner.PostureFloorError{
+			Predicate:    sarif,
+			CurrentTier:  schema.CarriedTierBoundUnverified,
+			NativeBefore: true,
+		}
+		got := planExecError(fmt.Errorf("provpkg-1.0.0: %w", pfe))
+		var ce *CLIError
+		Expect(errors.As(got, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", got, got)
+		Expect(ce.Msg).To(ContainSubstring("provpkg-1.0.0"))
+		Expect(ce.Msg).To(ContainSubstring("posture floor"))
+		Expect(ce.Msg).To(ContainSubstring(sarif))
+		Expect(ce.Hint).To(ContainSubstring("mirror pull"))
+		Expect(ce.Hint).To(ContainSubstring("polypkg remove"))
+		Expect(ce.Hint).To(ContainSubstring("pin the exact version"))
+	})
+
+	It("does not blame a mirror for a plain provenance regression", func() {
+		pfe := &planner.PostureFloorError{Predicate: slsa}
+		got := planExecError(fmt.Errorf("provpkg-1.0.0: %w", pfe))
+		var ce *CLIError
+		Expect(errors.As(got, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", got, got)
+		Expect(ce.Hint).NotTo(ContainSubstring("mirror pull"))
+		Expect(ce.Hint).To(ContainSubstring("pin the exact version"))
+	})
+
+	It("frames a revoked builder key as a revocation, not a missing predicate", func() {
+		ape := &planner.AttestationPolicyError{
+			Predicate:          slsa,
+			RevokedBuilderKeys: []string{"builder-current"},
+		}
+		got := planExecError(fmt.Errorf("provpkg-1.0.0: %w", ape))
+		var ce *CLIError
+		Expect(errors.As(got, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", got, got)
+		Expect(ce.Msg).To(ContainSubstring("revoke"))
+		Expect(ce.Msg).To(ContainSubstring("builder-current"))
+		Expect(ce.Hint).To(ContainSubstring("revoked"))
+	})
+
+	It("keeps the ordinary policy hint when no key was revoked", func() {
+		ape := &planner.AttestationPolicyError{Predicate: slsa}
+		got := planExecError(fmt.Errorf("provpkg-1.0.0: %w", ape))
+		var ce *CLIError
+		Expect(errors.As(got, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", got, got)
+		Expect(ce.Msg).NotTo(ContainSubstring("revoke"))
+		Expect(ce.Hint).To(ContainSubstring("attestation.require"))
 	})
 })

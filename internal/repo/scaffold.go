@@ -38,7 +38,21 @@ func InitRepo(o InitOptions) (InitResult, error) {
 	}
 
 	outputDir := filepath.Join(o.Dir, "public")
-	keyPath := filepath.Join(o.KeyDir, o.Source+".key")
+	// filepath.Base on the source name keeps a stray separator from relocating
+	// the encrypted signing key out of the KeyDir the operator chose. Callers
+	// reaching InitRepo through the CLI have already had the name rejected by
+	// schema.ValidateSourceName; this is the guard at the interpolation site.
+	//
+	// Absolute because this path is recorded in the manifest, and manifest
+	// paths resolve against the manifest directory while KeyDir is relative to
+	// the process working directory. Recording KeyDir verbatim made
+	// `repo init ./myrepo --key-dir ./keys` write ./keys/<source>.key and every
+	// later command look for ./myrepo/keys/<source>.key. An absolute KeyDir
+	// already behaved this way; this makes both forms agree.
+	keyPath, kerr := filepath.Abs(filepath.Join(o.KeyDir, filepath.Base(o.Source)+".key"))
+	if kerr != nil {
+		return InitResult{}, kerr
+	}
 	if err := guardKeyNotInOutput(outputDir, keyPath, o.KeyDir); err != nil {
 		return InitResult{}, err
 	}
@@ -63,7 +77,7 @@ func InitRepo(o InitOptions) (InitResult, error) {
 		Source:   o.Source,
 		Output:   "./public",
 		Key:      schema.RepoKey{Path: keyPath, KDF: string(o.KDF)},
-		Packages: map[string]schema.RepoPackage{},
+		Packages: map[string][]schema.RepoPackage{},
 	}
 	raw, err := yaml.Marshal(m)
 	if err != nil {

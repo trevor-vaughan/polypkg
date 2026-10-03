@@ -20,11 +20,14 @@ var _ = Describe("generation parent command", func() {
 		Expect(out).To(ContainSubstring("polypkg status"))
 	})
 
-	It("still prints help when invoked bare", func() {
+	It("refuses a bare invocation instead of printing help and succeeding", func() {
 		IsolatedEnv(GinkgoTB())
+
+		// Printing help and exiting 0 makes `polypkg generation` in a script
+		// silently succeed having done nothing; the group must fail instead.
 		out, err := runCmd("generation")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(out).To(ContainSubstring("pin"))
-		Expect(out).To(ContainSubstring("unpin"))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("polypkg generation requires a subcommand"))
+		Expect(out).To(BeEmpty(), "help prose must not be written to stdout")
 	})
 })

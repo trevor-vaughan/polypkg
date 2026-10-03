@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/jedisct1/go-minisign"
 	"github.com/spf13/cobra"
@@ -36,7 +36,7 @@ Without them (on a TTY) it presents a short wizard.`,
 	}
 	addScopeFlags(cmd)
 	cmd.Flags().String("source-url", "", "Repository URL: http(s), file://, or an absolute local path")
-	cmd.Flags().String("trust-root-file", "", "Path to the repository's minisign .pub file")
+	cmd.Flags().String("trust-root-file", "", "Path to the repository's minisign .pub file (copied into the config dir and pinned by content)")
 	cmd.Flags().String("trust-root-url", "", "Download the trust root from this URL (http(s), file://, or absolute path) and confirm it interactively")
 	cmd.Flags().Bool("trust-root-yes", false, "Trust the downloaded --trust-root-url key without prompting (required when not on a TTY)")
 	cmd.Flags().String("source-name", "native", "Source name to record in the profile (must match the name the repository was published under)")
@@ -91,23 +91,17 @@ func runInit(cmd *cobra.Command, format Format) error {
 		if err != nil {
 			return err
 		}
-		// Fast-fail before downloading if a profile already exists.
-		if trustRootURL != "" {
-			for _, name := range profileBasenames {
-				p := filepath.Join(cfgDir, name)
-				if _, statErr := os.Stat(p); statErr == nil {
-					return &CLIError{
-						Msg:  fmt.Sprintf("profile already exists at %s", p),
-						Hint: "edit it directly, or remove it first",
-					}
-				}
-			}
+		// Fast-fail before acquiring the anchor if a profile already exists.
+		// Both routes persist the key under cfgDir before the profile is
+		// written, so without this an aborted init leaves a stray anchor.
+		if err := checkNoExistingProfile(cfgDir); err != nil {
+			return err
 		}
 		var absKey string
 		if trustRootURL != "" {
 			absKey, err = acquireTrustRoot(cmd, sourceName, trustRootURL, assumeYes, cfgDir)
 		} else {
-			absKey, err = validateAndAbsTrustRoot(trustRootFile)
+			absKey, err = pinTrustRootFile(trustRootFile, cfgDir, sourceName)
 		}
 		if err != nil {
 			return err
@@ -160,17 +154,6 @@ func runInitWizard(cmd *cobra.Command, format Format, scope string) error {
 		return err
 	}
 
-	// If the trust root input is a file path (not pasted key material),
-	// validate and resolve it to an absolute path before the write path.
-	trustRootResolved := strings.TrimSpace(trustRootVal)
-	if !strings.HasPrefix(trustRootResolved, "untrusted comment:") {
-		abs, verr := validateAndAbsTrustRoot(trustRootResolved)
-		if verr != nil {
-			return verr
-		}
-		trustRootResolved = abs
-	}
-
 	normalizedURL, err := normalizeSourceURL(sourceURLVal)
 	if err != nil {
 		// Defensive: the huh validator already ran normalizeSourceURL, but
@@ -181,6 +164,21 @@ func runInitWizard(cmd *cobra.Command, format Format, scope string) error {
 	cfgDir, err := scopeConfigDir(scopeVal)
 	if err != nil {
 		return err
+	}
+
+	// If the trust root input is a file path (not pasted key material), pin it
+	// by copying the key under cfgDir/trust; writeInitProfile does the same for
+	// pasted material. cfgDir has to be resolved first, hence the ordering.
+	trustRootResolved := strings.TrimSpace(trustRootVal)
+	if !strings.HasPrefix(trustRootResolved, "untrusted comment:") {
+		if cerr := checkNoExistingProfile(cfgDir); cerr != nil {
+			return cerr
+		}
+		pinned, verr := pinTrustRootFile(trustRootResolved, cfgDir, "native")
+		if verr != nil {
+			return verr
+		}
+		trustRootResolved = pinned
 	}
 	// writeInitProfile handles both pasted key material and file paths.
 	// The wizard always records the default source name; --source-name is a
@@ -193,12 +191,16 @@ func runInitWizard(cmd *cobra.Command, format Format, scope string) error {
 }
 
 // writeInitProfile is the shared write path: given cfgDir, a source name, a
-// source URL, and the trust-root value (either an absolute path or raw key
-// material prefixed with "untrusted comment:"), it:
+// source URL, and the trust-root value (either raw key material prefixed with
+// "untrusted comment:", or a path under cfgDir/trust that the caller has
+// already pinned via pinTrustRootFile or acquireTrustRoot), it:
 //   - Checks for an existing profile.{yaml,yml,jsonc,json} FIRST (fast-fail).
 //   - Validates pasted key material before writing it to
 //     cfgDir/trust/<sourceName>.pub (0o600).
 //   - Writes the rendered template to cfgDir/profile.yaml.
+//
+// Every route therefore records an anchor inside cfgDir, never a path the
+// repository operator could later rewrite.
 //
 // sourceName is validated upstream (validateSourceName; the wizard passes the
 // literal "native"). scope controls the config dir permission on creation
@@ -206,14 +208,8 @@ func runInitWizard(cmd *cobra.Command, format Format, scope string) error {
 func writeInitProfile(cfgDir, sourceName, sourceURL, trustRootInput, scope string) (string, error) {
 	// Check for existing profile BEFORE writing any files so that a
 	// conflict never leaves a stray key file on disk.
-	for _, name := range profileBasenames {
-		p := filepath.Join(cfgDir, name)
-		if _, err := os.Stat(p); err == nil {
-			return "", &CLIError{
-				Msg:  fmt.Sprintf("profile already exists at %s", p),
-				Hint: "edit it directly, or remove it first",
-			}
-		}
+	if err := checkNoExistingProfile(cfgDir); err != nil {
+		return "", err
 	}
 
 	// Resolve the trust root: pasted key material or file path.
@@ -273,6 +269,22 @@ func writeInitProfile(cfgDir, sourceName, sourceURL, trustRootInput, scope strin
 	}
 
 	return destPath, nil
+}
+
+// checkNoExistingProfile returns a CLIError if cfgDir already holds a profile
+// under any recognized basename. Every route calls it before persisting the
+// trust-root anchor, so a refused init never leaves a key file behind.
+func checkNoExistingProfile(cfgDir string) error {
+	for _, name := range profileBasenames {
+		p := filepath.Join(cfgDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return &CLIError{
+				Msg:  fmt.Sprintf("profile already exists at %s", p),
+				Hint: "edit it directly, or remove it first",
+			}
+		}
+	}
+	return nil
 }
 
 // emitInitResult writes the success output (text or JSON).
@@ -364,33 +376,4 @@ func normalizeSourceURL(s string) (string, error) {
 func validateSourceURL(s string) error {
 	_, err := normalizeSourceURL(s)
 	return err
-}
-
-// validateAndAbsTrustRoot reads the file at path, checks that it is a valid
-// minisign public key, and returns the absolute path. Returns a CLIError on
-// any failure.
-func validateAndAbsTrustRoot(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", &CLIError{
-			Msg: fmt.Sprintf("trust_root %q: cannot resolve path", path),
-			Err: err,
-		}
-	}
-	data, err := os.ReadFile(abs) //nolint:gosec // path is resolved from user-supplied --trust-root-file and sanitized to absolute
-	if err != nil {
-		return "", &CLIError{
-			Msg:  fmt.Sprintf("trust_root %s is not a valid minisign public key", path),
-			Hint: "trust_root must point at the repository's minisign .pub file",
-			Err:  err,
-		}
-	}
-	if _, err := minisign.DecodePublicKey(string(data)); err != nil {
-		return "", &CLIError{
-			Msg:  fmt.Sprintf("trust_root %s is not a valid minisign public key", path),
-			Hint: "trust_root must point at the repository's minisign .pub file",
-			Err:  err,
-		}
-	}
-	return abs, nil
 }

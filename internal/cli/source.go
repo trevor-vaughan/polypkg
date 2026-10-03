@@ -27,6 +27,8 @@ func newSourceCmd() *cobra.Command {
 trust root (a local .pub file or a downloaded+confirmed key), then edits the
 profile in place while preserving comments. 'source remove' drops a source and
 its order entry. 'source list' shows all configured sources in preference order.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	// Subcommands are grouped read-vs-write so the safe query is visually
 	// separated from the profile-mutating verbs (see AGENTS.md). The table is
@@ -212,8 +214,8 @@ func newSourceAddCmd() *cobra.Command {
 The source URL (--url) must be an http(s) URL, a file:// URL, or an absolute
 local path. Exactly one of --trust-root or --trust-root-url is required:
 
-  --trust-root <file>      local minisign .pub file (validated, stored as an
-                           absolute path in the profile)
+  --trust-root <file>      local minisign .pub file (validated, then copied
+                           into the config dir and pinned by content)
   --trust-root-url <url>   download the public key, show its fingerprint for
                            out-of-band verification (TOFU), then persist it;
                            requires --trust-root-yes when not on a TTY
@@ -306,23 +308,27 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 		return err
 	}
 
+	// Both routes persist the anchor under the scope config dir and record that
+	// copy, so the profile never points at a path someone else could rewrite.
+	scope, _ := cmd.Flags().GetString("scope")
+	cfgDir, err := scopeConfigDir(scope)
+	if err != nil {
+		return err
+	}
+	// Whether the anchor already existed decides what a failed edit may undo,
+	// so it has to be observed before the copy overwrites it.
+	_, statErr := os.Stat(managedTrustRootPath(cfgDir, name))
+	anchorPreExisted := statErr == nil
+
 	var trustRootPath string
 	if hasTrustRoot {
-		trustRootPath, err = validateAndAbsTrustRoot(trustRoot)
-		if err != nil {
-			return err
-		}
+		trustRootPath, err = pinTrustRootFile(trustRoot, cfgDir, name)
 	} else {
-		// --trust-root-url: resolve the scope config dir and acquire via TOFU.
-		scope, _ := cmd.Flags().GetString("scope")
-		cfgDir, cerr := scopeConfigDir(scope)
-		if cerr != nil {
-			return cerr
-		}
+		// --trust-root-url: download and confirm via TOFU before persisting.
 		trustRootPath, err = acquireTrustRoot(cmd, name, trustRootURL, assumeYes, cfgDir)
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 
 	_, err = profileedit.ApplySourceEdits(profilePath, []profileedit.SourceEdit{{
@@ -333,6 +339,15 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 		OrderFirst: orderFirst,
 	}})
 	if err != nil {
+		// The anchor was written before the edit, so a source that never made
+		// it into the profile would leave one behind. Only an anchor this run
+		// created is ours to remove: if one was already there, the profile's
+		// existing entry still points at it.
+		if !anchorPreExisted {
+			if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
+			}
+		}
 		return &CLIError{Msg: fmt.Sprintf("cannot add source %q to profile", name), Err: err}
 	}
 
@@ -461,10 +476,10 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 // managedOrphanTrustRoot returns the absolute path of the trust-root key that
 // removing source name would orphan, or "" if nothing should be deleted. A key
 // is eligible only when it is this source's canonical managed key
-// (<configdir>/trust/<name>.pub, as written by `source add --trust-root-url`),
-// the source actually references that path, and no other source references it.
-// Externally-supplied --trust-root files (outside the managed trust dir) and
-// keys shared with another source are never returned.
+// (<configdir>/trust/<name>.pub, as written by every `source add` route), the
+// source actually references that path, and no other source references it. A
+// hand-written trust_root pointing outside the managed trust dir, and a key
+// shared with another source, are never returned.
 func managedOrphanTrustRoot(cmd *cobra.Command, name string, p *schema.Profile) string {
 	b, ok := p.Sources.Sources[name]
 	if !ok || b.TrustRoot == "" {
@@ -475,7 +490,7 @@ func managedOrphanTrustRoot(cmd *cobra.Command, name string, p *schema.Profile) 
 	if err != nil {
 		return ""
 	}
-	managed := filepath.Clean(filepath.Join(cfgDir, "trust", name+".pub"))
+	managed := managedTrustRootPath(cfgDir, name)
 	if filepath.Clean(b.TrustRoot) != managed {
 		return "" // external or non-canonical key; leave it
 	}

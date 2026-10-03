@@ -94,6 +94,17 @@ tasks:
       DISTRO: '{{.DISTRO}}'
     cmd: '{{.COMPOSE}} down -v'
 
+  # Pre-run teardown. On a clean host podman-compose prints one
+  # `Error: no container with name or ID "e2e_<svc>_1" found` per service — nine
+  # lines that read like a broken suite before anything has run — and still
+  # exits 0. Capture the transcript instead of printing it, and surface it only
+  # when the teardown actually fails, so a genuine error is never swallowed.
+  _preclean:
+    internal: true
+    env:
+      DISTRO: '{{.DISTRO}}'
+    cmd: 'sh {{.ROOT_DIR}}/tests/e2e/scripts/preclean.sh "{{.OUT_DIR}}/preclean-{{.DISTRO}}.log" {{.COMPOSE}} down -v'
+
   lsm-report:
     desc: 'Log the host LSM enforcement state (permissive vs enforcing)'
     cmd: 'sh {{.ROOT_DIR}}/tests/e2e/scripts/lsm-report.sh'
@@ -103,8 +114,8 @@ tasks:
     cmds:
       # Clean any leftover services/volumes from a prior (possibly manual) run so
       # the publisher starts against an empty repo; the deferred down handles the
-      # tail. Ignore failure when nothing is up.
-      - task: down
+      # tail. Quiet on a clean host — see _preclean.
+      - task: _preclean
         vars: {DISTRO: '{{.DISTRO}}'}
       - task: lsm-report
       - task: build

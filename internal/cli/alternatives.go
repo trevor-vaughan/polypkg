@@ -26,6 +26,8 @@ func newAlternativesCmd() *cobra.Command {
 			"Use the subcommands to inspect that arbitration and override the winner: `list` " +
 			"shows the current winners, `set` pins a provider to a command, and `auto` reverts " +
 			"to priority arbitration. Selections take effect immediately; no re-apply is needed.",
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	cmd.PersistentFlags().String("scope", "user", "Scope to operate on: user or system")
 	_ = cmd.RegisterFlagCompletionFunc("scope", completeStatic("user", "system"))

@@ -97,18 +97,78 @@ func acquireTrustRoot(cmd *cobra.Command, source, trustRootURL string, assumeYes
 		}
 	}
 
-	trustDir := filepath.Join(destDir, "trust")
-	if err := os.MkdirAll(trustDir, 0o700); err != nil {
-		return "", &CLIError{Msg: "cannot create trust directory", Err: err}
+	return persistTrustRoot(destDir, source, data)
+}
+
+// pinTrustRootFile reads the minisign public key at path, validates it, and
+// copies it under destDir/trust/<source>.pub, returning the saved path.
+//
+// The copy is the point: recording the operator's own path instead would leave
+// the anchor late-bound, re-read from that path on every verification. Our
+// guidance points --trust-root-file at the published repository's own tree, so
+// an attacker who can write that tree could otherwise swap the anchor and have
+// their index verify under it. No TOFU prompt here, unlike acquireTrustRoot: a
+// local file the operator named is already material they chose, whereas a
+// download is bytes they have not seen.
+func pinTrustRootFile(path, destDir, source string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", &CLIError{
+			Msg: fmt.Sprintf("trust_root %q: cannot resolve path", path),
+			Err: err,
+		}
 	}
-	dest := filepath.Join(trustDir, source+".pub")
+	data, err := os.ReadFile(abs) //nolint:gosec // path is resolved from a user-supplied flag and sanitized to absolute
+	if err != nil {
+		return "", &CLIError{
+			Msg:  fmt.Sprintf("trust_root %s is not a valid minisign public key", path),
+			Hint: "trust_root must point at the repository's minisign .pub file",
+			Err:  err,
+		}
+	}
+	if _, err := minisign.DecodePublicKey(string(data)); err != nil {
+		return "", &CLIError{
+			Msg:  fmt.Sprintf("trust_root %s is not a valid minisign public key", path),
+			Hint: "trust_root must point at the repository's minisign .pub file",
+			Err:  err,
+		}
+	}
+	return persistTrustRoot(destDir, source, data)
+}
+
+// managedTrustRootPath returns the canonical location of a source's pinned
+// trust root. Every route that persists an anchor writes here, and
+// managedOrphanTrustRoot decides what `source remove` may delete by comparing
+// a profile's recorded path against it — so the formula lives in one place.
+func managedTrustRootPath(cfgDir, source string) string {
+	return filepath.Clean(filepath.Join(cfgDir, "trust", source+".pub"))
+}
+
+// persistTrustRoot writes validated public-key bytes to destDir/trust/<source>.pub
+// atomically and returns that path. Mode 0o644 because this is public key
+// material and carries no secret; the enclosing trust/ dir is 0o700, so under
+// --scope system only root reaches the anchor either way, which matches how
+// system scope is operated.
+func persistTrustRoot(destDir, source string, data []byte) (string, error) {
+	// CLIError.Error() renders Msg alone, so each message names the path it
+	// tried: this is the first write of an init run, and under --scope system
+	// it is where an unprivileged operator lands.
+	dest := managedTrustRootPath(destDir, source)
+	trustDir := filepath.Dir(dest)
+	if err := os.MkdirAll(trustDir, 0o700); err != nil {
+		return "", &CLIError{
+			Msg:  fmt.Sprintf("cannot create trust directory %s: %s", trustDir, err),
+			Hint: "check that the config directory is writable (--scope system needs root)",
+			Err:  err,
+		}
+	}
 	tmp := dest + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil { //nolint:gosec // 0o644: public key material; no secrets
-		return "", &CLIError{Msg: "cannot write trust root", Err: err}
+		return "", &CLIError{Msg: fmt.Sprintf("cannot write trust root %s: %s", tmp, err), Err: err}
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp) // don't leave a stray .tmp on a failed rename
-		return "", &CLIError{Msg: "cannot save trust root", Err: err}
+		return "", &CLIError{Msg: fmt.Sprintf("cannot save trust root %s: %s", dest, err), Err: err}
 	}
 	return dest, nil
 }

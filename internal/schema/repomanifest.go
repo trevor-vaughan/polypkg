@@ -37,8 +37,10 @@ type RepoPrebuilt struct {
 	NativeAttestation string `yaml:"native_attestation,omitempty" json:"native_attestation,omitempty"`
 }
 
-// RepoPackage is one package registered in a repo manifest: either a local
-// source tree (Source) or a pre-built ingest (Prebuilt), never both.
+// RepoPackage is one version of one package registered in a repo manifest:
+// either a local source tree (Source) or a pre-built ingest (Prebuilt), never
+// both. A manifest maps each package name to a list of these, one per published
+// version — see RepoManifest.Packages.
 type RepoPackage struct {
 	Source   string        `yaml:"source,omitempty"   json:"source,omitempty"`
 	Prebuilt *RepoPrebuilt `yaml:"prebuilt,omitempty" json:"prebuilt,omitempty"`
@@ -48,15 +50,22 @@ type RepoPackage struct {
 // (polypkg.repo/v1). It is the single source of truth a `repo build` reconciles
 // the output directory against.
 type RepoManifest struct {
-	Schema   string                 `yaml:"schema"             json:"schema"`
-	Source   string                 `yaml:"source"             json:"source"`
-	Output   string                 `yaml:"output"             json:"output"`
-	Key      RepoKey                `yaml:"key"                json:"key"`
-	Packages map[string]RepoPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
+	Schema   string                   `yaml:"schema"             json:"schema"`
+	Source   string                   `yaml:"source"             json:"source"`
+	Output   string                   `yaml:"output"             json:"output"`
+	Key      RepoKey                  `yaml:"key"                json:"key"`
+	Packages map[string][]RepoPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
 }
 
 // ParseRepoManifest reads a YAML repo manifest, rejects unknown fields, and
 // validates it against the embedded polypkg.repo/v1 JSON Schema.
+//
+// polypkg-repo.yaml is a checked-in, hand-editable, shared file, so parse time
+// is the one place every consumer of it passes through. The top-level `source`
+// is checked against SourceNamePattern here — ahead of the schema pass, which
+// enforces the same pattern but reports it in JSON Schema terms — because the
+// producers interpolate that name straight into the signing-key and
+// build-cache paths.
 func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -67,6 +76,9 @@ func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	var m RepoManifest
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("decode repo manifest: %w", err)
+	}
+	if err := ValidateSourceName(m.Source); err != nil {
+		return nil, fmt.Errorf("repo manifest: %w", err)
 	}
 	jsonBytes, err := json.Marshal(&m)
 	if err != nil {

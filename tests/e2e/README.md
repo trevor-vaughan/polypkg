@@ -45,7 +45,32 @@ task integration:down    DISTRO=centos
 Venom reports land in `.test-output/e2e/<distro>/<scope>/` (gitignored), one
 subdir per scope — `publish/`, `user/`, `system/` — so a full `run` retains all
 three sets of results instead of the last scope overwriting the prior ones.
-Requires rootless `podman` + `podman-compose`.
+
+## Host requirements
+
+Rootless `podman` plus `podman-compose`. On a host whose kernel overlay driver
+rejects `userxattr`, the image build stops with:
+
+```
+Error: mounting an overlay over build context directory: ... userxattr: invalid argument
+```
+
+Point podman at fuse-overlayfs to get past it — `~/.config/containers/storage.conf`:
+
+```toml
+[storage]
+driver = "overlay"
+
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
+```
+
+Confirm with `podman info | grep graphDriverName`.
+
+`task integration:run` tears down before it builds, so on a machine that has
+never run the suite the first thing you see is a run of `Error: no container
+with name or ID "e2e_..._1" found` lines. That is the teardown finding nothing
+to remove, not a failure.
 
 ## Topology
 

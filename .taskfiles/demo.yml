@@ -1,0 +1,47 @@
+version: '3'
+
+# Renders the VHS demo tapes in .taskfiles/demo/ into docs/demo/*.gif. Each tape
+# records against a throwaway sandbox with HOME and every XDG directory
+# redirected (see .taskfiles/scripts/demo.sh), so a render never touches your
+# real profile or generation store.
+#
+# Needs vhs, ttyd, and ffmpeg on PATH. Install vhs with
+# `go install github.com/charmbracelet/vhs@latest` (or drop it in ./bin); ttyd
+# and ffmpeg come from your package manager.
+#
+# The rendered GIFs are tracked in Git LFS (see .gitattributes), so run
+# `git lfs install` once before committing a re-render.
+
+vars:
+  DEMO_DIR: '{{.ROOT_DIR}}/docs/demo'
+  TAPE_DIR: '{{.ROOT_DIR}}/.taskfiles/demo'
+  SCRIPT: '{{.ROOT_DIR}}/.taskfiles/scripts/demo.sh'
+  SCENARIOS: '{{.SCENARIOS | default "quickstart trust drift publish mirror upgrade"}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: |
+      task --list 2>/dev/null
+
+  # SCENARIO selects both the sandbox seeding in demo.sh and the tape file, so
+  # a new demo means a new case in demo.sh, a new <name>.tape, and a new entry
+  # in the SCENARIOS var above.
+  render:
+    desc: 'Render one demo GIF (var SCENARIO, e.g. task demo:render SCENARIO=trust)'
+    requires:
+      vars:
+        - name: SCENARIO
+          enum: [quickstart, trust, drift, publish, mirror, upgrade]
+    cmd: >-
+      bash "{{.SCRIPT}}" "{{.ROOT_DIR}}" {{.SCENARIO}}
+      "{{.TAPE_DIR}}/{{.SCENARIO}}.tape"
+      "{{.DEMO_DIR}}/{{.SCENARIO}}.gif"
+
+  all:
+    desc: Render every demo GIF into docs/demo (needs vhs, ttyd, ffmpeg on PATH)
+    cmds:
+      - for: {var: SCENARIOS, split: ' '}
+        task: render
+        vars:
+          SCENARIO: '{{.ITEM}}'

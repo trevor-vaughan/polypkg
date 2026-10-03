@@ -12,6 +12,12 @@ and on-disk formats may change in breaking ways.
 
 ### Added
 
+- Recorded terminal demos in the README and the publishing, mirroring, and
+  trust-policy guides. Six VHS tapes in `.taskfiles/demo/` render to
+  `docs/demo/*.gif` via `task demo:all`; each records against a throwaway signed
+  `file://` repository with `HOME` and the `XDG_*` directories redirected, so a
+  render cannot touch a real profile. The GIFs are tracked in Git LFS —
+  `git lfs install` is now required for a clone to render the docs correctly.
 - Declarative profile model: describe the desired set of packages in a profile
   and run `plan`/`apply` to reconcile the system to it. Every `apply` becomes an
   immutable generation.
@@ -36,6 +42,9 @@ and on-disk formats may change in breaking ways.
   tarball of a built repository, `repo pull` fetches upstream packages and
   re-publishes them into one, and `mirror verify` checks a bundle's manifest
   signature, freshness, and completeness before use.
+- `mirror pull --all-versions` mirrors every published version of an unpinned
+  package instead of only the latest; an explicit `name@version` selector
+  still wins.
 
 - Trust-bundle and revocation-list primitives (`polypkg.trust-bundle`,
   `polypkg.revocation-list`), anchored by the source trust root and loaded with
@@ -105,3 +114,60 @@ and on-disk formats may change in breaking ways.
   fuzzing, and the shared MegaLinter policy), Dependabot dependency updates, and
   a GoReleaser release pipeline producing Cosign-signed checksums, per-archive
   Syft SBOMs, and GitHub SLSA build-provenance attestations.
+
+### Changed
+
+- **Breaking (`polypkg-repo.yaml`):** `packages:` maps each name to a *list* of
+  entries, so one repository can publish several versions of a package:
+
+  ```yaml
+  packages:
+      hello:
+          - source: ./pkgs/hello-1.0.0
+          - source: ./pkgs/hello-1.1.0
+  ```
+
+  Existing manifests need each entry turned into a one-item list. `repo add`
+  appends a new source and updates a repeated one; `repo remove <name>` drops
+  every version and `repo remove <name>@<version>` drops one. An exact client
+  pin now stays resolvable after the publisher ships a newer version, which is
+  what the README's held-back wording has always described.
+
+### Fixed
+
+- `search`'s interactive picker can install again. The picker ran inside the
+  closure that holds the apply lock, so the install it started could never
+  acquire that lock and failed with `another polypkg command is already running
+  (polypkg search)`. The catalog fetch now returns its rows and releases the
+  lock before anything is printed or picked.
+- `repo init --key-dir <relative-path>` records a key path later commands can
+  find. It recorded the path verbatim, but manifest paths resolve against the
+  manifest directory while `--key-dir` is relative to your working directory, so
+  `repo init ./myrepo --key-dir ./keys` wrote the key where `repo add` would not
+  look. An absolute `--key-dir` was unaffected.
+- `repo add` no longer fails after publishing when the build-cache directory is
+  absent. The cache defaults under the XDG data dir and is written after the
+  repository is built, signed, and published, so a missing directory turned
+  completed work into a non-zero exit.
+
+### Security
+
+- Trust roots supplied as a local file are now pinned by content, not by path.
+  `init --trust-root-file` and `source add --trust-root` recorded the path you
+  gave them and re-read the anchor from it on every verification, so a key that
+  lived anywhere the repository operator could write was not pinned at all: the
+  same write that replaced the signed metadata replaced the key that metadata is
+  checked against, and verification passed. Every piece of guidance we ship —
+  the README quickstart included — pointed the flag at the repository's own
+  published tree, where `repo init` leaves the operator's copy, so the exposed
+  configuration was the documented one. Both flags now copy the key into
+  `<config>/trust/<source>.pub` and record that copy, matching what
+  `--trust-root-url` and the wizard's pasted-key route already did. Your own
+  file is read once and never consulted again.
+
+  Two consequences worth knowing: the profile written by `init` and `source add`
+  now names a path under `<config>/trust/` rather than the one you passed, and
+  two sources can no longer be made to share one managed key by pointing
+  `--trust-root` at another source's anchor — each gets its own copy. Existing
+  profiles are untouched; re-run `init` or `source add` (or copy the key under
+  `<config>/trust/` yourself) to pin an anchor that is currently a bare path.

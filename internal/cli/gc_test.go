@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/trevor-vaughan/polypkg/internal/lock"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/substrate"
 )
 
 var _ = Describe("gc error shaping", func() {
@@ -164,5 +167,66 @@ var _ = Describe("gc invalid --age flag", func() {
 		Expect(errors.As(err, &cliErr)).To(BeTrue(), "expected *CLIError, got %T: %v", err, err)
 		Expect(cliErr.Msg).To(ContainSubstring(`"notanage"`))
 		Expect(cliErr.Hint).To(ContainSubstring("30d"))
+	})
+})
+
+// Finding 11: `gc --count 1` with several recent generations reclaimed nothing
+// and said only "removed 0, failed 0, bytes reclaimed 0". Both retention
+// predicates apply simultaneously, so --age 30d held every generation — correct,
+// but the operator was given no way to see it from the output.
+var _ = Describe("gc age-held reporting", func() {
+	commitGenerations := func(dataHome string, n int) {
+		s, err := substrate.New("store", dataHome)
+		Expect(err).NotTo(HaveOccurred())
+		for i := 1; i <= n; i++ {
+			txID := fmt.Sprintf("tx-%d", i)
+			Expect(s.BeginTransaction(txID)).To(Succeed())
+			m := &schema.Manifest{Schema: "polypkg.manifest/v2", Generation: i, Scope: "user", Entries: []schema.ManifestEntry{}}
+			_, cerr := s.CommitGeneration(txID, m, &schema.Ownership{Schema: "polypkg.ownership/v1", Scope: "user"}, nil)
+			Expect(cerr).NotTo(HaveOccurred())
+		}
+	}
+	setupStore := func(n int) {
+		dir := GinkgoT().TempDir()
+		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
+		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		commitGenerations(filepath.Join(dir, "data", "polypkg"), n)
+	}
+	runGCCmd := func(args ...string) string {
+		var out bytes.Buffer
+		root := NewRootCmd()
+		root.SetArgs(args)
+		root.SetOut(&out)
+		root.SetErr(&out)
+		Expect(root.Execute()).To(Succeed())
+		return out.String()
+	}
+
+	It("says how many generations the age window held back", func() {
+		setupStore(4)
+		out := runGCCmd("gc", "--count", "1")
+		Expect(out).To(ContainSubstring("gc: removed 0"))
+		Expect(out).To(ContainSubstring("kept 3 generation(s) inside --age 30d"))
+		Expect(out).To(ContainSubstring("--count 1"))
+		Expect(out).To(ContainSubstring("--age 0"))
+	})
+
+	It("reports the age-held count in the JSON envelope", func() {
+		setupStore(4)
+		out := runGCCmd("--format", "json", "gc", "--count", "1")
+		var env struct {
+			Data struct {
+				KeptByAge int `json:"kept_by_age"`
+			} `json:"data"`
+		}
+		Expect(json.Unmarshal([]byte(out), &env)).To(Succeed())
+		Expect(env.Data.KeptByAge).To(Equal(3))
+	})
+
+	It("stays quiet when the age rule held nothing back", func() {
+		setupStore(4)
+		out := runGCCmd("gc", "--count", "1", "--age", "0")
+		Expect(out).To(ContainSubstring("gc: removed 3"))
+		Expect(out).NotTo(ContainSubstring("inside --age"))
 	})
 })

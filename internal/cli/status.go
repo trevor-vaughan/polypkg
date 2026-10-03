@@ -470,9 +470,19 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 	drifted []schema.PlanDriftEntry, dec gc.Decision, grace []schema.StatusGraceEntry,
 	revoked []schema.StatusRevokedBuilder, revFresh []schema.StatusRevocationFreshness,
 	revokedAtts []schema.StatusRevokedAttestation) error {
+	// The current generation's commit time is carried by its row in gens (the
+	// same value retained[] reports); the caller passes only the id, so look it
+	// up here rather than emitting the zero instant.
+	current := &schema.StatusCurrentGen{Generation: cur}
+	for i := range gens {
+		if gens[i].ID == cur {
+			current.AppliedAt = gens[i].CommittedAt
+			break
+		}
+	}
 	sr := &schema.StatusResult{
 		Schema:   "polypkg.status/v1",
-		Current:  &schema.StatusCurrentGen{Generation: cur},
+		Current:  current,
 		Retained: make([]schema.StatusGenSummary, 0, len(gens)),
 		Drift:    drifted,
 		GCPreview: &schema.StatusGCPreview{

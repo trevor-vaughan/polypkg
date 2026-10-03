@@ -30,11 +30,14 @@ type StatusResult struct {
 	RevocationFreshness []StatusRevocationFreshness `json:"revocation_freshness,omitempty"`
 }
 
-// StatusCurrentGen describes the active generation.
+// StatusCurrentGen describes the active generation. AppliedAt uses omitzero
+// rather than omitempty: omitempty never elides a struct, so a generation whose
+// commit time is unknown used to serialize as the year-1 zero instant and a
+// consumer computing "how long has this been live" got a nonsense answer.
 type StatusCurrentGen struct {
 	Generation int       `json:"generation"`
 	Profile    string    `json:"profile,omitempty"`
-	AppliedAt  time.Time `json:"applied_at,omitempty"`
+	AppliedAt  time.Time `json:"applied_at,omitzero"`
 }
 
 // StatusGenSummary is one row of the retained-generation list.

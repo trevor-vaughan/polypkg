@@ -386,7 +386,12 @@ var _ = Describe("LoadRevocationList", func() {
 	})
 
 	It("returns the list's expires for the caller to persist", func() {
-		const wantExp = "2026-09-01T00:00:00Z"
+		// This asserts pass-through of the expires string, not freshness, so
+		// the list has to still be live: LoadRevocationList refuses expired
+		// metadata before it can return anything. Far-future per the rest of
+		// this file, where 2099 means "valid" and 2020 means "expired" — a
+		// nearer date silently turns this into an expiry test once it passes.
+		const wantExp = "2099-01-01T00:00:00Z"
 		anchor := newTKey()
 		v, err := NewVerifier("polypkg-native", anchor.pubFile(), "native")
 		Expect(err).NotTo(HaveOccurred())

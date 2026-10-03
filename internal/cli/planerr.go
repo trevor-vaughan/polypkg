@@ -44,7 +44,48 @@ func planExecError(err error) error {
 			Err:  ase,
 		}
 	}
+	var pfe *planner.PostureFloorError
+	if errors.As(err, &pfe) {
+		return postureFloorCLIError(err, pfe)
+	}
+	var ape *planner.AttestationPolicyError
+	if errors.As(err, &ape) {
+		return attestationPolicyCLIError(err, ape)
+	}
 	return err
+}
+
+// postureFloorCLIError frames an anti-downgrade posture refusal. The planner's
+// message is kept verbatim (the caller prefixed it with name-version), and only
+// the remedy differs by shape.
+//
+// A native-to-carried regression is what an operator sees when they repoint an
+// already-installed package at a `mirror pull` mirror of its own upstream: the
+// pull re-binds the upstream's native attestations as carried-opaque, so the
+// tier genuinely drops and refusing is correct. "Pin the exact version" — the
+// only remedy the old message offered — is the worst of the available ones,
+// because the floor stays waived for that package as long as the pin is there.
+// Re-baselining the one package is narrower and keeps the ratchet running from
+// the mirror's tier onward.
+func postureFloorCLIError(err error, pfe *planner.PostureFloorError) *CLIError {
+	hint := "the source no longer proves this predicate at a verified tier; install from a source that does, or pin the exact version in the profile to accept the lower posture for this package"
+	if pfe.SourceChangeShaped() {
+		hint = "a `mirror pull` mirror carries its upstream's native attestations as carried-opaque, so an existing install moved onto a mirror of its own upstream trips this floor; keep this package on the source that attests it natively, or re-baseline the floor at the mirror's tier with `polypkg remove <pkg>` then `polypkg install <pkg>`; pin the exact version only to waive the floor while the pin stands"
+	}
+	return &CLIError{Msg: err.Error(), Hint: hint, Err: err}
+}
+
+// attestationPolicyCLIError frames a per-source require-gate refusal. A revoked
+// builder key reaches the gate looking exactly like an absent predicate — the
+// signature is never counted, so the binding sits at verified-transport-only —
+// and the operator needs to know which of the two it is before deciding whether
+// to chase the publisher or the profile.
+func attestationPolicyCLIError(err error, ape *planner.AttestationPolicyError) *CLIError {
+	hint := "the source's attestation.require for this predicate is not met; check the source's published attestations, or relax attestation.require in the profile if you accept the weaker posture"
+	if len(ape.RevokedBuilderKeys) > 0 {
+		hint = "the provenance is present and correctly signed, but the publisher revoked the signing builder key, so it no longer counts; wait for a release signed by a current key, or contact the repository operator"
+	}
+	return &CLIError{Msg: err.Error(), Hint: hint, Err: err}
 }
 
 // fetchCLIError frames a source fetch failure for the user. A network failure

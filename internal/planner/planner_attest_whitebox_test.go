@@ -405,6 +405,10 @@ var _ = Describe("verifyAttestations binding checks", func() {
 	})
 })
 
+// errOf drops bindCarriedRefs's revoked-builder-key return so a spec that only
+// cares about the error stays a one-liner.
+func errOf(_ []string, err error) error { return err }
+
 var _ = Describe("bindCarriedRefs install-time binding", func() {
 	// dsseCarried wraps an in-toto SLSA statement (one subject over sha256hex,
 	// named nameHint) in a minimal DSSE envelope — the shape
@@ -451,7 +455,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			},
 			bytes: env,
 		}}
-		Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)).To(Succeed())
+		Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState))).To(Succeed())
 		Expect(attState.CarriedBindings).To(HaveLen(1))
 		// dsseCarried wraps a DSSE envelope with no signatures and no bundle is
 		// passed here, so its builder signature cannot be verified: this is the
@@ -468,7 +472,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 		env := dsseCarried("artifact", sha256Of(tarball))
 		attState := &schema.AttestationState{Status: "verified", PolicyAtInstall: "warn"}
 		refs := []carriedRef{{ref: schema.AttestationRef{Kind: schema.KindCarriedOpaque, Artifact: "pool/c.att.json"}, bytes: env}}
-		Expect(bindCarriedRefs(refs, tarball, pkgRoot, nil, nil, nil, attState)).To(Succeed())
+		Expect(errOf(bindCarriedRefs(refs, tarball, pkgRoot, nil, nil, nil, attState))).To(Succeed())
 		Expect(attState.CarriedBindings[0].SubjectScope).To(Equal("artifact"))
 	})
 
@@ -477,7 +481,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 		env := dsseCarried("bin/hello", sha256Of([]byte("original honest bytes")))
 		attState := &schema.AttestationState{Status: "verified", PolicyAtInstall: "warn"}
 		refs := []carriedRef{{ref: schema.AttestationRef{Kind: schema.KindCarriedOpaque, Artifact: "pool/c.att.json"}, bytes: env}}
-		err := bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)
+		_, err := bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("does not bind the installed bytes"))
 	})
@@ -495,13 +499,13 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 		env := dsseCarried("bin/hello", sha256Of(body))
 		attState := &schema.AttestationState{Status: "verified", PolicyAtInstall: "warn"}
 		refs := []carriedRef{{ref: schema.AttestationRef{Kind: schema.KindCarriedOpaque, Artifact: "pool/c.att.json"}, bytes: env}}
-		Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)).To(Succeed())
+		Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState))).To(Succeed())
 		Expect(attState.CarriedBindings[0].SubjectScope).To(Equal("content:real"))
 	})
 
 	It("is a no-op with no carried refs", func() {
 		attState := &schema.AttestationState{Status: "verified", PolicyAtInstall: "warn"}
-		Expect(bindCarriedRefs(nil, []byte("tarball"), "/nonexistent", nil, nil, nil, attState)).To(Succeed())
+		Expect(errOf(bindCarriedRefs(nil, []byte("tarball"), "/nonexistent", nil, nil, nil, attState))).To(Succeed())
 		Expect(attState.CarriedBindings).To(BeEmpty())
 	})
 
@@ -518,7 +522,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			},
 			bytes: env,
 		}}
-		err := bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)
+		_, err := bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("predicate type mismatch"))
 	})
@@ -532,7 +536,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			ref:   schema.AttestationRef{Kind: schema.KindCarriedOpaque, Artifact: "pool/c.att.json"}, // no PredicateType
 			bytes: env,
 		}}
-		Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)).To(Succeed())
+		Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState))).To(Succeed())
 		Expect(attState.CarriedBindings[0].PredicateType).To(Equal("https://slsa.dev/provenance/v1"))
 	})
 
@@ -565,7 +569,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, nil, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, nil, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			b := attState.CarriedBindings[0]
 			Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedOffline))
@@ -594,7 +598,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, nil, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, nil, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			b := attState.CarriedBindings[0]
 			Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))
@@ -619,7 +623,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			}}
 			// nil bundle: no mirrored root, so the kernel is never reached and the
 			// binding fails closed to transport-only.
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, nil, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			Expect(attState.CarriedBindings[0].Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))
 		})
@@ -642,7 +646,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			}}
 			// nil bundle (no mirrored root at all) yet the pin verifies: the pin path
 			// is independent of the mirror chain.
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, &pin, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, &pin, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			b := attState.CarriedBindings[0]
 			Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedOffline))
@@ -674,7 +678,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &wrongPin, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &wrongPin, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			b := attState.CarriedBindings[0]
 			Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))
@@ -703,7 +707,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &correctPin, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &correctPin, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			Expect(attState.CarriedBindings[0].Tier).To(Equal(schema.CarriedTierVerifiedOffline))
 		})
@@ -729,7 +733,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, &pin, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, nil, &pin, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			Expect(attState.CarriedBindings[0].Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))
 		})
@@ -759,7 +763,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 				},
 				bytes: bundleBytes,
 			}}
-			Expect(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &pin, nil, attState)).To(Succeed())
+			Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, &pin, nil, attState))).To(Succeed())
 			Expect(attState.CarriedBindings).To(HaveLen(1))
 			b := attState.CarriedBindings[0]
 			Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))

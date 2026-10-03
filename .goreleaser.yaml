@@ -42,6 +42,12 @@ signs:
     signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
+      # Emit the protobuf Sigstore bundle rather than cosign's legacy JSON.
+      # Without this the file is named .sigstore.json but holds the old
+      # base64Signature/cert/rekorBundle shape, which every non-cosign
+      # verifier (sigstore-python, sigstore-go, cosign --new-bundle-format)
+      # fails to parse.
+      - "--new-bundle-format"
       - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"

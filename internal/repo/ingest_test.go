@@ -61,9 +61,9 @@ func stagePrebuilt(t *testing.T, bind bool) (mPath, keyDir string) {
 	}
 	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  hello:\n    prebuilt:\n" +
-		"      artifact: " + artPath + "\n" +
-		"      attestations: " + attDir + "\n"
+		"packages:\n  hello:\n    - prebuilt:\n" +
+		"        artifact: " + artPath + "\n" +
+		"        attestations: " + attDir + "\n"
 	mPath = filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
@@ -260,14 +260,14 @@ func writePrebuiltManifest(t *testing.T, root string, pkgs ...stagedPkg) (mPath,
 	sb.WriteString("key:\n  path: " + keyPath + "\n  kdf: scrypt\n")
 	sb.WriteString("packages:\n")
 	for _, p := range pkgs {
-		sb.WriteString("  " + p.name + ":\n    prebuilt:\n")
-		sb.WriteString("      artifact: " + p.artPath + "\n")
-		sb.WriteString("      attestations: " + p.attDir + "\n")
+		sb.WriteString("  " + p.name + ":\n    - prebuilt:\n")
+		sb.WriteString("        artifact: " + p.artPath + "\n")
+		sb.WriteString("        attestations: " + p.attDir + "\n")
 		if p.bundlePath != "" {
-			sb.WriteString("      trust_bundle: " + p.bundlePath + "\n")
+			sb.WriteString("        trust_bundle: " + p.bundlePath + "\n")
 		}
 		if p.nativePath != "" {
-			sb.WriteString("      native_attestation: " + p.nativePath + "\n")
+			sb.WriteString("        native_attestation: " + p.nativePath + "\n")
 		}
 	}
 	mPath = filepath.Join(root, "polypkg-repo.yaml")

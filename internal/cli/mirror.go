@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/mirror"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 func newMirrorCmd() *cobra.Command {
@@ -20,6 +21,8 @@ func newMirrorCmd() *cobra.Command {
 		Long: `Work with the self-contained tarball mirrors produced by
 'polypkg repo export-bundle': verify their signature, freshness, and
 completeness before serving them at an air-gapped site.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	cmd.AddCommand(newMirrorVerifyCmd())
 	cmd.AddCommand(newMirrorPullCmd())
@@ -86,10 +89,24 @@ every upstream package is pulled. A 'name' selector pulls the latest of that
 package; 'name@version' pulls one version. --package is repeatable and unions
 with --from-file. (Multi-source selection is per-entry in the sources file.)
 
+--all-versions mirrors every published version of an unpinned package instead
+of only the latest: with no --package it is every version of every package;
+combined with a bare '--package name' it is every version of that name. An
+explicit 'name@version' still selects only that version: the pin already says
+what you want. Bundles grow with every version mirrored, so only pass this
+where the air-gapped site's clients hold pins against exact versions.
+
 --fresh produces a clone with NO upstream provenance: upstream attestations and
 upstream builder keys/roots are dropped and the repo re-anchors on your key
 alone. A downstream 'require' policy then correctly fails closed on the missing
-provenance.`,
+provenance.
+
+Every pull writes a polypkg-repo.yaml into --output-dir. That is the manifest
+'polypkg repo revoke', 'repo status', 'repo build', 'repo key show', and
+'repo export-bundle' read, so you can manage the mirror in place — for example
+'polypkg repo revoke --remove-builder-key <id>' to prune the mirror's revocation
+list. It points at the mirror's own published pool, so a 'repo build' against it
+is a no-op; refresh content by re-running 'mirror pull'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -107,11 +124,12 @@ provenance.`,
 	cmd.Flags().String("accept-expiry-until", "", "RFC3339 deadline: accept expired upstream metadata up to this time (freshness grace)")
 	cmd.Flags().StringArray("package", nil, "Select a package to pull: name or name@version (repeatable, single-source mode)")
 	cmd.Flags().String("from-file", "", "Read additional selectors, one per line (single-source mode)")
+	cmd.Flags().Bool("all-versions", false, "Mirror every published version of an unpinned package instead of only the latest; bundles grow accordingly (single-source mode)")
 	// Upstream (multi source)
 	cmd.Flags().String("sources-file", "", "YAML file listing multiple upstream sources (mutually exclusive with --source-url)")
 	// Local re-publish
 	cmd.Flags().String("repo-source", "", "Source identity stamped into the local signed index/trust docs (required)")
-	cmd.Flags().String("output-dir", "", "Directory to publish the local repository into (required)")
+	cmd.Flags().String("output-dir", "", "Directory to publish the local repository into, including the polypkg-repo.yaml the repo subcommands manage it through (required)")
 	cmd.Flags().String("key", "", "Path to the local signing key file (required)")
 	cmd.Flags().String("key-kdf", "scrypt", "KDF recorded in the generated manifest's key block (scrypt or pbkdf2)")
 	cmd.Flags().String("key-dir", "", "Directory holding the build cache; must be outside --output-dir (default: the directory containing --key)")
@@ -158,11 +176,11 @@ func resolveMirrorPullInputs(cmd *cobra.Command) (pullInputs, error) {
 	}
 
 	if sourcesFile != "" {
-		for _, f := range []string{"trust-root", "source-type", "source-name", "accept-expiry-until", "package", "from-file"} {
+		for _, f := range []string{"trust-root", "source-type", "source-name", "accept-expiry-until", "package", "from-file", "all-versions"} {
 			if cmd.Flags().Changed(f) {
 				return pullInputs{}, &CLIError{
 					Msg:  "--" + f + " cannot be combined with --sources-file",
-					Hint: "with --sources-file, set trust_root/source_type/source_name/accept_expiry_until/packages per entry inside the file",
+					Hint: "with --sources-file, set trust_root/source_type/source_name/accept_expiry_until/packages/all_versions per entry inside the file",
 				}
 			}
 		}
@@ -191,22 +209,57 @@ func resolveMirrorPullInputs(cmd *cobra.Command) (pullInputs, error) {
 			}
 			selectors = append(selectors, more...)
 		}
+		allVersions, _ := cmd.Flags().GetBool("all-versions")
 		sources = []mirror.SourceSpec{{
 			URL: sourceURL, TrustRoot: trustRoot, SourceType: sType,
 			SourceName: sName, AcceptExpiryUntil: acceptUntil, Packages: selectors,
+			AllVersions: allVersions,
 		}}
 	}
 
 	in := pullInputs{sources: sources}
 	in.repoSrc, _ = cmd.Flags().GetString("repo-source")
-	in.outputDir, _ = cmd.Flags().GetString("output-dir")
-	in.keyPath, _ = cmd.Flags().GetString("key")
+	// --repo-source is stamped into the generated manifest and interpolated into
+	// the build-cache path under --key-dir. Reject a path- or URL-shaped value
+	// here, before any upstream is fetched, so the failure names the flag
+	// instead of surfacing as a mangled open() error deep in the build.
+	if err := schema.ValidateSourceName(in.repoSrc); err != nil {
+		return pullInputs{}, &CLIError{
+			Msg:  fmt.Sprintf("--repo-source %q is not a valid slug", in.repoSrc),
+			Hint: "--repo-source is the local source NAME stamped into your signed index (e.g. mymirror), not a URL; it must match " + schema.SourceNamePattern,
+			Err:  err,
+		}
+	}
+	// Absolutize --output-dir and --key against the CALLER's cwd. They are
+	// interpolated into a manifest that lives in the staging root, and `repo
+	// build` resolves a relative manifest path against the manifest's own
+	// directory — so `--output-dir ./mirror-repo` (the shape docs/publishing.md
+	// shows) used to publish into the temp staging dir and be deleted with it,
+	// and `--key ./local-repo.key` was looked for there too.
+	outputDir, _ := cmd.Flags().GetString("output-dir")
+	keyPath, _ := cmd.Flags().GetString("key")
+	absOut, err := filepath.Abs(outputDir)
+	if err != nil {
+		return pullInputs{}, fmt.Errorf("resolve --output-dir: %w", err)
+	}
+	absKey, err := filepath.Abs(keyPath)
+	if err != nil {
+		return pullInputs{}, fmt.Errorf("resolve --key: %w", err)
+	}
+	in.outputDir = absOut
+	in.keyPath = absKey
 	in.keyKDF, _ = cmd.Flags().GetString("key-kdf")
 	in.keyDir, _ = cmd.Flags().GetString("key-dir")
 	if in.keyDir == "" {
 		in.keyDir = filepath.Dir(in.keyPath)
+	} else if abs, aerr := filepath.Abs(in.keyDir); aerr == nil {
+		in.keyDir = abs
 	}
-	in.validFor, _ = cmd.Flags().GetDuration("valid-for")
+	validFor, err := resolveValidFor(cmd)
+	if err != nil {
+		return pullInputs{}, err
+	}
+	in.validFor = validFor
 	in.stageDir, _ = cmd.Flags().GetString("stage-dir")
 	in.bundle, _ = cmd.Flags().GetString("bundle")
 	in.fresh, _ = cmd.Flags().GetBool("fresh")
@@ -236,10 +289,22 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		defer func() { _ = os.RemoveAll(stageRoot) }()
 	}
 
-	// A --fresh re-anchor must land in a clean target: `repo build` never removes a
-	// prior run's published trust-bundle.json (upstream builder keys) and a cache
-	// hit against a populated pool would re-surface stored attestation refs. Fail
-	// fast before any fetch so no work is wasted.
+	// A --fresh re-anchor must land in a clean target. This is defense in depth,
+	// not a patch over one specific leak: "carries no upstream provenance" is
+	// today the joint product of four mechanisms — stripFresh clearing
+	// TrustBundlePath and AttDir, build.go's bundleOrphaned path pruning a prior
+	// trust-bundle.json, the throwaway build cache set up below, and Build
+	// flooring the serial at publishedSerial(outputDir). Each has changed on its
+	// own schedule, so pinning the guarantee to any one of them ages badly.
+	// Demanding an empty directory makes it a property you can observe instead
+	// of one you have to re-derive.
+	//
+	// It also covers the gap none of those four close: Build republishes the
+	// pool but never prunes it, so a dirty target keeps serving the attestation
+	// blobs a previous non-fresh run wrote (under this repo's own key) even
+	// though the re-anchored index references none of them.
+	//
+	// Checked before any fetch so a doomed run wastes no network work.
 	if in.fresh {
 		if err := ensureCleanOutputDir(in.outputDir); err != nil {
 			return err
@@ -254,13 +319,17 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		res, perr := mirror.Pull(context.Background(), mirror.PullOptions{
 			URL: s.URL, TrustRoot: s.TrustRoot, SourceType: s.SourceType,
 			SourceName: s.SourceName, AcceptExpiryUntil: s.AcceptExpiryUntil,
-			Selectors: s.Packages, StageDir: filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
+			Selectors: s.Packages, AllVersions: s.AllVersions,
+			StageDir: filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
 		})
 		if perr != nil {
 			return perr
 		}
 		for _, note := range res.Graced {
 			fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: upstream %s accepted under freshness grace: %s\n", s.URL, note)
+		}
+		for _, note := range res.Narrowed {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: upstream %s: %s\n", s.URL, note)
 		}
 		results = append(results, res)
 	}
@@ -309,6 +378,17 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		return mapPublishError(err)
 	}
 
+	// Leave a manifest the operator can manage the mirror with. Without it the
+	// documented revocation-prune procedure (docs/publishing.md) is unreachable:
+	// the build manifest lives in the staging root, which is a temp dir this
+	// function deletes. Written after PropagateRevocations so the trust bundle
+	// and revocation list it references are already published.
+	if err := mirror.WriteManagementManifest(mirror.PrebuiltManifestParams{
+		Source: in.repoSrc, Output: in.outputDir, KeyPath: in.keyPath, KeyKDF: in.keyKDF,
+	}); err != nil {
+		return err
+	}
+
 	// Optionally export a signed bundle of everything just re-published.
 	var bundlePath string
 	if in.bundle != "" {
@@ -323,10 +403,12 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 	for _, r := range results {
 		pkgCount += len(r.Packages)
 	}
+	mirrorManifest := filepath.Join(in.outputDir, mirror.ManagementManifestName)
 	EmitResult(cmd, format, "mirror pull",
-		map[string]any{"packages": pkgCount, "output": in.outputDir, "bundle": bundlePath, "fresh": in.fresh},
+		map[string]any{"packages": pkgCount, "output": in.outputDir, "manifest": mirrorManifest, "bundle": bundlePath, "fresh": in.fresh},
 		func(w *bytes.Buffer, d map[string]any) {
 			fmt.Fprintf(w, "Pulled %v package(s) into %s\n", d["packages"], in.outputDir)
+			fmt.Fprintf(w, "Manage it with: polypkg repo <command> --manifest %s\n", d["manifest"])
 			if bundlePath != "" {
 				fmt.Fprintf(w, "Exported mirror bundle to %s\n", bundlePath)
 				fmt.Fprintf(w, "Verify with: polypkg mirror verify %s\n", bundlePath)
@@ -336,10 +418,15 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 }
 
 // ensureCleanOutputDir enforces that a --fresh re-publish targets an empty (or
-// absent) output directory. A fresh clone must carry NO upstream provenance, but
-// `repo build` never removes a prior run's published trust-bundle.json (upstream
-// builder keys), so re-anchoring into a populated dir would silently retain it.
-// Failing closed here — together with a clean build cache — makes the strip total.
+// absent) output directory. A fresh clone must carry NO upstream provenance,
+// and that is a joint property of several independently-evolving mechanisms
+// rather than a guarantee any one of them makes (see the rationale at the call
+// site in runMirrorPull). This guard asserts the property on the directory
+// directly instead of trusting those mechanisms to keep agreeing.
+//
+// The concrete gap it closes: `repo build` republishes the pool but never
+// prunes it, so attestation blobs a previous non-fresh run wrote stay on disk
+// — and stay served — even after the re-anchored index stops referencing them.
 func ensureCleanOutputDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {

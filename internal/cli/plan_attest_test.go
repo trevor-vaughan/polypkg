@@ -34,7 +34,7 @@ var _ = Describe("plan attestation warnings", func() {
 		mPath := filepath.Join(root, "polypkg-repo.yaml")
 		manifest := "schema: polypkg.repo/v1\nsource: repo\noutput: ./public\n" +
 			"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-			"packages:\n  hello:\n    source: ./pkgs/hello\n"
+			"packages:\n  hello:\n    - source: ./pkgs/hello\n"
 		Expect(os.WriteFile(mPath, []byte(manifest), 0o644)).To(Succeed())
 
 		b, err := repo.NewBuilder(mPath, keyDir, "pw")

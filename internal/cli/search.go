@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/planner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -66,14 +66,40 @@ func runSearch(cmd *cobra.Command, term string, format Format) error {
 		}
 	}
 
-	return withCatalog(cmd, scope, stateHome, "search", "polypkg search",
+	rows, err := searchRows(cmd, term, scope, stateHome, manifest)
+	if err != nil {
+		return err
+	}
+
+	// Emitting is deliberately outside searchRows: on a TTY it runs the picker,
+	// which installs what you tick, and install takes the apply lock searchRows
+	// has just released.
+	return emitSearchResult(cmd, format, term, rows)
+}
+
+// searchRows fetches the catalog under the apply lock and returns the rows
+// whose name matches term, each marked with its installed version from
+// manifest (nil manifest means no markers). A source serving no catalog
+// yields no rows rather than an error.
+//
+// The apply lock is released before this returns, and that is load-bearing:
+// the caller goes on to run the interactive picker, whose install path takes
+// the same lock. Folding the picker back inside the withCatalog closure
+// deadlocks it against itself.
+func searchRows(
+	cmd *cobra.Command,
+	term, scope, stateHome string,
+	manifest *schema.Manifest,
+) ([]searchMatch, error) {
+	var rows []searchMatch
+	err := withCatalog(cmd, scope, stateHome, "search", "polypkg search",
 		func(_ *schema.Profile, _ string, fr *planner.FetchResult) error {
 			if fr.Catalog == nil {
-				return emitSearchResult(cmd, format, term, nil)
+				return nil
 			}
 			matched := filterNames(fr.Catalog.Names(), term)
 
-			rows := make([]searchMatch, 0, len(matched))
+			rows = make([]searchMatch, 0, len(matched))
 			for _, name := range matched {
 				rows = append(rows, searchMatch{
 					Name:      name,
@@ -81,9 +107,13 @@ func runSearch(cmd *cobra.Command, term string, format Format) error {
 					Installed: installedVersion(manifest, name),
 				})
 			}
-			return emitSearchResult(cmd, format, term, rows)
+			return nil
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // interactiveTTY reports whether both stdin and stdout of cmd are TTYs.
@@ -119,10 +149,14 @@ func searchOptionLabel(name string, versions []string) string {
 //
 // On empty selection it exits cleanly. On a non-empty selection it invokes
 // runInstall for the chosen package names (bare-name semantics: each becomes
-// ">=newest" under the install path). The catalog has already been fetched by
-// the enclosing withCatalog call; install re-fetches under its own lock — the
-// small redundancy is accepted to keep install's all-or-nothing semantics
-// intact and avoid duplicating lock/fetch/rollback logic.
+// ">=newest" under the install path).
+//
+// This must run after searchRows has released the apply lock. runInstall takes
+// that lock itself, so calling this from inside the withCatalog closure fails
+// with "another polypkg command is already running (polypkg search)". Install
+// re-fetching the catalog searchRows just fetched is accepted redundancy: it
+// keeps install's all-or-nothing semantics and its lock/fetch/rollback logic
+// in one place.
 //
 // Ctrl-C (huh.ErrUserAborted) exits cleanly with a CLIError{Msg: "search
 // cancelled"} that carries no hint, matching init's cancel handling.
@@ -133,11 +167,17 @@ func runSearchPicker(cmd *cobra.Command, rows []searchMatch, format Format) erro
 	}
 
 	var selected []string
+	// Height is set explicitly because huh/v2's auto-height subtracts the
+	// title's line count from the option viewport, which hides the last row
+	// (and shows nothing at all for a single match). huh v1 sized the viewport
+	// to the options alone. One title line and no Description on this field
+	// means len(opts)+1 reproduces v1's geometry exactly.
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("install selected packages?").
 				Options(opts...).
+				Height(len(opts) + 1).
 				Value(&selected),
 		),
 	).WithOutput(cmd.OutOrStdout()).WithInput(cmd.InOrStdin())
@@ -154,7 +194,7 @@ func runSearchPicker(cmd *cobra.Command, rows []searchMatch, format Format) erro
 		return nil
 	}
 
-	// Install re-fetches the catalog under its own lock (search already fetched it).
+	// Takes the apply lock, which searchRows released before we got here.
 	return runInstall(cmd, selected, format)
 }
 

@@ -65,7 +65,7 @@ func buildRecommendingRepo(t *testing.T, sourceName string) (outputDir, trustRoo
 
 	manifest := "schema: polypkg.repo/v1\nsource: " + sourceName + "\noutput: ./public\n" +
 		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
-		"packages:\n  app:\n    source: ./pkgs/app\n  extras:\n    source: ./pkgs/extras\n"
+		"packages:\n  app:\n    - source: ./pkgs/app\n  extras:\n    - source: ./pkgs/extras\n"
 	mPath := filepath.Join(root, "polypkg-repo.yaml")
 	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)

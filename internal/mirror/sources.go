@@ -11,10 +11,12 @@ import (
 
 // SourceSpec is one upstream source in a --sources-file: what to pull and how to
 // verify it. Packages selects within that source (empty ⇒ latest of every
-// package), so a multi-source pull can say "foo from A, bar from B". URL and
-// TrustRoot are passed verbatim to mirror.Pull, exactly as the single-source
-// --source-url / --trust-root flags are (operator uses absolute or cwd-relative
-// paths).
+// package), so a multi-source pull can say "foo from A, bar from B".
+// AllVersions widens an unpinned selection in Packages from latest to every
+// published version, same as the single-source --all-versions flag; an
+// explicit "name@version" entry in Packages still wins. URL and TrustRoot are
+// passed verbatim to mirror.Pull, exactly as the single-source --source-url /
+// --trust-root flags are (operator uses absolute or cwd-relative paths).
 type SourceSpec struct {
 	URL               string   `yaml:"url"`
 	TrustRoot         string   `yaml:"trust_root"`
@@ -22,6 +24,7 @@ type SourceSpec struct {
 	SourceName        string   `yaml:"source_name,omitempty"`
 	AcceptExpiryUntil string   `yaml:"accept_expiry_until,omitempty"`
 	Packages          []string `yaml:"packages,omitempty"`
+	AllVersions       bool     `yaml:"all_versions,omitempty"`
 }
 
 // ParseSourcesFile reads a YAML list of SourceSpec from path. Every entry must

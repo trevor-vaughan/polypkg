@@ -66,14 +66,18 @@ func Load(opts Options) (*viper.Viper, error) {
 	return v, nil
 }
 
+// setDefaults registers defaults for the keys polypkg actually reads. A key
+// belongs here only once a consumer exists.
+//
+// viper accepts unknown keys from a config file without complaint, so a
+// default registered ahead of its consumer is worse than no entry at all: it
+// makes the setting look supported while nothing acts on it. lock.contention,
+// lock.stale_age_threshold, retention.count, retention.age and audit.sinks.*
+// were registered here with no reader anywhere in the tree, and retention in
+// particular is configured in the profile (see apply.go), so the entries
+// pointed operators at the wrong layer entirely.
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("lock.contention", "fail-fast")
-	v.SetDefault("lock.stale_age_threshold", "24h")
-	v.SetDefault("retention.count", 5)
-	v.SetDefault("retention.age", "30d")
 	v.SetDefault("revocation.near_expiry_threshold", "14d")
-	v.SetDefault("audit.sinks.file.enabled", true)
-	v.SetDefault("audit.sinks.journald.enabled", true)
 	v.SetDefault("bridge.enabled", true)
 	v.SetDefault("completion.enabled", true)
 	v.SetDefault("desktop.enabled", true)

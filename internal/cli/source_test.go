@@ -110,6 +110,64 @@ var _ = Describe("source commands", func() {
 			Expect(sources.Order).To(ContainElement("extra"))
 		})
 
+		It("pins --trust-root by content, recording a managed copy", func() {
+			// Recording the operator's path would leave the anchor late-bound:
+			// re-read on every verification, so whoever can write that path
+			// controls what the source is checked against.
+			out, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			Expect(err).NotTo(HaveOccurred(), "source add failed: %s", out)
+
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
+			Expect(reparseSources(profilePath).Sources["extra"].TrustRoot).To(Equal(managed))
+
+			saved, rerr := os.ReadFile(managed)
+			Expect(rerr).NotTo(HaveOccurred(), "managed copy must be written")
+			original, oerr := os.ReadFile(extraPub)
+			Expect(oerr).NotTo(HaveOccurred(), "the operator's own file must be left in place")
+			Expect(string(saved)).To(Equal(string(original)))
+		})
+
+		// The anchor is copied before the profile is edited, so a failed edit
+		// would otherwise leave a key behind for a source that was never added.
+		It("removes the key it just pinned when the profile edit fails", func() {
+			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
+
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			Expect(err).To(HaveOccurred())
+
+			_, statErr := os.Stat(filepath.Join(tmpDir, "polypkg", "trust", "extra.pub"))
+			Expect(os.IsNotExist(statErr)).To(BeTrue(),
+				"a failed add must not leave a stray anchor; stat err: %v", statErr)
+			_, oErr := os.Stat(extraPub)
+			Expect(oErr).NotTo(HaveOccurred(), "the operator's own file must be untouched")
+		})
+
+		It("keeps an anchor it did not create when the profile edit fails", func() {
+			// Re-adding an existing source must not delete that source's
+			// anchor on a failed edit: the profile still references it.
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
+			Expect(managed).To(BeAnExistingFile())
+
+			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
+			_, err = runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra2",
+				"--trust-root", extraPub,
+			)
+			Expect(err).To(HaveOccurred())
+			Expect(managed).To(BeAnExistingFile())
+		})
+
 		It("normalizes a bare absolute path URL to file://", func() {
 			out, err := runSource(profilePath, "source", "add", "extra",
 				"--url", "/srv/extra",
@@ -315,9 +373,11 @@ var _ = Describe("source commands", func() {
 		})
 
 		It("keeps a managed key still referenced by another source", func() {
-			// Two sources can end up referencing the same managed key: one
-			// downloads it via --trust-root-url, another reuses that file via
-			// --trust-root. Removing the first must NOT delete the shared key.
+			// Every `source add` route now pins its own copy at
+			// trust/<name>.pub, so the commands alone cannot make two sources
+			// share one key. A hand-edited profile still can, which is what the
+			// reference check in managedOrphanTrustRoot guards: removing one
+			// source must not delete a key the other is still anchored to.
 			pubContent := minisignPubFile()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(pubContent))
@@ -337,9 +397,18 @@ var _ = Describe("source commands", func() {
 
 			_, err = runSource(profilePath, "source", "add", "secondary",
 				"--url", "file:///srv/secondary",
-				"--trust-root", keyPath,
+				"--trust-root", extraPub,
 			)
 			Expect(err).NotTo(HaveOccurred())
+
+			// Hand-edit secondary onto primary's key.
+			secondaryKey := reparseSources(profilePath).Sources["secondary"].TrustRoot
+			Expect(secondaryKey).NotTo(Equal(keyPath), "each add must pin its own copy")
+			raw, rerr := os.ReadFile(profilePath)
+			Expect(rerr).NotTo(HaveOccurred())
+			edited := strings.Replace(string(raw), secondaryKey, keyPath, 1)
+			Expect(edited).NotTo(Equal(string(raw)), "profile must reference the pinned copy")
+			Expect(os.WriteFile(profilePath, []byte(edited), 0o600)).To(Succeed())
 
 			_, err = runSource(profilePath, "source", "remove", "primary")
 			Expect(err).NotTo(HaveOccurred())
@@ -350,9 +419,10 @@ var _ = Describe("source commands", func() {
 		})
 
 		It("leaves an externally-supplied --trust-root file in place on remove", func() {
-			// 'extra' was added in BeforeEach with --trust-root extraPub, an
-			// operator-owned file outside the managed trust dir. Removing the
-			// source must never delete it.
+			// 'extra' was added in BeforeEach with --trust-root extraPub. The
+			// profile anchors to the pinned copy, so remove cleans that up —
+			// but extraPub itself is the operator's own file, read once and
+			// never owned by polypkg. Removing the source must not touch it.
 			_, statErr := os.Stat(extraPub)
 			Expect(statErr).NotTo(HaveOccurred())
 

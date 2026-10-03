@@ -1,6 +1,8 @@
 version: '3'
 
 includes:
+  demo:
+    taskfile: .taskfiles/demo.yml
   integration:
     taskfile: .taskfiles/integration.yml
   vm:

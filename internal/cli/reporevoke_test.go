@@ -117,3 +117,50 @@ func TestRepoRevokeRejectsNoTargets(t *testing.T) {
 		t.Fatal("repo revoke with no --attestation/--builder-key must error")
 	}
 }
+
+// Finding 12: `repo revoke --valid-for` took nonsense windows silently — a
+// negative duration was replaced by the 720h default, and a sub-second window
+// published a list consumers treat as expired on arrival (status exit 4).
+func TestRepoRevokeRejectsNonPositiveValidFor(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir := t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	hash := "blake3:" + strings.Repeat("ab", 32)
+	for _, bad := range []string{"-48h", "0"} {
+		out, err := runRepo(t, env, "repo", "revoke", "--attestation", hash,
+			"--manifest", mPath, "--key-dir", keyDir, "--valid-for", bad)
+		if err == nil {
+			t.Fatalf("--valid-for %s: expected an error, got success (out=%s)", bad, out)
+		}
+		if !strings.Contains(err.Error(), "--valid-for must be a positive duration") {
+			t.Fatalf("--valid-for %s: error = %q, want it to name the flag", bad, err)
+		}
+	}
+	// Nothing was published: the guard runs before the key is unlocked.
+	if _, statErr := os.Stat(filepath.Join(repoDir, "public", "revocations.json")); statErr == nil {
+		t.Fatal("a rejected --valid-for still published a revocation list")
+	}
+}
+
+func TestRepoRevokeWarnsOnVeryShortValidFor(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir := t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	hash := "blake3:" + strings.Repeat("ab", 32)
+	out, err := runRepo(t, env, "repo", "revoke", "--attestation", hash,
+		"--manifest", mPath, "--key-dir", keyDir, "--valid-for", "1s")
+	if err != nil {
+		t.Fatalf("repo revoke --valid-for 1s: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "warning: --valid-for 1s is shorter than") {
+		t.Fatalf("expected a short-window warning, got:\n%s", out)
+	}
+}
