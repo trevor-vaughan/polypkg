@@ -119,19 +119,15 @@ trust)
 	# then visibly replaces that publisher's published tree with one re-signed
 	# under an attacker's key, and shows the next fetch refused.
 	#
-	# The pinned trust root is copied to ~/publisher-key.pub, OUTSIDE the served
-	# directory, and that placement is the whole point. A trust root left inside
-	# the directory it validates is not pinned at all: the same overwrite that
-	# swaps the signatures swaps the key they are checked against, and the
-	# install succeeds. `init --trust-root-file` accepts such a path without
-	# complaint, so the demo has to model the correct layout deliberately.
+	# --trust-root-file deliberately points INSIDE the served directory, the
+	# worst case an operator can pick and the one our Quickstart leads to. init
+	# copies the key into <config>/trust/demo.pub and anchors there, so the
+	# attacker's wholesale overwrite of public/ replaces the signatures but not
+	# the key they are checked against — which is what makes the refusal happen.
 	seed_package "$WORK/src/hello" hello 1.0.0
 	seed_repo "$DEMO_HOME/repo" demo "$WORK/publisher-keys" "$WORK/src/hello"
-	cp "$DEMO_HOME/repo/public/trust_root.pub" "$DEMO_HOME/publisher-key.pub"
 	seed_repo "$DEMO_HOME/attacker-repo" demo "$WORK/attacker-keys" "$WORK/src/hello"
-	"$PX" init --scope user --source-name demo \
-		--source-url "file://$DEMO_HOME/repo/public" \
-		--trust-root-file "$DEMO_HOME/publisher-key.pub" >/dev/null
+	seed_profile "$DEMO_HOME/repo" demo
 	;;
 drift)
 	# Drift is only interesting against an already-installed package, so the

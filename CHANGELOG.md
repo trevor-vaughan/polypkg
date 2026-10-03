@@ -149,3 +149,25 @@ and on-disk formats may change in breaking ways.
   absent. The cache defaults under the XDG data dir and is written after the
   repository is built, signed, and published, so a missing directory turned
   completed work into a non-zero exit.
+
+### Security
+
+- Trust roots supplied as a local file are now pinned by content, not by path.
+  `init --trust-root-file` and `source add --trust-root` recorded the path you
+  gave them and re-read the anchor from it on every verification, so a key that
+  lived anywhere the repository operator could write was not pinned at all: the
+  same write that replaced the signed metadata replaced the key that metadata is
+  checked against, and verification passed. Every piece of guidance we ship —
+  the README quickstart included — pointed the flag at the repository's own
+  published tree, where `repo init` leaves the operator's copy, so the exposed
+  configuration was the documented one. Both flags now copy the key into
+  `<config>/trust/<source>.pub` and record that copy, matching what
+  `--trust-root-url` and the wizard's pasted-key route already did. Your own
+  file is read once and never consulted again.
+
+  Two consequences worth knowing: the profile written by `init` and `source add`
+  now names a path under `<config>/trust/` rather than the one you passed, and
+  two sources can no longer be made to share one managed key by pointing
+  `--trust-root` at another source's anchor — each gets its own copy. Existing
+  profiles are untouched; re-run `init` or `source add` (or copy the key under
+  `<config>/trust/` yourself) to pin an anchor that is currently a bare path.

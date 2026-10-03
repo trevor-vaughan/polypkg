@@ -214,8 +214,8 @@ func newSourceAddCmd() *cobra.Command {
 The source URL (--url) must be an http(s) URL, a file:// URL, or an absolute
 local path. Exactly one of --trust-root or --trust-root-url is required:
 
-  --trust-root <file>      local minisign .pub file (validated, stored as an
-                           absolute path in the profile)
+  --trust-root <file>      local minisign .pub file (validated, then copied
+                           into the config dir and pinned by content)
   --trust-root-url <url>   download the public key, show its fingerprint for
                            out-of-band verification (TOFU), then persist it;
                            requires --trust-root-yes when not on a TTY
@@ -308,23 +308,22 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 		return err
 	}
 
+	// Both routes persist the anchor under the scope config dir and record that
+	// copy, so the profile never points at a path someone else could rewrite.
+	scope, _ := cmd.Flags().GetString("scope")
+	cfgDir, err := scopeConfigDir(scope)
+	if err != nil {
+		return err
+	}
 	var trustRootPath string
 	if hasTrustRoot {
-		trustRootPath, err = validateAndAbsTrustRoot(trustRoot)
-		if err != nil {
-			return err
-		}
+		trustRootPath, err = pinTrustRootFile(trustRoot, cfgDir, name)
 	} else {
-		// --trust-root-url: resolve the scope config dir and acquire via TOFU.
-		scope, _ := cmd.Flags().GetString("scope")
-		cfgDir, cerr := scopeConfigDir(scope)
-		if cerr != nil {
-			return cerr
-		}
+		// --trust-root-url: download and confirm via TOFU before persisting.
 		trustRootPath, err = acquireTrustRoot(cmd, name, trustRootURL, assumeYes, cfgDir)
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 
 	_, err = profileedit.ApplySourceEdits(profilePath, []profileedit.SourceEdit{{

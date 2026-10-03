@@ -14,15 +14,16 @@ the next fetch is refused while the installed package keeps working:
 
 <sub>Rendered from [`.taskfiles/demo/trust.tape`](../.taskfiles/demo/trust.tape); regenerate with `task demo:render SCENARIO=trust`.</sub>
 
-> **Store the trust root outside the directory it validates.** The profile
-> records `trust_root` as a *path*, and `init --trust-root-file` accepts any
-> path — including one inside the repository's own published tree, which is
-> exactly where `repo init` leaves the operator's copy. A key left there is not
-> pinned at all: the same write that swaps the signed metadata swaps the key
-> that metadata is checked against, and verification passes. Copy the `.pub`
-> somewhere the repository operator cannot write, then point `init` at your
-> copy. The demo above only works because the pinned key sits outside the tree
-> being overwritten.
+> **The trust root is pinned by content, not by path.** Whichever way you
+> supply it — `init --trust-root-file`, `init --trust-root-url`, the wizard, or
+> `source add --trust-root` — polypkg copies the key into
+> `<config>/trust/<source>.pub` and records *that* path in the profile. Your own
+> copy is read once and never referenced again, so it does not matter if you
+> pointed at a file inside the repository's own published tree (where `repo init`
+> leaves the operator's copy). Later writes to the original cannot change what
+> signatures are checked against: swapping the published tree swaps the metadata
+> but not the anchor, which is why the refusal above happens. Protect
+> `<config>/trust/` instead — that directory is now the anchor.
 
 ## What is verified, always
 

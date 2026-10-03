@@ -121,14 +121,13 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		Expect(perr).NotTo(HaveOccurred(), "written profile must be schema-valid")
 	})
 
-	It("embeds the absolute path of the trust root in the written profile", func() {
+	It("embeds the absolute path of the pinned trust-root copy in the written profile", func() {
 		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		raw, rerr := os.ReadFile(want)
 		Expect(rerr).NotTo(HaveOccurred())
-		absKey, _ := filepath.Abs(keyFile)
-		Expect(string(raw)).To(ContainSubstring(absKey))
+		Expect(string(raw)).To(ContainSubstring(filepath.Join(tmp, "polypkg", "trust", "native.pub")))
 	})
 
 	It("embeds the source URL in the written profile", func() {
@@ -186,10 +185,14 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			body := string(raw)
 			Expect(body).To(ContainSubstring("order: [handtest]"))
 			Expect(body).To(MatchRegexp(`(?m)^  handtest:`))
-			// --trust-root-file records the given file verbatim (no managed copy).
+			// --trust-root-file pins the key by content: the bytes are copied
+			// under the managed trust dir and THAT path is recorded, never the
+			// operator's own path (which the repository may be able to write).
+			savedKey := filepath.Join(tmp, "polypkg", "trust", "handtest.pub")
+			Expect(body).To(ContainSubstring("trust_root: " + savedKey))
 			absKey, aerr := filepath.Abs(keyFile)
 			Expect(aerr).NotTo(HaveOccurred())
-			Expect(body).To(ContainSubstring("trust_root: " + absKey))
+			Expect(body).NotTo(ContainSubstring("trust_root: " + absKey))
 			// No trace of the default source name (the source TYPE
 			// "polypkg-native" legitimately contains "native", so pin the
 			// name-shaped occurrences instead of the bare substring).
@@ -227,6 +230,70 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 			Expect(ce.Msg).To(ContainSubstring(`"bad name"`))
+		})
+	})
+
+	// A trust root recorded as a path is late-bound: every verification re-reads
+	// whatever that file holds at the time. Our own Quickstart points
+	// --trust-root-file at the published repository's own tree, so an attacker
+	// who can write that tree could swap the anchor and sign their own index.
+	// The anchor must therefore be pinned by content, as --trust-root-url and
+	// the wizard's pasted-key route already do.
+	Context("trust-root pinning", func() {
+		It("copies the key under the managed trust dir and records that path", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
+
+			savedKey := filepath.Join(tmp, "polypkg", "trust", "native.pub")
+			saved, rerr := os.ReadFile(savedKey)
+			Expect(rerr).NotTo(HaveOccurred(), "trust/native.pub must be written")
+			original, oerr := os.ReadFile(keyFile)
+			Expect(oerr).NotTo(HaveOccurred())
+			Expect(string(saved)).To(Equal(string(original)))
+
+			// 0o644 matches the --trust-root-url route: public key material,
+			// no secret. Access is gated by trust/ itself, which is 0o700.
+			fi, sErr := os.Stat(savedKey)
+			Expect(sErr).NotTo(HaveOccurred())
+			Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o644)))
+
+			raw, prerr := os.ReadFile(filepath.Join(tmp, "polypkg", "profile.yaml"))
+			Expect(prerr).NotTo(HaveOccurred())
+			prof, perr := parseProfileFromString(string(raw))
+			Expect(perr).NotTo(HaveOccurred())
+			Expect(prof.Sources.Sources["native"].TrustRoot).To(Equal(savedKey))
+		})
+
+		It("survives the original file being swapped after init", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
+			pinned, rerr := os.ReadFile(filepath.Join(tmp, "polypkg", "trust", "native.pub"))
+			Expect(rerr).NotTo(HaveOccurred())
+
+			// The attacker overwrites the key the operator pointed at.
+			attacker := minisignPubFile()
+			Expect(attacker).NotTo(Equal(string(pinned)))
+			Expect(os.WriteFile(keyFile, []byte(attacker), 0o600)).To(Succeed())
+
+			// The recorded anchor is unaffected: it is a copy, not a reference.
+			after, aerr := os.ReadFile(filepath.Join(tmp, "polypkg", "trust", "native.pub"))
+			Expect(aerr).NotTo(HaveOccurred())
+			Expect(string(after)).To(Equal(string(pinned)))
+		})
+
+		It("writes no key file when a profile already exists", func() {
+			dir := filepath.Join(tmp, "polypkg")
+			Expect(os.MkdirAll(dir, 0o700)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(dir, "profile.yaml"), []byte("x"), 0o600)).To(Succeed())
+
+			_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).To(HaveOccurred())
+
+			// Copying now happens before the profile is written, so the
+			// already-exists guard has to run before the copy or init leaves a
+			// stray anchor behind on a failed run.
+			_, statErr := os.Stat(filepath.Join(dir, "trust"))
+			Expect(os.IsNotExist(statErr)).To(BeTrue(), "trust dir must not be created when the profile already exists")
 		})
 	})
 

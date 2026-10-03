@@ -149,6 +149,8 @@ polypkg init --source-url <URL> --trust-root-file <path>
 
 A **trust root** is the repository's [minisign](https://jedisct1.github.io/minisign/) public key — a small `.pub` text file, published by whoever runs the repository, that every signature from that repository is checked against. minisign is a compact Ed25519 signing tool; the `.pub` file is the only part you need. polypkg calls this the trust root everywhere, and stores it in the profile as `trust_root`.
 
+Whichever flag you use, the key is **copied into `<config>/trust/<source>.pub`** and the profile records that copy, so the file you pointed at is read once and never consulted again. See [Trust policy](docs/trust-policy.md) for why that matters.
+
 The source is recorded as `native` by default; if the repository was published
 under a different name, pass `--source-name <name>` to match it — each source's
 name must equal the name embedded in its signed trust document, and a mismatch
@@ -415,7 +417,7 @@ packages:
 
 *scope*, *substrate*, *generation*, and *drift* are defined in the [Glossary](#glossary).
 
-Note: `trust_root` is a file path to the repository's minisign public key (`.pub` file), not an inline key. Obtain the key from your repository operator.
+Note: `trust_root` is a file path to the repository's minisign public key (`.pub` file), not an inline key. Obtain the key from your repository operator. `init` and `source add` fill this in for you, pointing it at the copy they place under `<config>/trust/`; write it by hand only if you are managing the key store yourself, and keep it somewhere the repository operator cannot write.
 
 **Source names are slugs.** Every key under `sources` — the source names, and
 `order` itself — must match `^[a-zA-Z0-9_-]+$`, and that is checked when the
