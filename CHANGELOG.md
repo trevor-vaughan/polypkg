@@ -12,6 +12,12 @@ and on-disk formats may change in breaking ways.
 
 ### Added
 
+- Recorded terminal demos in the README and the publishing, mirroring, and
+  trust-policy guides. Six VHS tapes in `.taskfiles/demo/` render to
+  `docs/demo/*.gif` via `task demo:all`; each records against a throwaway signed
+  `file://` repository with `HOME` and the `XDG_*` directories redirected, so a
+  render cannot touch a real profile. The GIFs are tracked in Git LFS —
+  `git lfs install` is now required for a clone to render the docs correctly.
 - Declarative profile model: describe the desired set of packages in a profile
   and run `plan`/`apply` to reconcile the system to it. Every `apply` becomes an
   immutable generation.
@@ -105,3 +111,15 @@ and on-disk formats may change in breaking ways.
   fuzzing, and the shared MegaLinter policy), Dependabot dependency updates, and
   a GoReleaser release pipeline producing Cosign-signed checksums, per-archive
   Syft SBOMs, and GitHub SLSA build-provenance attestations.
+
+### Fixed
+
+- `repo init --key-dir <relative-path>` records a key path later commands can
+  find. It recorded the path verbatim, but manifest paths resolve against the
+  manifest directory while `--key-dir` is relative to your working directory, so
+  `repo init ./myrepo --key-dir ./keys` wrote the key where `repo add` would not
+  look. An absolute `--key-dir` was unaffected.
+- `repo add` no longer fails after publishing when the build-cache directory is
+  absent. The cache defaults under the XDG data dir and is written after the
+  repository is built, signed, and published, so a missing directory turned
+  completed work into a non-zero exit.

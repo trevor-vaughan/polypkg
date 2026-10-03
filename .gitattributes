@@ -1,0 +1,8 @@
+# Recorded terminal demos (docs/demo/) are binary artifacts that get re-cut
+# whenever the CLI output they show changes. Storing them in LFS keeps each
+# revision out of the regular object stack, so a clone does not carry every
+# past recording.
+#
+# Contributors need `git lfs install` once; without it these paths check out as
+# ~130-byte pointer files and the docs render with broken images.
+docs/demo/*.gif filter=lfs diff=lfs merge=lfs -text
