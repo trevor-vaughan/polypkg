@@ -133,3 +133,55 @@ var _ = Describe("Decide", func() {
 		Expect(second.Remove).To(BeEmpty())
 	})
 })
+
+var _ = Describe("Decide KeptByAge", func() {
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	gen := func(id, daysAgo int) Generation {
+		return Generation{ID: id, CommittedAt: now.Add(-time.Duration(daysAgo) * 24 * time.Hour)}
+	}
+
+	It("names the generations only the age window saved", func() {
+		gens := []Generation{
+			gen(1, 5), gen(2, 4), gen(3, 3), gen(4, 2), gen(5, 1),
+			{ID: 6, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 1, Age: 30 * 24 * time.Hour}, now)
+		Expect(dec.Remove).To(BeEmpty())
+		Expect(dec.KeptByAge).To(Equal([]int{1, 2, 3, 4, 5}))
+	})
+
+	It("excludes generations the count rule already retained", func() {
+		gens := []Generation{gen(1, 5), gen(2, 4), {ID: 3, CommittedAt: now, IsCurrent: true}}
+		dec := Decide(gens, Policy{Count: 3, Age: 30 * 24 * time.Hour}, now)
+		Expect(dec.KeptByAge).To(BeEmpty())
+	})
+
+	It("excludes pinned and current generations", func() {
+		gens := []Generation{
+			{ID: 1, CommittedAt: now.Add(-24 * time.Hour), Pinned: true},
+			{ID: 2, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 1, Age: 30 * 24 * time.Hour}, now)
+		Expect(dec.KeptByAge).To(BeEmpty())
+	})
+
+	It("is empty when the age rule is disabled", func() {
+		gens := []Generation{gen(1, 5), {ID: 2, CommittedAt: now, IsCurrent: true}}
+		dec := Decide(gens, Policy{Count: 1, Age: 0}, now)
+		Expect(dec.Remove).To(Equal([]int{1}))
+		Expect(dec.KeptByAge).To(BeEmpty())
+	})
+
+	// A zero CommittedAt is treated as now-equivalent by the age rule, so it is
+	// genuinely age-saved: disabling the age rule would evict it. Reporting it
+	// keeps the counts in the CLI note reconcilable with what gc removed.
+	It("counts a zero-timestamp generation as age-saved", func() {
+		gens := []Generation{
+			{ID: 1, CommittedAt: time.Time{}},
+			{ID: 2, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 1, Age: time.Hour}, now)
+		Expect(dec.Remove).To(BeEmpty())
+		Expect(dec.KeptByAge).To(Equal([]int{1}))
+	})
+})

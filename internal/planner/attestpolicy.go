@@ -3,7 +3,6 @@ package planner
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -81,7 +80,10 @@ func identityAllowed(b *schema.CarriedBinding, allow []schema.BuilderAllowEntry,
 // A nil policy or an empty Require list is a no-op (the source is ungated).
 // bundle resolves a builder-verified binding's key id to its public key for
 // allow-list matching; it is the same source bundle bindCarriedRefs used.
-func enforceAttestationPolicy(attState *schema.AttestationState, pol *schema.SourceAttestationPolicy, bundle *trust.Bundle) error {
+// revokedBuilderKeys is what bindCarriedRefs observed the source's revocation
+// list rejecting while classifying this package's carried envelopes; it does not
+// change the verdict, only the error's explanation of it.
+func enforceAttestationPolicy(attState *schema.AttestationState, pol *schema.SourceAttestationPolicy, bundle *trust.Bundle, revokedBuilderKeys []string) error {
 	if pol == nil || len(pol.Require) == 0 {
 		return nil
 	}
@@ -91,7 +93,7 @@ func enforceAttestationPolicy(attState *schema.AttestationState, pol *schema.Sou
 	}
 	for _, want := range pol.Require {
 		if !requireSatisfied(attState, want, allow, bundle) {
-			return fmt.Errorf("attestation policy: required predicate %q is not present and verified at an anchored tier from an allowed builder", want)
+			return &AttestationPolicyError{Predicate: want, RevokedBuilderKeys: revokedBuilderKeys}
 		}
 	}
 	return nil
@@ -175,8 +177,65 @@ func enforcePostureFloor(newState, prior *schema.AttestationState, pinnedExact b
 	}
 	for _, want := range verifiedPredicateTypes(prior) {
 		if !requireSatisfied(newState, want, nil, nil) {
-			return fmt.Errorf("attestation posture floor: predicate %q was verified previously but is not verified now; pin the exact version to accept the lower posture", want)
+			return &PostureFloorError{
+				Predicate:    want,
+				CurrentTier:  carriedTierFor(newState, want),
+				NativeBefore: hasNativePredicate(prior, want),
+			}
 		}
 	}
 	return nil
+}
+
+// carriedTierFor returns the tier of state's carried binding for predicate type
+// want, or "" when state carries no binding of that type. When more than one
+// binding shares a type the strongest tier wins, so the message reports the best
+// the current source actually managed rather than an arbitrary one.
+func carriedTierFor(state *schema.AttestationState, want string) string {
+	if state == nil {
+		return ""
+	}
+	best := ""
+	for i := range state.CarriedBindings {
+		b := &state.CarriedBindings[i]
+		if b.PredicateType != want {
+			continue
+		}
+		if best == "" || carriedTierRank(b.Tier) > carriedTierRank(best) {
+			best = b.Tier
+		}
+	}
+	return best
+}
+
+// carriedTierRank orders carried tiers weakest to strongest. It is used only to
+// pick the tier a message reports; policy decisions go through tierAnchored,
+// which stays the single source of truth for what counts as verified.
+func carriedTierRank(tier string) int {
+	switch tier {
+	case schema.CarriedTierBoundUnverified:
+		return 1
+	case schema.CarriedTierVerifiedTransportOnly:
+		return 2
+	case schema.CarriedTierBuilderVerified:
+		return 3
+	case schema.CarriedTierVerifiedOffline:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// hasNativePredicate reports whether state proves want as a native,
+// publisher-signed predicate (PredicateTypes) rather than a carried binding.
+func hasNativePredicate(state *schema.AttestationState, want string) bool {
+	if state == nil {
+		return false
+	}
+	for _, p := range state.PredicateTypes {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

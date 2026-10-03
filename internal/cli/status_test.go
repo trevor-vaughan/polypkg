@@ -12,7 +12,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/gc"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/substrate"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
@@ -494,5 +496,53 @@ func TestCollectRevokedAttestationsEmptyHashGuardAndNilAttestation(t *testing.T)
 	got := collectRevokedAttestations(m, map[string]struct{}{"": {}})
 	if len(got) != 0 {
 		t.Fatalf("empty-hash binding must never match even when \"\" is revoked; got %+v", got)
+	}
+}
+
+// Finding 16: `status --format json` reported "0001-01-01T00:00:00Z" for the
+// current generation even though the retained[] row for the same generation
+// carried the real commit time. The two must agree.
+func TestEmitStatusJSONCurrentCarriesAppliedAt(t *testing.T) {
+	committed := time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC)
+	gens := []substrate.GenInfo{
+		{ID: 11, CommittedAt: committed.Add(-time.Hour)},
+		{ID: 12, CommittedAt: committed, IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	var got schema.StatusResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v (body=%s)", err, buf.String())
+	}
+	if got.Current == nil {
+		t.Fatal("current generation missing from status JSON")
+	}
+	if got.Current.AppliedAt.IsZero() {
+		t.Fatalf("current.applied_at is the zero time; body=%s", buf.String())
+	}
+	if !got.Current.AppliedAt.Equal(committed) {
+		t.Fatalf("current.applied_at = %s, want %s", got.Current.AppliedAt, committed)
+	}
+	for _, r := range got.Retained {
+		if r.ID == 12 && !r.CommittedAt.Equal(got.Current.AppliedAt) {
+			t.Fatalf("retained[12].committed_at = %s disagrees with current.applied_at = %s",
+				r.CommittedAt, got.Current.AppliedAt)
+		}
+	}
+}
+
+// A store whose generation list does not contain the reported current id (a
+// substrate that lost the row) must omit applied_at rather than invent a
+// year-1 timestamp.
+func TestEmitStatusJSONOmitsAppliedAtWhenCurrentGenerationIsUnknown(t *testing.T) {
+	gens := []substrate.GenInfo{{ID: 11, CommittedAt: time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC)}}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	if strings.Contains(buf.String(), "applied_at") {
+		t.Fatalf("applied_at emitted for an unknown current generation: %s", buf.String())
 	}
 }

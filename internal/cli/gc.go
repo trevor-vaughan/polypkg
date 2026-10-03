@@ -200,15 +200,25 @@ func runGC(cmd *cobra.Command, policy gc.Policy, forcePins []int, format Format)
 			Hint: "failed generations are listed above; check permissions under the generations directory",
 		}
 	}
+	ageStr, _ := cmd.Flags().GetString("age")
 	EmitResult(cmd, format, "gc", map[string]any{
 		"removed":              removed,
 		"failed":               failed,
 		"bytes_reclaimed":      bytesReclaimed,
 		"extract_dirs_removed": extractsRemoved,
+		"kept_by_age":          len(dec.KeptByAge),
 	}, func(w *bytes.Buffer, d map[string]any) {
 		fmt.Fprintf(w, "gc: removed %d, failed %d, bytes reclaimed %d\n", d["removed"], d["failed"], d["bytes_reclaimed"])
 		if n, ok := d["extract_dirs_removed"].(int); ok && n > 0 {
 			fmt.Fprintf(w, "gc: swept %d stale extract dir(s)\n", n)
+		}
+		// A run that reclaimed nothing is otherwise indistinguishable from a
+		// broken one. Both retention predicates apply at once, so an explicit
+		// --count is routinely overruled by the default --age window; name the
+		// generations that held and the flag that releases them.
+		if removed == 0 && len(dec.KeptByAge) > 0 {
+			fmt.Fprintf(w, "gc: kept %d generation(s) inside --age %s that --count %d alone would have removed; pass --age 0 to collect by count alone\n",
+				len(dec.KeptByAge), ageStr, policy.Count)
 		}
 	})
 	return nil

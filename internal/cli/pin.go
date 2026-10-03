@@ -31,19 +31,7 @@ indefinitely regardless of how many newer generations have been applied.
 
 Subcommands: pin, unpin.`,
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
-			format, ferr := resolveFormat(cmd)
-			if ferr != nil {
-				return ferr
-			}
-			return WrapError(cmd, format, "generation", &CLIError{
-				Msg:  fmt.Sprintf("unknown generation subcommand %q", args[0]),
-				Hint: "run `polypkg status -v` to list generations",
-			})
-		},
+		RunE: requireSubcommand("run `polypkg status -v` to list generations"),
 	}
 	cmd.AddCommand(newGenerationPinCmd())
 	cmd.AddCommand(newGenerationUnpinCmd())

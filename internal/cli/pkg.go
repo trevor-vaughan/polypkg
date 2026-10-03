@@ -16,6 +16,8 @@ func newPkgCmd() *cobra.Command {
 		Long: `Scaffold a package source, lint it against structure, action, parameter, and
 identity rules, and build an unsigned artifact plus an unsigned attestation
 preview. No signing key or repository is required.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	for _, g := range []struct {
 		id    string

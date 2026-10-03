@@ -27,6 +27,8 @@ are kept across applies. Replace-policy files are overwritten on each apply
 
 The reset subcommand queues a preserve-policy config file for restore to its
 package default on the next apply.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	cmd.AddCommand(newConfigResetCmd())
 	return cmd

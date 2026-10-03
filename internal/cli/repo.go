@@ -23,6 +23,8 @@ A repository is described declaratively by polypkg-repo.yaml. 'repo add' and
 'repo remove' edit that manifest; 'repo build' reconciles the output directory,
 (re)signing only what changed. Signing keys are stored encrypted, outside the
 published directory.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	// Subcommands are grouped by repository lifecycle, mirroring the top-level
 	// command grouping (see AGENTS.md). The table is the single source of truth:

@@ -73,7 +73,7 @@ func (p *progress) Update(stage, detail string) {
 	p.detail = detail
 
 	if !p.tty {
-		line := stage + ": " + detail
+		line := progressLine(stage, detail)
 		if line == p.last {
 			return
 		}
@@ -120,29 +120,47 @@ func (p *progress) tick() {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
-			p.mu.Lock()
-			stage := p.stage
-			detail := p.detail
-			p.mu.Unlock()
-
-			if stage == "" {
-				frame = (frame + 1) % len(spinnerFrames)
-				continue
-			}
-
-			line := stage + ": " + detail
-			// Truncate to keep the terminal line tidy; rune-safe.
-			const maxCols = 100
-			line = truncateLine(line, maxCols)
-
-			p.mu.Lock()
-			p.lastCols = utf8.RuneCountInString(line)
-			p.mu.Unlock()
-
-			fmt.Fprintf(p.w, "\r%s %s", spinnerFrames[frame], line)
+			p.renderFrame(frame)
 			frame = (frame + 1) % len(spinnerFrames)
 		}
 	}
+}
+
+// renderFrame rewrites the current line with spinner frame and the rendered
+// stage/detail, and records the line's rune width so Done clears exactly what
+// was drawn. Nothing is written (and the recorded width is left alone) until a
+// stage has been set.
+func (p *progress) renderFrame(frame int) {
+	p.mu.Lock()
+	stage := p.stage
+	detail := p.detail
+	p.mu.Unlock()
+
+	if stage == "" {
+		return
+	}
+
+	// Truncate to keep the terminal line tidy; rune-safe.
+	const maxCols = 100
+	line := truncateLine(progressLine(stage, detail), maxCols)
+
+	p.mu.Lock()
+	p.lastCols = utf8.RuneCountInString(line)
+	p.mu.Unlock()
+
+	fmt.Fprintf(p.w, "\r%s %s", spinnerFrames[frame], line)
+}
+
+// progressLine renders one progress line. A stage with no detail prints as the
+// bare label: keeping the ": " separator would render as "resolving: ", which
+// reads as output that got cut off. Both the TTY and non-TTY paths go through
+// here so the two stay in agreement, and so the TTY clear width measures the
+// line that was actually drawn.
+func progressLine(stage, detail string) string {
+	if detail == "" {
+		return stage
+	}
+	return stage + ": " + detail
 }
 
 // truncateLine returns s truncated to maxCols runes. If truncation is needed

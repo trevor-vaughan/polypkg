@@ -27,6 +27,8 @@ func newSourceCmd() *cobra.Command {
 trust root (a local .pub file or a downloaded+confirmed key), then edits the
 profile in place while preserving comments. 'source remove' drops a source and
 its order entry. 'source list' shows all configured sources in preference order.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	// Subcommands are grouped read-vs-write so the safe query is visually
 	// separated from the profile-mutating verbs (see AGENTS.md). The table is

@@ -21,19 +21,7 @@ recorded when each installed package was verified at install time.
 
 Subcommands: report.`,
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
-			format, ferr := resolveFormat(cmd)
-			if ferr != nil {
-				return ferr
-			}
-			return WrapError(cmd, format, "attestation", &CLIError{
-				Msg:  fmt.Sprintf("unknown attestation subcommand %q", args[0]),
-				Hint: "the only subcommand is `attestation report`",
-			})
-		},
+		RunE: requireSubcommand("the only subcommand is `attestation report`"),
 	}
 	cmd.AddCommand(newAttestationReportCmd())
 	return cmd

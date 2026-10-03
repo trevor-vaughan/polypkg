@@ -21,6 +21,8 @@ func newMirrorCmd() *cobra.Command {
 		Long: `Work with the self-contained tarball mirrors produced by
 'polypkg repo export-bundle': verify their signature, freshness, and
 completeness before serving them at an air-gapped site.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: requireSubcommand(""),
 	}
 	cmd.AddCommand(newMirrorVerifyCmd())
 	cmd.AddCommand(newMirrorPullCmd())

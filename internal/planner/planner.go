@@ -293,7 +293,8 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		// external attestation's subjects, by digest, against the bytes that just
 		// extracted. Runs post-extraction because it needs the extracted tree; a
 		// binding failure here refuses the install (fail closed).
-		if err := bindCarriedRefs(carried, data, pkgRoot, fr.Bundles[e.Source], pinnedSigstoreRoot, fr.Revocations[e.Source], attState); err != nil {
+		revokedBuilderKeys, err := bindCarriedRefs(carried, data, pkgRoot, fr.Bundles[e.Source], pinnedSigstoreRoot, fr.Revocations[e.Source], attState)
+		if err != nil {
 			return nil, err
 		}
 
@@ -313,8 +314,9 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 			// Consumer attestation policy gate (2d-1): refuse the install when this
 			// source's per-predicate require is not met at an anchored, allow-listed
 			// tier. Additive — a source with no attestation block is ungated. Reads
-			// the same source bundle bindCarriedRefs used for key resolution.
-			if err := enforceAttestationPolicy(attState, srcPol, fr.Bundles[e.Source]); err != nil {
+			// the same source bundle bindCarriedRefs used for key resolution, and
+			// the revoked key ids it observed so a revocation is named as such.
+			if err := enforceAttestationPolicy(attState, srcPol, fr.Bundles[e.Source], revokedBuilderKeys); err != nil {
 				return nil, fmt.Errorf("%s-%s: %w", e.Name, e.Version, err)
 			}
 
@@ -682,13 +684,19 @@ func extractedTargets(tarball []byte, pkgRoot string) ([]attest.Target, error) {
 // verified-transport-only when it is a DSSE envelope that did not so verify (bad
 // key, revoked, or out-of-window at build time); or bound-unverified for a bare
 // in-toto Statement. Refusing an install on a weak tier is phase 2d, not here.
-func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundle *trust.Bundle, pin *schema.SigstoreRoot, revocations *trust.Revocations, attState *schema.AttestationState) error {
+//
+// It returns the builder key ids the source's revocation list rejected while
+// classifying these envelopes. That set never changes the verdict — a revoked
+// signature simply does not count — but it is the difference between telling the
+// operator a required predicate is "not present" and telling them it is present
+// and revoked (finding 14). Nil when nothing was revoked.
+func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundle *trust.Bundle, pin *schema.SigstoreRoot, revocations *trust.Revocations, attState *schema.AttestationState) ([]string, error) {
 	if len(carried) == 0 {
-		return nil
+		return nil, nil
 	}
 	targets, err := extractedTargets(tarball, pkgRoot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Adapt the source's builder keyring + revocations into the kernel's
 	// callbacks, keeping internal/attest free of a trust dependency. A nil bundle
@@ -708,26 +716,37 @@ func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundl
 		}
 		return ed25519.PublicKey(pub), true
 	}
+	// Record every revoked key id the classifier rejects, deduplicated and in
+	// first-seen order, so the caller can name it if a policy gate then fails.
+	var revokedKeys []string
+	seenRevoked := map[string]bool{}
 	revoked := func(keyID string) bool {
-		return revocations != nil && revocations.IsBuilderKeyRevoked(keyID)
+		if revocations == nil || !revocations.IsBuilderKeyRevoked(keyID) {
+			return false
+		}
+		if !seenRevoked[keyID] {
+			seenRevoked[keyID] = true
+			revokedKeys = append(revokedKeys, keyID)
+		}
+		return true
 	}
 	for i := range carried {
 		c := &carried[i]
 		info, err := attest.InspectCarried(c.bytes)
 		if err != nil {
-			return fmt.Errorf("re-extract carried subjects for %s: %w", c.ref.Artifact, err)
+			return nil, fmt.Errorf("re-extract carried subjects for %s: %w", c.ref.Artifact, err)
 		}
 		// G9: the authoritative predicate type is the one inside the signed payload.
 		// When the signed index ref positively claims a different type, the artifact
 		// is mislabeled — refuse (fail closed, like a binding failure). An empty
 		// index claim has nothing to mislabel, so the payload's type stands.
 		if c.ref.PredicateType != "" && c.ref.PredicateType != info.PredicateType {
-			return fmt.Errorf("carried attestation %s predicate type mismatch: index ref says %q, signed payload says %q",
+			return nil, fmt.Errorf("carried attestation %s predicate type mismatch: index ref says %q, signed payload says %q",
 				c.ref.Artifact, c.ref.PredicateType, info.PredicateType)
 		}
 		materials, err := attest.BindSubjects(info.Subjects, targets)
 		if err != nil {
-			return fmt.Errorf("carried attestation %s (%s) does not bind the installed bytes: %w", c.ref.Artifact, info.Format, err)
+			return nil, fmt.Errorf("carried attestation %s (%s) does not bind the installed bytes: %w", c.ref.Artifact, info.Format, err)
 		}
 		binding := schema.CarriedBinding{
 			PredicateType:   info.PredicateType,
@@ -800,7 +819,7 @@ func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundl
 		}
 		attState.CarriedBindings = append(attState.CarriedBindings, binding)
 	}
-	return nil
+	return revokedKeys, nil
 }
 
 // sourceOffers reports whether the merged catalog still carries a candidate

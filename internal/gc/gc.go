@@ -17,10 +17,18 @@ type Generation struct {
 	IsCurrent   bool
 }
 
-// Decision is the algorithm's output: two disjoint, sorted lists.
+// Decision is the algorithm's output: two disjoint, sorted lists, plus the
+// subset of Keep that only the age rule saved.
 type Decision struct {
 	Keep   []int
 	Remove []int
+	// KeptByAge lists the generations that fell outside Policy.Count and were
+	// neither current nor pinned, and survived solely because they sit inside
+	// Policy.Age. It is exactly the set an operator who asked for a smaller
+	// --count expected to see collected, so callers can explain why a run with
+	// an explicit --count reclaimed nothing. Sorted; empty when the age rule is
+	// disabled or saved nothing.
+	KeptByAge []int
 }
 
 // Decide applies the retention policy to gens at the given now-time.
@@ -49,11 +57,13 @@ func Decide(gens []Generation, policy Policy, now time.Time) Decision {
 
 	keep := []int{}
 	remove := []int{}
+	keptByAge := []int{}
 	for _, g := range gens {
 		survives := g.IsCurrent || g.Pinned || topN[g.ID]
 		if !survives && policy.Age > 0 {
 			if g.CommittedAt.IsZero() || now.Sub(g.CommittedAt) <= policy.Age {
 				survives = true
+				keptByAge = append(keptByAge, g.ID)
 			}
 		}
 		if survives {
@@ -64,5 +74,6 @@ func Decide(gens []Generation, policy Policy, now time.Time) Decision {
 	}
 	sort.Ints(keep)
 	sort.Ints(remove)
-	return Decision{Keep: keep, Remove: remove}
+	sort.Ints(keptByAge)
+	return Decision{Keep: keep, Remove: remove, KeptByAge: keptByAge}
 }
