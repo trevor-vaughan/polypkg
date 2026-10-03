@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/paths"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 func newRepoCmd() *cobra.Command {
@@ -118,6 +119,16 @@ func newRepoInitCmd() *cobra.Command {
 }
 
 func runRepoInit(cmd *cobra.Command, dir, source, keyDir, kdf string, format Format) error {
+	// The source name becomes <key-dir>/<source>.key, so it is checked before
+	// anything is created: a separator would otherwise silently override the
+	// --key-dir the operator passed.
+	if err := schema.ValidateSourceName(source); err != nil {
+		return &CLIError{
+			Msg:  fmt.Sprintf("--source %q is not a valid slug", source),
+			Hint: "a source is a NAME, not a path or URL; it must match " + schema.SourceNamePattern + " (e.g. --source myrepo)",
+			Err:  err,
+		}
+	}
 	pw, err := repoKeyPassword(cmd)
 	if err != nil {
 		return err

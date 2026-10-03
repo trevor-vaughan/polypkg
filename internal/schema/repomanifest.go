@@ -57,6 +57,13 @@ type RepoManifest struct {
 
 // ParseRepoManifest reads a YAML repo manifest, rejects unknown fields, and
 // validates it against the embedded polypkg.repo/v1 JSON Schema.
+//
+// polypkg-repo.yaml is a checked-in, hand-editable, shared file, so parse time
+// is the one place every consumer of it passes through. The top-level `source`
+// is checked against SourceNamePattern here — ahead of the schema pass, which
+// enforces the same pattern but reports it in JSON Schema terms — because the
+// producers interpolate that name straight into the signing-key and
+// build-cache paths.
 func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -67,6 +74,9 @@ func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	var m RepoManifest
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("decode repo manifest: %w", err)
+	}
+	if err := ValidateSourceName(m.Source); err != nil {
+		return nil, fmt.Errorf("repo manifest: %w", err)
 	}
 	jsonBytes, err := json.Marshal(&m)
 	if err != nil {

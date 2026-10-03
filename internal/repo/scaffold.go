@@ -38,7 +38,11 @@ func InitRepo(o InitOptions) (InitResult, error) {
 	}
 
 	outputDir := filepath.Join(o.Dir, "public")
-	keyPath := filepath.Join(o.KeyDir, o.Source+".key")
+	// filepath.Base on the source name keeps a stray separator from relocating
+	// the encrypted signing key out of the KeyDir the operator chose. Callers
+	// reaching InitRepo through the CLI have already had the name rejected by
+	// schema.ValidateSourceName; this is the guard at the interpolation site.
+	keyPath := filepath.Join(o.KeyDir, filepath.Base(o.Source)+".key")
 	if err := guardKeyNotInOutput(outputDir, keyPath, o.KeyDir); err != nil {
 		return InitResult{}, err
 	}

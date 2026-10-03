@@ -91,3 +91,53 @@ func TestRepoInitPasswordFromFile(t *testing.T) {
 		t.Fatalf("repo init with password file: %v", err)
 	}
 }
+
+func TestRepoInitRejectsNonSlugSource(t *testing.T) {
+	for _, src := range []string{"../../evilsrc", "../r/public/leaked", "a/b", "..", "https://mymirror.local/repo"} {
+		t.Run(src, func(t *testing.T) {
+			base := t.TempDir()
+			repoDir := filepath.Join(base, "evilrepo", "r")
+			keyDir := filepath.Join(base, "evilrepo", "keys", "a", "b")
+			out, err := runRepo(t,
+				map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"},
+				"repo", "init", repoDir, "--source", src, "--key-dir", keyDir)
+			if err == nil {
+				t.Fatalf("repo init must refuse --source %q (out=%s)", src, out)
+			}
+			var ce *CLIError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected CLIError, got %T: %v", err, err)
+			}
+			if !strings.Contains(ce.Msg, "is not a valid slug") {
+				t.Fatalf("want a slug error, got %q", ce.Msg)
+			}
+			// Nothing at all may be written: not the key, not the manifest.
+			entries, rerr := os.ReadDir(base)
+			if rerr != nil {
+				t.Fatalf("read base dir: %v", rerr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("repo init wrote %d entries under %s for a rejected source", len(entries), base)
+			}
+		})
+	}
+}
+
+func TestRepoInitWritesKeyInsideKeyDir(t *testing.T) {
+	base := t.TempDir()
+	repoDir := filepath.Join(base, "r")
+	keyDir := filepath.Join(base, "keys", "a", "b")
+	out, err := runRepo(t,
+		map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"},
+		"repo", "init", repoDir, "--source", "mymirror", "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("repo init: %v (out=%s)", err, out)
+	}
+	want := filepath.Join(keyDir, "mymirror.key")
+	if _, serr := os.Stat(want); serr != nil {
+		t.Fatalf("signing key must land in --key-dir at %s: %v (out=%s)", want, serr, out)
+	}
+	if !strings.Contains(out, want) {
+		t.Fatalf("reported key path must be %s, got output %q", want, out)
+	}
+}

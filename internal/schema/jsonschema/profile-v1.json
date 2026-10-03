@@ -25,6 +25,7 @@
     "sources": {
       "type": "object",
       "required": ["order"],
+      "propertyNames": { "pattern": "^[a-zA-Z0-9_-]+$" },
       "properties": {
         "order": {
           "type": "array",

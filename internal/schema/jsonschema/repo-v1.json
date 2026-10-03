@@ -6,7 +6,7 @@
   "required": ["schema", "source", "output", "key"],
   "properties": {
     "schema": { "const": "polypkg.repo/v1" },
-    "source": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
     "output": { "type": "string", "minLength": 1 },
     "key": {
       "type": "object",

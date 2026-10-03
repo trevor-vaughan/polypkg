@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -226,5 +227,52 @@ packages:
 `
 	if _, err := ParseRepoManifest(strings.NewReader(bad)); err == nil {
 		t.Fatal("expected rejection: unknown prebuilt sub-field")
+	}
+}
+
+// nonSlugSourceNames are repo source names that must never reach a filesystem
+// path. `repo build` interpolates the manifest's top-level `source` into the
+// build-cache path under --key-dir, so a separator or a `..` segment relocates
+// operator secrets outside the directory the operator chose.
+var nonSlugSourceNames = []string{
+	"../../evilsrc",
+	"../r/public/leaked",
+	"a/b",
+	`a\b`,
+	"..",
+	".",
+	"",
+	"https://mymirror.local/repo",
+}
+
+func TestParseRepoManifestRejectsNonSlugSource(t *testing.T) {
+	for _, src := range nonSlugSourceNames {
+		t.Run(src, func(t *testing.T) {
+			in := "schema: polypkg.repo/v1\nsource: " + strconv.Quote(src) +
+				"\noutput: ./public\nkey: {path: /k, kdf: scrypt}\n"
+			_, err := ParseRepoManifest(strings.NewReader(in))
+			if err == nil {
+				t.Fatalf("expected rejection for source %q", src)
+			}
+			if !strings.Contains(err.Error(), "is not a valid slug") {
+				t.Fatalf("source %q: want a slug error, got %v", src, err)
+			}
+		})
+	}
+}
+
+func TestParseRepoManifestAcceptsSlugSourceNames(t *testing.T) {
+	for _, src := range []string{"native", "mymirror", "edge", "my-mirror", "my_mirror", "Repo1", "s"} {
+		t.Run(src, func(t *testing.T) {
+			in := "schema: polypkg.repo/v1\nsource: " + src +
+				"\noutput: ./public\nkey: {path: /k, kdf: scrypt}\n"
+			m, err := ParseRepoManifest(strings.NewReader(in))
+			if err != nil {
+				t.Fatalf("source %q must parse: %v", src, err)
+			}
+			if m.Source != src {
+				t.Fatalf("source = %q, want %q", m.Source, src)
+			}
+		})
 	}
 }
