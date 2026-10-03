@@ -1,0 +1,19 @@
+internal/mirror/pull.go
+  s_cb25ec70e86567::t_90eadb32a44333 649-651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2dd5a13c93ad5ee0191dff0527fa4fae75a70242",
+  "prompts": {},
+  "sessions": {
+    "s_cb25ec70e86567": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9ae840c-1d3f-49f2-957b-d247e5ef9a04",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
