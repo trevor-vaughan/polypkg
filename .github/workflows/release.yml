@@ -39,6 +39,10 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
+          # SBOMs are attested alongside the archives they describe. Without
+          # them here nothing binds an SBOM to the release, so a consumer has
+          # no way to tell a published SBOM from a fabricated one.
           subject-path: |
             dist/*.tar.gz
+            dist/*.sbom.json
             dist/checksums.txt

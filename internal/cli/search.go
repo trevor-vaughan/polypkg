@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/planner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -133,11 +133,17 @@ func runSearchPicker(cmd *cobra.Command, rows []searchMatch, format Format) erro
 	}
 
 	var selected []string
+	// Height is set explicitly because huh/v2's auto-height subtracts the
+	// title's line count from the option viewport, which hides the last row
+	// (and shows nothing at all for a single match). huh v1 sized the viewport
+	// to the options alone. One title line and no Description on this field
+	// means len(opts)+1 reproduces v1's geometry exactly.
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("install selected packages?").
 				Options(opts...).
+				Height(len(opts) + 1).
 				Value(&selected),
 		),
 	).WithOutput(cmd.OutOrStdout()).WithInput(cmd.InOrStdin())

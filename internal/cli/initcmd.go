@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/jedisct1/go-minisign"
 	"github.com/spf13/cobra"
