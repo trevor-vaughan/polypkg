@@ -1,0 +1,21 @@
+docs/dev/supply-chain.md
+  s_976d6ae9a5c17c::t_91589ed258a09f 292-303
+internal/trust/seen.go
+  s_976d6ae9a5c17c::t_74cbc3f9179d96 49-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6131ca031398a9e9f1490a9f5fca19decd179609",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
