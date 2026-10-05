@@ -1,0 +1,21 @@
+internal/planner/planner.go
+  s_976d6ae9a5c17c::t_51724bb505a423 414-417,442-443,445
+internal/planner/verify_artifact_whitebox_test.go
+  s_976d6ae9a5c17c::t_b01ab50ae5ffd3 42-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d51816918e3f76bfbad7203a5cee712ac372e0bd",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
