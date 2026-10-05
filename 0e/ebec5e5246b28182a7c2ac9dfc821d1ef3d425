@@ -1,0 +1,25 @@
+internal/substrate/ownstore.go
+  s_9a12422fb940b0::t_ca3fc1166fae61 448-449,456,488-490,530-532,535-541,560-564,567-568,576-579
+internal/cli/gc_test.go
+  s_9a12422fb940b0::t_ca3fc1166fae61 365-395
+internal/substrate/ownstore_skew_test.go
+  s_9a12422fb940b0::t_8a6468a5c3c957 1-109
+internal/substrate/substrate.go
+  s_9a12422fb940b0::t_3797a946d4eb5d 31-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0eebec5e5246b28182a7c2ac9dfc821d1ef3d425",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
