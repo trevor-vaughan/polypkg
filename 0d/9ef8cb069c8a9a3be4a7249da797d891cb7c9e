@@ -1,0 +1,27 @@
+internal/cli/completion_test.go
+  s_9a12422fb940b0::t_f704901f29802d 30-33,69-72
+  s_9a12422fb940b0::t_3020c438a01dca 73
+internal/cli/rollback.go
+  s_9a12422fb940b0::t_6bc59320639b60 8,12,24-28,52,56-61,63,65-66,80-94,103-110
+internal/cli/completion.go
+  s_9a12422fb940b0::t_6bc59320639b60 60-61,65-67
+internal/cli/rollback_test.go
+  s_9a12422fb940b0::t_f704901f29802d 4-5,9,13-16,82-197
+  s_9a12422fb940b0::t_04a1ca6f07ac67 198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d9ef8cb069c8a9a3be4a7249da797d891cb7c9e",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
