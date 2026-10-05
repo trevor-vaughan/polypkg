@@ -1,0 +1,22 @@
+internal/substrate/syncpayload_linux.go
+  s_9a12422fb940b0::t_0a6bda10d3f14f 13-17,23-25
+docs/dev/architecture.md
+  s_9a12422fb940b0::t_0a6bda10d3f14f 110-112,120-160
+  s_9a12422fb940b0::t_0554ba0770ad48 161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61edc5b2f301b03779d75616d68041993abe93c1",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
