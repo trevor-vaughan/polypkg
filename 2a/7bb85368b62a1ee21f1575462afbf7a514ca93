@@ -1,0 +1,27 @@
+internal/cli/initcmd_test.go
+  s_9a12422fb940b0::t_5169ba55135996 496-513
+internal/mirror/sources.go
+  s_9a12422fb940b0::t_31a0e42f157d05 10-11
+  s_9a12422fb940b0::t_a6169cee77e3a8 54
+internal/mirror/sources_test.go
+  s_9a12422fb940b0::t_5169ba55135996 74-87
+internal/cli/initcmd.go
+  s_9a12422fb940b0::t_31a0e42f157d05 18
+  s_9a12422fb940b0::t_a6169cee77e3a8 323-324,328,351,359,367,373,380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a7bb85368b62a1ee21f1575462afbf7a514ca93",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
