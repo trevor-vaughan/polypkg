@@ -1,0 +1,23 @@
+internal/schema/validate.go
+  s_9a12422fb940b0::t_8e250638878a5b 27-29
+internal/schema/newer_test.go
+  s_9a12422fb940b0::t_261b8b3ee4cd69 1-120
+internal/schema/newer.go
+  s_9a12422fb940b0::t_8e250638878a5b 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69c2b7c1adea433e533aabfb213eb60be5ec0fd5",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
