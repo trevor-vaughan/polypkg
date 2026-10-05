@@ -1,0 +1,21 @@
+internal/pkglint/identity.go
+  s_976d6ae9a5c17c::t_27e003a2e024d6 53,56-57
+internal/pkglint/identity_test.go
+  s_976d6ae9a5c17c::t_27e003a2e024d6 8,16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9f531c0880dcf7ee0903ad08706cd5b93a7bd23",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
