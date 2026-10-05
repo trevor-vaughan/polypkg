@@ -1,0 +1,28 @@
+internal/action/dir.go
+  s_9a12422fb940b0::t_387ea13704eea5 124-134
+internal/pkglint/actionphase_layer_test.go
+  s_9a12422fb940b0::t_61a13744903e24 51-89
+internal/pkglint/params_test.go
+  s_9a12422fb940b0::t_61a13744903e24 38-43
+  s_9a12422fb940b0::t_f5135d2b489e50 36-37
+internal/pkglint/params.go
+  s_9a12422fb940b0::t_387ea13704eea5 145-147
+internal/pkglint/testdata/unsafemode/polypkg.yaml
+  s_9a12422fb940b0::t_61a13744903e24 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "221ad95184afdf6ca0608a2c919e81c10a29bd26",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
