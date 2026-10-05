@@ -1,0 +1,25 @@
+internal/pkglint/actionphase_layer_test.go
+  s_9a12422fb940b0::t_9c6a8e7b118543 79-88
+docs/authoring.md
+  s_9a12422fb940b0::t_0ee0a061cab903 233-235
+internal/action/perms_test.go
+  s_9a12422fb940b0::t_9c6a8e7b118543 109-124
+internal/runner/dispatch_test.go
+  s_9a12422fb940b0::t_9c6a8e7b118543 213-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4137f0ad95492fff4dcf373c7a9f2d359b2b9c09",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
