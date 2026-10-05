@@ -1,0 +1,35 @@
+internal/cli/planerr_source_test.go
+  s_9a12422fb940b0::t_d086d4f4279f47 4,7-9,137-167
+  s_9a12422fb940b0::t_427b64b71c26e6 168
+internal/cli/planerr.go
+  s_9a12422fb940b0::t_bd6418abcf77cf 118
+internal/mirror/pull.go
+  s_9a12422fb940b0::t_bd6418abcf77cf 126
+internal/source/fetcherror_test.go
+  s_9a12422fb940b0::t_4495696ea2a5b5 8,62-117
+internal/cli/mirror_test.go
+  s_9a12422fb940b0::t_d086d4f4279f47 9-10,1288-1316
+  s_9a12422fb940b0::t_5609412d38097e 1317-1318
+internal/source/native.go
+  s_9a12422fb940b0::t_bd6418abcf77cf 80-87
+CHANGELOG.md
+  s_9a12422fb940b0::t_ed923267b73c7f 222-225
+internal/source/fetcherror.go
+  s_9a12422fb940b0::t_bd6418abcf77cf 8,43-44,47,49-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e8b641d93c1f33cc8a4196a62a60bd6a01759f3",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
