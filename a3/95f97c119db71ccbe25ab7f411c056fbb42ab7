@@ -1,0 +1,26 @@
+internal/repo/signer_test.go
+  s_976d6ae9a5c17c::t_418efe1b2c7f6a 4-5,10-11,36,39-56,70-72,85-115
+  s_976d6ae9a5c17c::t_88a942b3d37a38 116
+tests/e2e/provenancegen/gen/gen.go
+  s_976d6ae9a5c17c::t_20d0f82d6c753f 1036
+internal/repo/emit.go
+  s_976d6ae9a5c17c::t_20d0f82d6c753f 223-235,240-243
+internal/repo/signer.go
+  s_976d6ae9a5c17c::t_20d0f82d6c753f 6,14-15,89-97,102-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a395f97c119db71ccbe25ab7f411c056fbb42ab7",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
