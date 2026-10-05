@@ -1,0 +1,34 @@
+internal/cli/initcmd_test.go
+  s_9a12422fb940b0::t_a566b1abe35019 205-206,208-209,319-336
+  s_9a12422fb940b0::t_641a794942ef76 337
+internal/cli/source_test.go
+  s_9a12422fb940b0::t_a566b1abe35019 245-287,383,395,470,501
+internal/cli/trustroot.go
+  s_9a12422fb940b0::t_8ffbb4e3e06252 96-119,121-128,133,138-139,142-147,150-156,161-162,171,187-188,195-197,199
+  s_9a12422fb940b0::t_5cfc11c772d5b0 198
+internal/cli/initcmd.go
+  s_9a12422fb940b0::t_8ffbb4e3e06252 27-34,47-48,61,78-79,110,112,185
+tests/e2e/venom/user/15-user-tofu.venom.yml
+  s_9a12422fb940b0::t_307a009f3be0de 8-9,26,34,37-48
+internal/cli/source.go
+  s_9a12422fb940b0::t_a38015269e1f38 289
+  s_9a12422fb940b0::t_8ffbb4e3e06252 205,214-217,223-231,244,250-251,356,358-360
+internal/cli/trustroot_test.go
+  s_9a12422fb940b0::t_5489c6e98fbd29 4,30-39,260-274,278,280,285,287,290-291,295-296,299-302,304-305,313-322,326,333,335,340-341,345,351-385,465,484,499,539-540,549-573,604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edea4876b1927bc5867b4ac60228434dd1f1f5e6",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
