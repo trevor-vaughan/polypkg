@@ -1,0 +1,32 @@
+internal/pkglint/identity.go
+  s_976d6ae9a5c17c::t_7eb6f64f50d2df 8,18-23,27-36
+  s_976d6ae9a5c17c::t_5e4d34f906218a 37
+internal/pkglint/testdata/badplatform/polypkg.yaml
+  s_976d6ae9a5c17c::t_8ffdde638e1932 1-8
+internal/pkglint/testdata/goodplatform/polypkg.yaml
+  s_976d6ae9a5c17c::t_8ffdde638e1932 1-8
+internal/pkglint/identity_test.go
+  s_976d6ae9a5c17c::t_8ffdde638e1932 34-63
+internal/pkglint/testdata/variantplatform/polypkg.yaml
+  s_976d6ae9a5c17c::t_8ffdde638e1932 1-8
+internal/pkglint/testdata/upperplatform/polypkg.yaml
+  s_976d6ae9a5c17c::t_8ffdde638e1932 1-8
+internal/pkglint/finding.go
+  s_976d6ae9a5c17c::t_7eb6f64f50d2df 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b11ffe45d57ef5511724bfd6d6f5b10a5b1589e7",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
