@@ -1,0 +1,29 @@
+internal/schema/attestationreport.go
+  s_9a12422fb940b0::t_ed50ea1005242e 33-37,39-41
+internal/schema/jsonschema/attestation-report-v1.json
+  s_9a12422fb940b0::t_ed50ea1005242e 14-15
+docs/trust-policy.md
+  s_9a12422fb940b0::t_c0defa35e688ab 285-286
+internal/cli/attestation_test.go
+  s_9a12422fb940b0::t_1a72f5fd7e1f71 4,6-8,12,123-206
+CHANGELOG.md
+  s_9a12422fb940b0::t_c0defa35e688ab 199,201-202
+internal/cli/attestation.go
+  s_9a12422fb940b0::t_ed50ea1005242e 5,9-10,81-88,94-97,110-111,114-117,121,157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06f98d93ec96dfed612797bee088a809bd999f09",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
