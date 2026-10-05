@@ -1,0 +1,21 @@
+internal/cli/rollback_test.go
+  s_9a12422fb940b0::t_2beab69f339115 196-211
+internal/cli/rollback.go
+  s_9a12422fb940b0::t_e05c109836f73a 9,81-84,88-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0b75ab000bf96d9e6b25bc0684779f1ec118032",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
