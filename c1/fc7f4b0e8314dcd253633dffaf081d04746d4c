@@ -1,0 +1,30 @@
+internal/cli/source_test.go
+  s_9a12422fb940b0::t_16c1192479cf78 4,11,18,86-104,110,114-116,232-246,633-646
+  s_9a12422fb940b0::t_b024ceecc81290 647-648
+internal/cli/source.go
+  s_9a12422fb940b0::t_6d5fbd1ffd08f1 5,16,325-329,369-371,376-377,444,448-451,489,500-558
+internal/cli/sourcetrustroot.go
+  s_9a12422fb940b0::t_6d5fbd1ffd08f1 103-105,109,120-121
+README.md
+  s_9a12422fb940b0::t_bcfc80bcc41bfe 375
+CHANGELOG.md
+  s_9a12422fb940b0::t_c38617556783e2 157-160
+internal/cli/sourcetrustroot_test.go
+  s_9a12422fb940b0::t_16c1192479cf78 95-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1fc7f4b0e8314dcd253633dffaf081d04746d4c",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
