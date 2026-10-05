@@ -1,0 +1,37 @@
+internal/source/cachesweep.go
+  s_9a12422fb940b0::t_b9eb990d3e9ab7 1-81
+internal/cli/gc.go
+  s_9a12422fb940b0::t_0916a8b21dfea4 8,12,21,25-35,38-39,43-46,48-52,55-64,67-68,72-73,76-77,80-81,91-92,96-104,108-110,113,116-119,137-140,270,279-280,291-299,302,304-312
+  s_9a12422fb940b0::t_dfc457b8444aa8 105-107
+tests/integration/e2e_gc_test.go
+  s_9a12422fb940b0::t_a5f202f0285a40 424-528
+internal/extractstore/extractstore.go
+  s_9a12422fb940b0::t_5df9c5ba1ebec9 61-70,73,76,92
+internal/source/cachesweep_test.go
+  s_9a12422fb940b0::t_fe132a3d9b1489 1-108
+internal/cli/apply.go
+  s_9a12422fb940b0::t_1e8876e4712cfb 378-381
+internal/planner/fetchcatalog.go
+  s_9a12422fb940b0::t_b9eb990d3e9ab7 226
+internal/extractstore/extractstore_test.go
+  s_9a12422fb940b0::t_8eec02dc0c8245 59,77-78,87-88,95-96
+internal/cli/gc_test.go
+  s_9a12422fb940b0::t_7477064fc9261d 20,367-370,380-381,386,391-393,398-402,409-410,425,429-450,452-456,461-463,468,476-478,480,483,486,491,494,499,503,505-512
+  s_9a12422fb940b0::t_4ebaaf7bf86e2c 376-378,382-385,426,451,457-460,464-467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31e7923e496f5a25ed1e5dd1c3bc0a5cbe35ff36",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
