@@ -1,0 +1,27 @@
+internal/cli/sourcetrustroot_test.go
+  s_9a12422fb940b0::t_8df6711a7bd73f 93,117,334-377
+  s_9a12422fb940b0::t_7d67b2db8f98c1 331
+docs/trust-policy.md
+  s_9a12422fb940b0::t_0be7a2dff809a8 259-269
+docs/dev/supply-chain.md
+  s_9a12422fb940b0::t_dd34c5fafe34d8 461-463
+internal/cli/sourcetrustroot.go
+  s_9a12422fb940b0::t_62dd540d842dc9 24,63,70,74,89-94,170,181-182,184-186,189,203,208-210
+  s_9a12422fb940b0::t_8d3b586fc4adc0 48-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f4267245420949d176ee36d0307745d82051501",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
