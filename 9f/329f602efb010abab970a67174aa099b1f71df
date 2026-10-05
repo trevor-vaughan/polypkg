@@ -1,0 +1,21 @@
+internal/audit/audit.go
+  s_9a12422fb940b0::t_dab5dc522454bb 98-100,122-125,147-150
+internal/audit/rotation_test.go
+  s_9a12422fb940b0::t_26984e7afc7c89 135-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f329f602efb010abab970a67174aa099b1f71df",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
