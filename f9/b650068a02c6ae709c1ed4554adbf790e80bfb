@@ -1,0 +1,19 @@
+tests/e2e/venom/user/96-mirror-pull.venom.yml
+  s_9a12422fb940b0::t_7e7d252f13c646 152-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9b650068a02c6ae709c1ed4554adbf790e80bfb",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
