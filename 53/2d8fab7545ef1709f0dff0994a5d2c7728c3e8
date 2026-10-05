@@ -1,0 +1,19 @@
+internal/repo/export_test.go
+  s_976d6ae9a5c17c::t_912fdfb9a3a4a5 188-276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "532d8fab7545ef1709f0dff0994a5d2c7728c3e8",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
