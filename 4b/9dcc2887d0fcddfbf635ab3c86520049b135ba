@@ -1,0 +1,36 @@
+internal/cli/sourcetrustroot_test.go
+  s_9a12422fb940b0::t_8f35bce2928cea 1-332
+internal/cli/sourcetrustroot.go
+  s_9a12422fb940b0::t_95ac1f9fc0d839 1-260
+internal/cli/trustroot.go
+  s_9a12422fb940b0::t_95ac1f9fc0d839 290-303
+tests/integration/e2e_set_trust_root_test.go
+  s_9a12422fb940b0::t_8f35bce2928cea 1-93
+internal/cli/root_test.go
+  s_9a12422fb940b0::t_8f35bce2928cea 196-199
+internal/cli/trustroot_test.go
+  s_9a12422fb940b0::t_8f35bce2928cea 257,260-292
+  s_9a12422fb940b0::t_992f0debc55eb5 258-259
+internal/cli/source.go
+  s_9a12422fb940b0::t_95ac1f9fc0d839 24-25,30-32,49,470,505-512
+  s_9a12422fb940b0::t_c3b8a2743424be 513-514
+tests/e2e/venom/user/15-user-tofu.venom.yml
+  s_9a12422fb940b0::t_09c254fae824e5 64-84,87-88
+  s_9a12422fb940b0::t_88bd5754e9b3be 85-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b9dcc2887d0fcddfbf635ab3c86520049b135ba",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
