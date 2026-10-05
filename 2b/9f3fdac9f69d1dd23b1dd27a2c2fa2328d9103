@@ -1,0 +1,31 @@
+internal/mirror/pull.go
+  s_9a12422fb940b0::t_8a76d7df89fcf8 128-130,155-175,177,214,283,393
+internal/cli/mirror_test.go
+  s_9a12422fb940b0::t_97259ac6c3d7a1 1063-1071,1101-1106,1172-1187
+tests/e2e/venom/user/96-mirror-pull.venom.yml
+  s_9a12422fb940b0::t_4e59c5183f07cc 181
+internal/cli/mirror.go
+  s_9a12422fb940b0::t_8a76d7df89fcf8 17,375,524-563
+  s_9a12422fb940b0::t_28c6c9641c62ad 564
+docs/mirroring.md
+  s_9a12422fb940b0::t_ec5aa31bf07c7e 290-293
+  s_9a12422fb940b0::t_4e59c5183f07cc 240,243
+docs/dev/supply-chain.md
+  s_9a12422fb940b0::t_06ca3dc576a208 845-849
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b9f3fdac9f69d1dd23b1dd27a2c2fa2328d9103",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
