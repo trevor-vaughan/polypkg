@@ -1,0 +1,39 @@
+internal/cli/mirror.go
+  s_9a12422fb940b0::t_218585165f82c5 6,367-378
+internal/trust/bundle.go
+  s_9a12422fb940b0::t_33eb324b03de8f 47,167
+internal/mirror/pull_test.go
+  s_9a12422fb940b0::t_a69a6d5cb39998 1750-1752,1770-1771
+  s_9a12422fb940b0::t_d6e7522baa4654 10,1544,1582,1630-1633,1733-1749,1753-1769,1772-1776
+internal/trust/truststate.go
+  s_9a12422fb940b0::t_33eb324b03de8f 50
+internal/trust/seen_test.go
+  s_9a12422fb940b0::t_7b9b313a6da776 241-247
+docs/mirroring.md
+  s_9a12422fb940b0::t_6f357aeab349b2 240-243,246-247
+  s_9a12422fb940b0::t_17fa3d25571965 248
+docs/dev/supply-chain.md
+  s_9a12422fb940b0::t_a97c9083937ff2 842-847
+internal/cli/mirror_test.go
+  s_9a12422fb940b0::t_ef56624c2cf33b 1089-1104
+internal/trust/seen.go
+  s_9a12422fb940b0::t_33eb324b03de8f 66-78
+internal/mirror/pull.go
+  s_9a12422fb940b0::t_f4d9bbfcaa0fea 9,118-121,123-176,181,187,191,195,199,201,207,216,220,229,233,237,240,244,248,267,276,279,284,297,301,304,308,312,316,321,325,329,332,336,355,366,370,375,379,386,389,399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df8751c897f0b9d4009fd4edcc54dec5d149225b",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
