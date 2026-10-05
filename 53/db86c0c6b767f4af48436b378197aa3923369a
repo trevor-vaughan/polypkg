@@ -1,0 +1,23 @@
+internal/cli/trustroot.go
+  s_9a12422fb940b0::t_57fbaf99b7ad8c 21,29-34,36-38
+  s_9a12422fb940b0::t_d1e092ac6b1ac2 22,35,65
+internal/cli/trustroot_test.go
+  s_9a12422fb940b0::t_b2e41f1e4a3a97 19-20,126,129-145
+  s_9a12422fb940b0::t_ee040e69684682 146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53db86c0c6b767f4af48436b378197aa3923369a",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
