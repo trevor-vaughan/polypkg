@@ -1,0 +1,24 @@
+internal/cli/gc_test.go
+  s_9a12422fb940b0::t_d484f2597991c9 13,17
+  s_9a12422fb940b0::t_33c4418c148370 365-432
+internal/cli/gc.go
+  s_9a12422fb940b0::t_199af89e253502 5,23-38,40-41,48-53,56-58,60-62
+docs/dev/architecture.md
+  s_9a12422fb940b0::t_b5eea2dac5a0e5 264-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fbfba29464ba8729870c60be41d33208454fb6d6",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
