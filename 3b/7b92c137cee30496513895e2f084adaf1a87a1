@@ -1,0 +1,28 @@
+docs/trust-policy.md
+  s_9a12422fb940b0::t_fe101a3939b6c9 18-19,251-259
+CHANGELOG.md
+  s_9a12422fb940b0::t_71a64c61510838 194-205
+  s_9a12422fb940b0::t_97091c570f582f 117-127,131-138,191-193
+tests/e2e/README.md
+  s_9a12422fb940b0::t_a20bb553204ce4 107
+docs/dev/supply-chain.md
+  s_9a12422fb940b0::t_a20bb553204ce4 454-465
+README.md
+  s_9a12422fb940b0::t_9634929c75c0c7 166-171,518-519,523,527-528,532-533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b7b92c137cee30496513895e2f084adaf1a87a1",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
