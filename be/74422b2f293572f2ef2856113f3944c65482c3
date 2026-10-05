@@ -1,0 +1,22 @@
+internal/resolver/catalog.go
+  s_976d6ae9a5c17c::t_cb5cf13d281018 46-51,55-57,60-62,82-102
+  s_976d6ae9a5c17c::t_bbeef6015b885c 103-104
+internal/resolver/catalog_test.go
+  s_976d6ae9a5c17c::t_fe63aa2f26d581 91-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be74422b2f293572f2ef2856113f3944c65482c3",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

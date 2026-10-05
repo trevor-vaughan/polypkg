@@ -1,0 +1,21 @@
+internal/repo/cache_test.go
+  s_976d6ae9a5c17c::t_c7fca1fb7c60db 91,190-235
+internal/repo/cache.go
+  s_976d6ae9a5c17c::t_f40e2f2e7ed755 25-30,49,89,100,102-106,119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74b7b5a9035e7b33aa8c1399376d3e35616dc6ce",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

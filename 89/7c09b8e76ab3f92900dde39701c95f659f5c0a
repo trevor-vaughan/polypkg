@@ -1,0 +1,24 @@
+internal/schema/manifest.go
+  s_976d6ae9a5c17c::t_1d8de69d360b1f 101-108
+internal/schema/manifest_test.go
+  s_976d6ae9a5c17c::t_4b2d7ede1bf9e7 6,539-599
+  s_976d6ae9a5c17c::t_acc6d744957b61 600
+internal/schema/jsonschema/manifest-v2.json
+  s_976d6ae9a5c17c::t_1d8de69d360b1f 33-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "897c09b8e76ab3f92900dde39701c95f659f5c0a",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

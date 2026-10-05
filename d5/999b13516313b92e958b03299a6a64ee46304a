@@ -1,0 +1,26 @@
+internal/repo/build.go
+  s_976d6ae9a5c17c::t_2bd5f14d19d7dc 420,491,494
+internal/repo/build_platform_test.go
+  s_976d6ae9a5c17c::t_59f862f5664068 10,207-301
+  s_976d6ae9a5c17c::t_a68ef1aa72c742 1-9,11-206,302-305
+internal/repo/ingest.go
+  s_976d6ae9a5c17c::t_2bd5f14d19d7dc 49,97
+internal/repo/emit.go
+  s_976d6ae9a5c17c::t_2bd5f14d19d7dc 30,40-46,48,56,229,266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5999b13516313b92e958b03299a6a64ee46304a",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

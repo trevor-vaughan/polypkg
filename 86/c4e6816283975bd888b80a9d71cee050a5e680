@@ -1,0 +1,24 @@
+internal/cli/listinfo.go
+  s_976d6ae9a5c17c::t_001918166f7dd3 203,428-429,460-463,471,489-490
+internal/cli/status.go
+  s_976d6ae9a5c17c::t_001918166f7dd3 19,662-663
+internal/cli/format.go
+  s_976d6ae9a5c17c::t_001918166f7dd3 10,173-181
+  s_976d6ae9a5c17c::t_111d034c3ba2f4 182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86c4e6816283975bd888b80a9d71cee050a5e680",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

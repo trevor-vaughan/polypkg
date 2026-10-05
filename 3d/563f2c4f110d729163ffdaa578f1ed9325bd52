@@ -1,0 +1,22 @@
+internal/cli/planerr.go
+  s_976d6ae9a5c17c::t_840db0329658b9 173,179
+  s_976d6ae9a5c17c::t_5a87497e3fe33c 174-178
+internal/cli/planerr_test.go
+  s_976d6ae9a5c17c::t_35a0ae4e57ab51 70-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d563f2c4f110d729163ffdaa578f1ed9325bd52",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+docs/dev/README.md
+  s_976d6ae9a5c17c::t_29e840bee64aac 13
+docs/dev/architecture.md
+  s_976d6ae9a5c17c::t_53bdac539bf023 96-97,195,197,264-269,335,344-345,368-417
+  s_976d6ae9a5c17c::t_0524f3248ffbb5 418
+docs/dev/supply-chain.md
+  s_976d6ae9a5c17c::t_29e840bee64aac 1,4,14-15,19,54-65,108-141,545-547,576-577,825-826,867-884,923-927,933-939
+docs/dev/repo-publisher.md
+  s_976d6ae9a5c17c::t_c77cce6be87d2e 38,84,112,124-135,146-196,453,471,480,514-520,738-740,816-820
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36fbbfe94076506a00db24353883bae5d76b1c98",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

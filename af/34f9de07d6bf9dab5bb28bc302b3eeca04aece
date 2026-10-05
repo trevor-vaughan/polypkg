@@ -1,0 +1,21 @@
+internal/resolver/merge_test.go
+  s_976d6ae9a5c17c::t_39a061321b1999 213-225
+internal/resolver/merge.go
+  s_976d6ae9a5c17c::t_0b166105f2ab6c 3-7,54-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af34f9de07d6bf9dab5bb28bc302b3eeca04aece",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

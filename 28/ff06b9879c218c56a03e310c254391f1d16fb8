@@ -1,0 +1,20 @@
+CHANGELOG.md
+  s_976d6ae9a5c17c::t_18a6d64f149e10 130-144,148-150,215-258,267-270,318-325
+  s_976d6ae9a5c17c::t_d873a041085fa1 145-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28ff06b9879c218c56a03e310c254391f1d16fb8",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
