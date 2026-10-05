@@ -1,0 +1,32 @@
+internal/source/extract_fuzz_test.go
+  s_9a12422fb940b0::t_38a75d9a9bb304 29,42-50,84-104
+  s_9a12422fb940b0::t_d1fbd71714cac4 14-18
+  s_9a12422fb940b0::t_514e1c41fd6efc 105
+internal/source/extract_roundtrip_test.go
+  s_9a12422fb940b0::t_d1fbd71714cac4 1-156
+internal/source/extract_verify.go
+  s_9a12422fb940b0::t_dc2d2f3f939abe 45-56,73,77,149
+  s_9a12422fb940b0::t_036c23236e365f 98-103,119-122,137-148
+  s_9a12422fb940b0::t_0bf26df08cad9a 150
+internal/source/extract.go
+  s_9a12422fb940b0::t_6a7d6d26f82869 101-106,110-112,127-128,168-187
+  s_9a12422fb940b0::t_56cba7cdd4fd03 100,188-190
+internal/source/extract_verify_test.go
+  s_9a12422fb940b0::t_410a782e85505a 120-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b76f98e11501b3e2bd453d7706c7450aaec4c558",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
