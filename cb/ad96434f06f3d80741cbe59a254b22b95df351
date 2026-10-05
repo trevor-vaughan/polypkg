@@ -1,0 +1,26 @@
+docs/mirroring.md
+  s_9a12422fb940b0::t_adb5c517904363 226-280
+  s_9a12422fb940b0::t_91e176a831ad90 281
+CHANGELOG.md
+  s_9a12422fb940b0::t_0c90581fb8e709 222-236
+docs/dev/supply-chain.md
+  s_9a12422fb940b0::t_0c90581fb8e709 810-813,820-843
+docs/publishing.md
+  s_9a12422fb940b0::t_0c90581fb8e709 378-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbad96434f06f3d80741cbe59a254b22b95df351",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
