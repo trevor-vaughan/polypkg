@@ -1,0 +1,65 @@
+internal/schema/index_fuzz_test.go
+  s_976d6ae9a5c17c::t_614d1352fd3577 11
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 9-10,14
+internal/resolver/catalog_queries_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 16
+internal/resolver/weak_fuzz_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 78
+internal/resolver/attest_thread_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 18
+tests/integration/helpers_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 291
+internal/mirror/pull_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 1222,1268,1302
+internal/resolver/weak_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 11
+internal/repo/build_expires_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 15,120
+internal/resolver/merge_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 12,86
+tests/e2e/venom/user/80-attestation.venom.yml
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 108
+internal/cli/upgrade_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 33
+internal/repo/build.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 371
+internal/schema/index_v3_test.go
+  s_976d6ae9a5c17c::t_5e976a83647ef3 1-138
+internal/schema/index.go
+  s_976d6ae9a5c17c::t_d0082d4ce9f276 11-19,65,85-88,90-97,99-101,107-109,118,123-144
+  s_976d6ae9a5c17c::t_614d1352fd3577 89
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 80
+tests/e2e/venom/publish/20-attestation-publish.venom.yml
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 28
+  s_976d6ae9a5c17c::t_614d1352fd3577 22
+internal/schema/index_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 13,35,47,53,60,85,113,121,153,187
+internal/resolver/catalog_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 12,30,70,79
+internal/schema/jsonschema/index-v3.json
+  s_976d6ae9a5c17c::t_d0082d4ce9f276 1-63
+internal/resolver/recurse_contract_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 12,55
+internal/source/local_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 112
+internal/resolver/resolver_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 15,30,45
+internal/source/native_test.go
+  s_976d6ae9a5c17c::t_a67e0ef3e2d72d 157,168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24723f5c33c412868493dd3e66c6409da7f5d157",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
