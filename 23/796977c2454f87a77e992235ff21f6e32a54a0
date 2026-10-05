@@ -1,0 +1,25 @@
+internal/action/install.go
+  s_9a12422fb940b0::t_04fcf9ef28e06b 4,11,53-55,67-68,84-89,105-113,116,121,125,129,132-136
+internal/action/install_test.go
+  s_9a12422fb940b0::t_04fcf9ef28e06b 16-17,19-20,23,26,331,337-343,346-348
+  s_9a12422fb940b0::t_d74c5bffa9544e 5,8-9,316-328,330,333-336,344-345,349-372
+  s_9a12422fb940b0::t_3ad3ba5906a78c 329
+  s_9a12422fb940b0::t_de2584a2118c52 18,21-22,24-25,27-28,332
+  s_9a12422fb940b0::t_202f38484c5ca5 373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23796977c2454f87a77e992235ff21f6e32a54a0",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
