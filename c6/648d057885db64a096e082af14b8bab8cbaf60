@@ -1,0 +1,21 @@
+internal/trust/seen_test.go
+  s_9a12422fb940b0::t_2c43a430846127 207-240
+internal/trust/seen.go
+  s_9a12422fb940b0::t_0406f8fda02b74 100-115,118-126,129-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6648d057885db64a096e082af14b8bab8cbaf60",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
