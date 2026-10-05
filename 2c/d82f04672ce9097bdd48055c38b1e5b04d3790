@@ -1,0 +1,35 @@
+tests/integration/helpers_test.go
+  s_976d6ae9a5c17c::t_546af89dde2e8c 6,22,113-117,146-149,158,181,250-252,311
+tests/integration/e2e_lifecycle_test.go
+  s_976d6ae9a5c17c::t_546af89dde2e8c 62-63,149
+tests/integration/e2e_real_install_test.go
+  s_976d6ae9a5c17c::t_85d24a43c6dfaf 114
+tests/integration/e2e_cache_eviction_test.go
+  s_976d6ae9a5c17c::t_85d24a43c6dfaf 173
+  s_976d6ae9a5c17c::t_546af89dde2e8c 68,103,200,233
+tests/integration/e2e_republish_integrity_test.go
+  s_976d6ae9a5c17c::t_759229a700dcb6 65
+  s_976d6ae9a5c17c::t_94aa80a4a70170 102
+tests/integration/e2e_multisource_test.go
+  s_976d6ae9a5c17c::t_104d9ad3ca71f3 135
+tests/integration/e2e_trust_test.go
+  s_976d6ae9a5c17c::t_a955a138c5bccc 53,73,102,153,159,175,212,239
+tests/integration/weakdeps_test.go
+  s_976d6ae9a5c17c::t_648c18cd86f257 101-102,163,232,310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cd82f04672ce9097bdd48055c38b1e5b04d3790",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
