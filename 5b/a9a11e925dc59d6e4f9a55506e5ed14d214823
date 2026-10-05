@@ -1,0 +1,25 @@
+internal/profileedit/sourceedit.go
+  s_9a12422fb940b0::t_50b2852ef08363 41-55,185-187,376-378
+internal/cli/source.go
+  s_9a12422fb940b0::t_fa109ec63299bb 338,372-375,377-382,512-518
+  s_9a12422fb940b0::t_c09e574431ef5f 519-520
+internal/profileedit/sourceedit_test.go
+  s_9a12422fb940b0::t_2238d60cb435fa 212-244,550-581
+  s_9a12422fb940b0::t_22ca8efd0e3846 582
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ba9a11e925dc59d6e4f9a55506e5ed14d214823",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
