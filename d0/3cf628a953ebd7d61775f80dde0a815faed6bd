@@ -1,0 +1,24 @@
+docs/mirroring.md
+  s_9a12422fb940b0::t_1fb715bc30b64b 268-271
+internal/cli/mirror.go
+  s_9a12422fb940b0::t_dc985fe80ef361 277-291
+internal/cli/mirror_test.go
+  s_9a12422fb940b0::t_949765e13586bd 1178-1179,1184-1186,1190,1193,1196-1202,1215,1221-1222,1224-1228,1233-1235,1240-1253
+  s_9a12422fb940b0::t_f61683107b95b5 1254-1255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d03cf628a953ebd7d61775f80dde0a815faed6bd",
+  "prompts": {},
+  "sessions": {
+    "s_9a12422fb940b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "159bd4d6-2d29-4fc9-8f3f-1d751fd95f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
