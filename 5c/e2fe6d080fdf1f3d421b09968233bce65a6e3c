@@ -1,0 +1,21 @@
+internal/ghrelease/release.go
+  s_976d6ae9a5c17c::t_90c2ba71a2e7b0 1-129
+internal/ghrelease/release_test.go
+  s_976d6ae9a5c17c::t_ce527851757cb5 1-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ce2fe6d080fdf1f3d421b09968233bce65a6e3c",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
