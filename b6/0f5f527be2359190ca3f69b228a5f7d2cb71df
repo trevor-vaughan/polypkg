@@ -1,0 +1,51 @@
+internal/cli/attestation_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 135
+internal/cli/listinfo_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 46,219,247,402,545,557
+internal/cli/config_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 46,118
+internal/cli/status_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 77,80,642
+internal/cli/profilepath_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 197
+internal/cli/bridge_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 52
+internal/cli/pin_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 18
+internal/cli/completion_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 18-19,21
+internal/cli/scope_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 19
+internal/cli/alternatives_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 101,115
+internal/cli/purge_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 16
+internal/cli/gc_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 107,143,158,187,234,270,295
+internal/cli/sourcetrustroot_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 44
+internal/cli/search_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 74,246
+internal/cli/source_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 615-617
+internal/cli/platform_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 87,250-251
+internal/cli/rollback_test.go
+  s_976d6ae9a5c17c::t_6212f1f793b855 22,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b60f5f527be2359190ca3f69b228a5f7d2cb71df",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
