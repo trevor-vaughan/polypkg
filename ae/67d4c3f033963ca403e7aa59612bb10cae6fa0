@@ -1,0 +1,21 @@
+internal/ghrelease/match_test.go
+  s_976d6ae9a5c17c::t_767251b2157c69 144-150,232-235,257-273,285
+internal/ghrelease/match.go
+  s_976d6ae9a5c17c::t_33a61f48f3693c 59-63,78-81,127-133,137,141,196-218,275-276,403-406,414-416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae67d4c3f033963ca403e7aa59612bb10cae6fa0",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
