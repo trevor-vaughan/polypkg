@@ -1,0 +1,23 @@
+internal/importer/recipe_test.go
+  s_976d6ae9a5c17c::t_831ac019b49f2f 1-6,10-78,82,86-87,127-193,195,202,224-225,227-237,249-424
+  s_976d6ae9a5c17c::t_55a0a6893b3237 7-9,83-85,88-91,93-97,99-103,105-107,109-126,194,196-201,203-223,226,238-248
+  s_976d6ae9a5c17c::t_f04e2d3a751e42 79-81,92,98,104,108
+internal/importer/recipe.go
+  s_976d6ae9a5c17c::t_b8f6561d414bb6 1-402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d4194dd916ab9a977c8b9cb74bc0107c21f140a",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
