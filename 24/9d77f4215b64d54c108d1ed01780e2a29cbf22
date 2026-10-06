@@ -1,0 +1,19 @@
+tests/integration/e2e_republish_integrity_test.go
+  s_976d6ae9a5c17c::t_e298cb678c8d59 46-48,52-53,62,69,72-76,85,98,102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "249d77f4215b64d54c108d1ed01780e2a29cbf22",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
