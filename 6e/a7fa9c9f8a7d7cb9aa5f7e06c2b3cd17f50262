@@ -1,0 +1,23 @@
+internal/importer/provenance_test.go
+  s_976d6ae9a5c17c::t_82751abe92fe91 135
+  s_976d6ae9a5c17c::t_cd4bee70dbd7dd 136
+internal/importer/provenance.go
+  s_976d6ae9a5c17c::t_489ac00def0ea1 73,92-115
+  s_976d6ae9a5c17c::t_27f88882c95d24 116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ea7fa9c9f8a7d7cb9aa5f7e06c2b3cd17f50262",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
