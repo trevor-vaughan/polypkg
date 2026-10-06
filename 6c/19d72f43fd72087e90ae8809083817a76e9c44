@@ -1,0 +1,25 @@
+internal/repo/testdata/sigstore-public-good-trusted-root-rekor-v2.json
+  s_976d6ae9a5c17c::t_bc40a9e7c07295 1-126
+internal/repo/sigstoreroots_test.go
+  s_976d6ae9a5c17c::t_46732f8cd32dcd 121-176,332-336
+  s_976d6ae9a5c17c::t_b00d6c664b13be 337
+internal/repo/sigstoreroots.go
+  s_976d6ae9a5c17c::t_454bc84dd30bfe 4-6,32-33,129-136,141,148-149
+  s_976d6ae9a5c17c::t_e39d3a83e5bb20 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c19d72f43fd72087e90ae8809083817a76e9c44",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
