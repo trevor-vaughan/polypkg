@@ -1,0 +1,27 @@
+Taskfile.yml
+  s_976d6ae9a5c17c::t_e880216025e9fa 15-21,36,42,50,54,58,65,69,73,102
+.golangci.yml
+  s_976d6ae9a5c17c::t_e880216025e9fa 6-9
+.taskfiles/vm.yml
+  s_976d6ae9a5c17c::t_e880216025e9fa 40-41,59
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_e880216025e9fa 72-80
+.taskfiles/integration.yml
+  s_976d6ae9a5c17c::t_e880216025e9fa 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6b4e98a302a573d8233dbd22d6a2b80b4539677",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
