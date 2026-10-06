@@ -1,0 +1,31 @@
+internal/ghrelease/client_test.go
+  s_976d6ae9a5c17c::t_8c83f81d59ebb7 71-87
+internal/ghrelease/release_test.go
+  s_976d6ae9a5c17c::t_8c83f81d59ebb7 128-130,168-192
+  s_976d6ae9a5c17c::t_1de7efc4a51e19 193
+internal/ghrelease/attest.go
+  s_976d6ae9a5c17c::t_467741ec49a4a8 9,115-117,124-126
+  s_976d6ae9a5c17c::t_2a951f7441facb 107-108
+  s_976d6ae9a5c17c::t_700d4eae76dd7a 105-106
+internal/ghrelease/release.go
+  s_976d6ae9a5c17c::t_467741ec49a4a8 29-31,90-91,94-96,108-109
+  s_976d6ae9a5c17c::t_cfec2d9a7f1e32 110-111,114
+internal/ghrelease/attest_test.go
+  s_976d6ae9a5c17c::t_8c83f81d59ebb7 273-309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "823475b988764535248c65571527da9358902575",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
