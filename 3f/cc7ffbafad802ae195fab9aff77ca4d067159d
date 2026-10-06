@@ -1,0 +1,36 @@
+docs/trust-policy.md
+  s_976d6ae9a5c17c::t_b9f8fd0bc031a2 125-155,159-167,169-170
+  s_976d6ae9a5c17c::t_d66f0bed87906f 156-158
+  s_976d6ae9a5c17c::t_e1a32da94be68c 168
+docs/publishing.md
+  s_976d6ae9a5c17c::t_d66f0bed87906f 374
+  s_976d6ae9a5c17c::t_ade145b53754ab 361,375
+  s_976d6ae9a5c17c::t_b9f8fd0bc031a2 107-119,357-360,362-373,376-385
+docs/dev/architecture.md
+  s_976d6ae9a5c17c::t_79228307301fae 285-286
+docs/authoring.md
+  s_976d6ae9a5c17c::t_14ee315dd2475d 100,247-249
+  s_976d6ae9a5c17c::t_b0ab53f64f043a 10,81-99,101-246,250-265
+  s_976d6ae9a5c17c::t_36993106060dd1 266
+README.md
+  s_976d6ae9a5c17c::t_06000c067247df 65,134-170,283,314,364,376-377,379,687,692-695
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_b9f8fd0bc031a2 77,81-84
+  s_976d6ae9a5c17c::t_7009681157f196 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3fcc7ffbafad802ae195fab9aff77ca4d067159d",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
