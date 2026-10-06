@@ -1,0 +1,21 @@
+internal/archive/strict.go
+  s_976d6ae9a5c17c::t_557b63551b774b 26
+internal/archive/strict_test.go
+  s_976d6ae9a5c17c::t_557b63551b774b 412-413,417-418
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fbc2ccc49d0080d89de4530cf16d259db9516c4f",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/planner/project.go
+  s_976d6ae9a5c17c::t_cc27524cc16467 128-132,134-140,147-148
+internal/action/registry.go
+  s_976d6ae9a5c17c::t_9fb277946910e0 58-65
+internal/planner/project_extract_test.go
+  s_976d6ae9a5c17c::t_59306d13b38280 121-147
+  s_976d6ae9a5c17c::t_9fb277946910e0 148-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4e8ea16f848dcc8e38b256b621ba48790d49fb4",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
