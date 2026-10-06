@@ -1,0 +1,33 @@
+internal/runner/modeowner_test.go
+  s_976d6ae9a5c17c::t_32af85704506a8 1-142
+internal/runner/modeowner.go
+  s_976d6ae9a5c17c::t_1150bf698aa55d 1-30
+docs/authoring.md
+  s_976d6ae9a5c17c::t_00019a6e9a34e9 314-318
+tests/integration/e2e_extract_test.go
+  s_976d6ae9a5c17c::t_5ff0fc6567b6eb 297-341
+internal/runner/runner.go
+  s_976d6ae9a5c17c::t_ca235ede104ade 163
+internal/planner/project.go
+  s_976d6ae9a5c17c::t_ca235ede104ade 104
+internal/planner/project_test.go
+  s_976d6ae9a5c17c::t_29172b28f5c35e 176-192
+CHANGELOG.md
+  s_976d6ae9a5c17c::t_64a762d1683f22 282-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6aa77a2bfc6fb95f62023c662085ad3a166ef8aa",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
