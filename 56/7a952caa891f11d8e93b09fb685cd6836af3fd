@@ -1,0 +1,40 @@
+internal/trust/bundle.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 95-99,102-113,115-116,119
+internal/repo/build_sigstoreroots_test.go
+  s_976d6ae9a5c17c::t_e9e30a83be5085 9,103-105,121-132
+internal/planner/planner.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 821-829,832,834,836-845
+internal/attest/testdata/sigstoregen/main.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 340
+internal/planner/planner_attest_whitebox_test.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 584
+  s_976d6ae9a5c17c::t_534057214cf785 610-639
+internal/trust/bundle_test.go
+  s_976d6ae9a5c17c::t_e9e30a83be5085 228,249-251,254,256,261,265-271,273,278,281-301,303,306-314,319
+internal/repo/sigstoreroots.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 40-44
+docs/dev/architecture.md
+  s_976d6ae9a5c17c::t_179046cf7afc2c 244
+internal/planner/planner_attest_test.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 769
+internal/repo/sigstoreroots_test.go
+  s_976d6ae9a5c17c::t_179046cf7afc2c 93
+docs/dev/supply-chain.md
+  s_976d6ae9a5c17c::t_179046cf7afc2c 166,214-218,220-221,423-424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "567a952caa891f11d8e93b09fb685cd6836af3fd",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
