@@ -1,0 +1,26 @@
+internal/archive/tar.go
+  s_976d6ae9a5c17c::t_390216894dfd21 48-55,241-245
+internal/source/extract_test.go
+  s_976d6ae9a5c17c::t_6079385d9bf8b5 147
+internal/archive/tar_test.go
+  s_976d6ae9a5c17c::t_6079385d9bf8b5 267-297
+  s_976d6ae9a5c17c::t_e34e1850f32715 298
+internal/source/extract_adversarial_test.go
+  s_976d6ae9a5c17c::t_6079385d9bf8b5 105,115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7aa61c14f5aedc9caa54f9afaf3048c5222cbff3",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
