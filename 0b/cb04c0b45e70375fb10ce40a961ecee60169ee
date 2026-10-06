@@ -1,0 +1,26 @@
+go.mod
+  s_976d6ae9a5c17c::t_cc5e2e91e7f05b 19
+internal/ghrelease/ghreleasetest/fake_test.go
+  s_976d6ae9a5c17c::t_c1f7b5d1b88a90 1-36,45-54,56-320
+  s_976d6ae9a5c17c::t_f8740c1129ccd0 37-44,55
+internal/ghrelease/ghreleasetest/mint.go
+  s_976d6ae9a5c17c::t_f8740c1129ccd0 1-298
+internal/ghrelease/ghreleasetest/fake.go
+  s_976d6ae9a5c17c::t_a72d6fc2e6a36d 1-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bcb04c0b45e70375fb10ce40a961ecee60169ee",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
