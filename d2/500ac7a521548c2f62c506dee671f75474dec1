@@ -1,0 +1,21 @@
+internal/platform/platform.go
+  s_976d6ae9a5c17c::t_e080e354daf541 78-83
+internal/platform/platform_test.go
+  s_976d6ae9a5c17c::t_1cc42abdfd47c9 90-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2500ac7a521548c2f62c506dee671f75474dec1",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
