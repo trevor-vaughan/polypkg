@@ -1,0 +1,39 @@
+internal/ghrelease/match_test.go
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-350
+internal/ghrelease/testdata/match/bat.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-48
+internal/ghrelease/testdata/match/jq.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-82
+internal/ghrelease/testdata/match/hugo.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-90
+internal/ghrelease/testdata/match/gh.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-58
+internal/ghrelease/testdata/match/zoxide.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-38
+internal/ghrelease/testdata/match/yq.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-126
+internal/ghrelease/testdata/match/ripgrep.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-70
+internal/ghrelease/match.go
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-377
+internal/ghrelease/testdata/match/fd.json
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-58
+internal/ghrelease/match_fixtures_test.go
+  s_976d6ae9a5c17c::t_d8f5e026e2fe9c 1-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4398f90373166a4e6ec9368b561c81fb5512a3e2",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
