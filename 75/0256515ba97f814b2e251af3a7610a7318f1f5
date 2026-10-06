@@ -1,0 +1,20 @@
+internal/repo/pack_roundtrip_test.go
+  s_976d6ae9a5c17c::t_fa1978136147f8 31-34
+  s_976d6ae9a5c17c::t_84e7b88746d8e5 1-30,35-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "750256515ba97f814b2e251af3a7610a7318f1f5",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
