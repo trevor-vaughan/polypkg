@@ -1,0 +1,41 @@
+internal/cli/pkgimport_test.go
+  s_976d6ae9a5c17c::t_1672f7a435c77b 340-341,356-361
+  s_976d6ae9a5c17c::t_b945cb8e45e343 362
+internal/action/alternatives.go
+  s_976d6ae9a5c17c::t_e1bb641bdd923f 14,16
+internal/action/registry.go
+  s_976d6ae9a5c17c::t_ef3adeedb30f32 6-7
+  s_976d6ae9a5c17c::t_e1bb641bdd923f 3,8,135,143,145,158
+internal/action/path.go
+  s_976d6ae9a5c17c::t_e1bb641bdd923f 12,14
+internal/importer/importer.go
+  s_976d6ae9a5c17c::t_04c74ca099436f 154
+internal/importer/errors.go
+  s_976d6ae9a5c17c::t_04c74ca099436f 49-62
+internal/importer/recipe_test.go
+  s_976d6ae9a5c17c::t_1672f7a435c77b 205-206,209-212,214-217,219-222
+  s_976d6ae9a5c17c::t_fdba7596e055ae 10
+internal/cli/pkgimport.go
+  s_976d6ae9a5c17c::t_04c74ca099436f 124-125,401,437-441
+  s_976d6ae9a5c17c::t_d598e08f2e486e 442
+internal/importer/recipe.go
+  s_976d6ae9a5c17c::t_04c74ca099436f 22,39-41,105-107,110-111,114
+internal/action/completion.go
+  s_976d6ae9a5c17c::t_e1bb641bdd923f 12,14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "920f6c1d7baaa8877f7425234ee91dcb99a263b1",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

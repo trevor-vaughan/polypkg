@@ -1,0 +1,23 @@
+internal/repo/trustbundle.go
+  s_976d6ae9a5c17c::t_820a52c83095c4 1-65
+internal/repo/build_sigstoreroots_test.go
+  s_976d6ae9a5c17c::t_7da217af78a542 1-235
+internal/repo/build.go
+  s_976d6ae9a5c17c::t_820a52c83095c4 395-404,557-560,571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a294553ebfb9ee6741441bcead10acacbd579e0f",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+internal/cli/repoadd_multi_test.go
+  s_976d6ae9a5c17c::t_1af7f51a1adfd8 1-164
+internal/cli/repoaddremove_test.go
+  s_976d6ae9a5c17c::t_1af7f51a1adfd8 501,509-530
+  s_976d6ae9a5c17c::t_92f0a8245a957f 531-532
+internal/cli/repoaddremove.go
+  s_976d6ae9a5c17c::t_0bcbd848a87f76 32,42-48,54,63-72,74,81-97,99,107-117,119,121-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd3655468839dd304867a89fffdcda2c11d55872",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+internal/cli/pkgimport.go
+  s_976d6ae9a5c17c::t_1e3d0bdc90740a 310
+internal/ghrelease/release.go
+  s_976d6ae9a5c17c::t_1e3d0bdc90740a 109
+internal/ghrelease/match.go
+  s_976d6ae9a5c17c::t_ba1a447494cfe4 115-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70ac54f5eece9d771e8733576d133860dfafed83",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

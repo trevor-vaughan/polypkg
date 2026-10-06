@@ -1,0 +1,24 @@
+internal/cli/pkgimport_test.go
+  s_976d6ae9a5c17c::t_34cefd7b4f1c53 436-496,503-552
+  s_976d6ae9a5c17c::t_25c8d633c7155a 6,497-502
+internal/cli/pkgimport.go
+  s_976d6ae9a5c17c::t_7b4d7e60ab45f8 6,182,396-410,414-433
+  s_976d6ae9a5c17c::t_25c8d633c7155a 411-413
+  s_976d6ae9a5c17c::t_342e5ba8565c15 434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7f7ec5fa96b149ac1d0319950f1b1b770894ad8",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}

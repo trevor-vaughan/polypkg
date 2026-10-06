@@ -1,0 +1,21 @@
+internal/repo/build_sigstoreroots_test.go
+  s_976d6ae9a5c17c::t_1e7dcdc4dda64b 236-308
+internal/repo/build.go
+  s_976d6ae9a5c17c::t_48e070589af54f 253-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7aeee8aa654fbd3d177d230d527c7db52372c334",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
