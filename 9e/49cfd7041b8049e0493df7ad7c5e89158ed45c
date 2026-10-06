@@ -1,0 +1,21 @@
+tests/live/github_import_test.go
+  s_976d6ae9a5c17c::t_7b8c3e678ee3b2 1-73
+Taskfile.yml
+  s_976d6ae9a5c17c::t_7b8c3e678ee3b2 86-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9e49cfd7041b8049e0493df7ad7c5e89158ed45c",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
