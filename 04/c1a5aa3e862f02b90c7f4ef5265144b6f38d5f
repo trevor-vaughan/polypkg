@@ -1,0 +1,22 @@
+internal/importer/run_test.go
+  s_976d6ae9a5c17c::t_87bd1b6b319075 700-728
+internal/importer/importer.go
+  s_976d6ae9a5c17c::t_b5268f136a9d21 119-124,194-196,310-334
+  s_976d6ae9a5c17c::t_3411f305ab343a 335-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04c1a5aa3e862f02b90c7f4ef5265144b6f38d5f",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
