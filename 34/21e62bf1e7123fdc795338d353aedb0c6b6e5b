@@ -1,0 +1,27 @@
+internal/repo/manifest_edit_test.go
+  s_976d6ae9a5c17c::t_4fb5932f90c483 6,338-374
+  s_976d6ae9a5c17c::t_81170562f1a13d 375
+internal/schema/jsonschema/repo-v1.json
+  s_976d6ae9a5c17c::t_9b0e3bcbf171ef 48-52
+internal/schema/repomanifest_test.go
+  s_976d6ae9a5c17c::t_4fb5932f90c483 4,282-312,315-316
+  s_976d6ae9a5c17c::t_b922f1f3f05757 313-314
+internal/schema/repomanifest.go
+  s_976d6ae9a5c17c::t_9b0e3bcbf171ef 58-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3421e62bf1e7123fdc795338d353aedb0c6b6e5b",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
