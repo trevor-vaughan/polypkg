@@ -1,0 +1,45 @@
+internal/cli/trustroot.go
+  s_976d6ae9a5c17c::t_87dbaebcb13919 337-338
+internal/cli/pkginit_test.go
+  s_976d6ae9a5c17c::t_387d240c9289c0 5,219-235
+  s_976d6ae9a5c17c::t_bf7f07e580a124 236-238
+internal/cli/repo.go
+  s_976d6ae9a5c17c::t_e2037e53e50f27 91-92
+  s_976d6ae9a5c17c::t_1762a4e21204d9 96
+internal/repo/export.go
+  s_976d6ae9a5c17c::t_1762a4e21204d9 129-133
+internal/cli/pkginit.go
+  s_976d6ae9a5c17c::t_87dbaebcb13919 64,67,71,77,80
+internal/cli/pkglint.go
+  s_976d6ae9a5c17c::t_eddd0391c6079f 7,9
+  s_976d6ae9a5c17c::t_87dbaebcb13919 64,95-110
+  s_976d6ae9a5c17c::t_b0389c74d64d33 111
+internal/cli/repoexport_test.go
+  s_976d6ae9a5c17c::t_46652292da1108 9,35-38,40,42,58-64,80-99
+internal/cli/pkgbuild.go
+  s_976d6ae9a5c17c::t_87dbaebcb13919 45-49,54,67-74,77,80,83-91,95,100,104
+  s_976d6ae9a5c17c::t_eddd0391c6079f 7
+internal/cli/repoexport.go
+  s_976d6ae9a5c17c::t_1762a4e21204d9 67-68,71-75
+  s_976d6ae9a5c17c::t_e2037e53e50f27 5,7,69-70
+internal/cli/pkgbuild_test.go
+  s_976d6ae9a5c17c::t_2b99520142a940 113-116,120-141
+internal/cli/pkglint_test.go
+  s_976d6ae9a5c17c::t_eacf3c0bae3be1 6,140-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47df7dc401f823b82cfdd6e07990769f5dd4a79d",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
