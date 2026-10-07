@@ -28,7 +28,9 @@
           "pinned":         { "type": "boolean" },
           "pinned_reason":  { "type": "string" },
           "is_current":     { "type": "boolean" },
-          "bytes_on_disk":  { "type": "integer", "minimum": 0 }
+          "bytes_on_disk":  { "type": "integer", "minimum": 0 },
+          "incomplete":     { "type": "boolean" },
+          "damaged":        { "type": "boolean" }
         }
       }
     },

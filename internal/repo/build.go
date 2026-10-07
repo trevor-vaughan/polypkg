@@ -284,14 +284,22 @@ func resolveRel(base, p string) string {
 	return filepath.Join(base, p)
 }
 
+// InsideOutputDir reports whether path is outputDir itself or lies beneath it,
+// comparing absolute forms. It is the one containment test for "would this be
+// published": guardKeyNotInOutput uses it, and so does any caller that keeps
+// operator-local state beside the key (mirror pull's anti-rollback floors).
+func InsideOutputDir(outputDir, path string) bool {
+	absOut, _ := filepath.Abs(outputDir)
+	ap, _ := filepath.Abs(path)
+	sep := string(os.PathSeparator)
+	return ap == absOut || strings.HasPrefix(ap+sep, absOut+sep)
+}
+
 // guardKeyNotInOutput refuses to proceed if the secret key or build cache would
 // live inside the published directory, which would expose private material.
 func guardKeyNotInOutput(outputDir, keyPath, keyDir string) error {
-	absOut, _ := filepath.Abs(outputDir)
-	sep := string(os.PathSeparator)
 	for _, p := range []string{keyPath, keyDir} {
-		ap, _ := filepath.Abs(p)
-		if ap == absOut || strings.HasPrefix(ap+sep, absOut+sep) {
+		if InsideOutputDir(outputDir, p) {
 			return &PublishError{
 				Msg:  "signing key or build cache would be inside the published output directory",
 				Hint: "store keys outside `output` (use --key-dir or move key.path); never serve your private key",

@@ -142,6 +142,9 @@ func checkValue(p action.ParamSpec, raw any) string {
 		if !ok || !reOctalMode.MatchString(s) {
 			return fmt.Sprintf("parameter %q value %v is not an octal mode (e.g. 0o755)", p.Name, raw)
 		}
+		if err := action.CheckMode(s); err != nil {
+			return fmt.Sprintf("parameter %q value %q %v", p.Name, s, err)
+		}
 	case action.KindInt:
 		switch t := raw.(type) {
 		case int, int64, float64:

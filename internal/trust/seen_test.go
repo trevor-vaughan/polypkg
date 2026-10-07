@@ -204,3 +204,44 @@ var _ = Describe("ListSeenSources", func() {
 		Expect(got).To(BeEmpty())
 	})
 })
+
+var _ = Describe("StoreSeen temp file", func() {
+	// A fixed "<source>.json.tmp" name is shared by every concurrent writer of
+	// one source, so one writer can rename another's half-written file into
+	// place. Occupying that old fixed name proves the store no longer uses it.
+	It("does not depend on a fixed <source>.json.tmp name", func() {
+		dir := GinkgoT().TempDir()
+		Expect(os.MkdirAll(filepath.Join(dir, "trust", "native.json.tmp"), 0o700)).To(Succeed())
+
+		Expect(StoreSeen(dir, "native", Seen{TrustSerial: 3})).To(Succeed())
+
+		s, err := LoadSeen(dir, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.TrustSerial).To(Equal(uint64(3)))
+	})
+
+	It("leaves only the record behind, private to the owner", func() {
+		dir := GinkgoT().TempDir()
+		Expect(StoreSeen(dir, "native", Seen{TrustSerial: 1})).To(Succeed())
+		Expect(StoreSeen(dir, "native", Seen{TrustSerial: 2})).To(Succeed())
+
+		entries, err := os.ReadDir(filepath.Join(dir, "trust"))
+		Expect(err).NotTo(HaveOccurred())
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		Expect(names).To(Equal([]string{"native.json"}))
+
+		fi, err := os.Stat(filepath.Join(dir, "trust", "native.json"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+	})
+})
+
+var _ = Describe("RollbackError", func() {
+	It("renders the same text the loaders always returned", func() {
+		var err error = &RollbackError{Document: "revocation list", Serial: 1, LastSeen: 2}
+		Expect(err.Error()).To(Equal("revocation list rollback: serial 1 is below last-seen 2"))
+	})
+})

@@ -11,9 +11,11 @@ import (
 )
 
 // FuzzExtractTarZst feeds arbitrary (mutated) tar bytes to the extractor and
-// asserts the two invariants that must hold for any input: it never panics, and
-// it never creates or modifies anything outside the destination — no "../"
-// escape into the parent, and no symlink inside dest that resolves outside it.
+// asserts the invariants that must hold for any input: it never panics; it
+// never creates or modifies anything outside the destination — no "../"
+// escape into the parent, and no symlink inside dest that resolves outside it;
+// and whenever extraction succeeds, verifying the tree against the same bytes
+// succeeds too.
 //
 // It targets extractTar (the os.Root-confined extraction logic) on raw,
 // uncompressed tar bytes rather than the zstd layer: the mutator can then craft
@@ -24,24 +26,7 @@ import (
 // Run the seed corpus as a normal test:   go test ./internal/source/
 // Run the mutating fuzzer:                 task fuzz   (go test -fuzz=FuzzExtractTarZst)
 func FuzzExtractTarZst(f *testing.F) {
-	seeds := [][]byte{
-		buildTar(tarEntry{name: "polypkg.yaml", typeflag: tar.TypeReg, body: []byte("schema: polypkg.package/v1\n")}),
-		buildTar(tarEntry{name: "dir/sub/file", typeflag: tar.TypeReg, body: []byte("hi")}),
-		buildTar(tarEntry{name: "../escape", typeflag: tar.TypeReg, body: []byte("x")}),
-		buildTar(tarEntry{name: "/abs", typeflag: tar.TypeReg, body: []byte("x")}),
-		buildTar(tarEntry{name: "abslink", typeflag: tar.TypeSymlink, linkname: "/etc"}),
-		buildTar(tarEntry{name: "rellink", typeflag: tar.TypeSymlink, linkname: "../../../../etc"}),
-		buildTar(
-			tarEntry{name: "target", typeflag: tar.TypeReg, body: []byte("hi")},
-			tarEntry{name: "link", typeflag: tar.TypeSymlink, linkname: "target"},
-		),
-		buildTar(
-			tarEntry{name: "evil", typeflag: tar.TypeSymlink, linkname: ".."},
-			tarEntry{name: "evil/x", typeflag: tar.TypeReg, body: []byte("x")},
-		),
-		buildTar(tarEntry{name: "dev", typeflag: tar.TypeChar}),
-	}
-	for _, s := range seeds {
+	for _, s := range extractFuzzSeeds() {
 		f.Add(s)
 	}
 
@@ -54,7 +39,15 @@ func FuzzExtractTarZst(f *testing.F) {
 		dest := filepath.Join(base, "dest")
 
 		// Must never panic, whatever the bytes. Errors are expected and fine.
-		_ = extractTar(bytes.NewReader(data), dest, lim)
+		extractErr := extractTar(bytes.NewReader(data), dest, lim)
+
+		// Round trip: a tree extraction produced must verify against the same
+		// bytes, or the planner would re-extract it on every apply.
+		if extractErr == nil {
+			if err := verifyExtractedTar(bytes.NewReader(data), dest, lim); err != nil {
+				t.Fatalf("extraction succeeded but verification failed: %v", err)
+			}
+		}
 
 		// Containment 1: nothing escaped into the parent of dest.
 		parent, err := os.ReadDir(base)
@@ -87,4 +80,26 @@ func FuzzExtractTarZst(f *testing.F) {
 			return nil
 		})
 	})
+}
+
+// extractFuzzSeeds are the hostile and ordinary tar shapes the fuzzer starts
+// from. The round-trip spec in extract_roundtrip_test.go runs over them too.
+func extractFuzzSeeds() [][]byte {
+	return [][]byte{
+		buildTar(tarEntry{name: "polypkg.yaml", typeflag: tar.TypeReg, body: []byte("schema: polypkg.package/v1\n")}),
+		buildTar(tarEntry{name: "dir/sub/file", typeflag: tar.TypeReg, body: []byte("hi")}),
+		buildTar(tarEntry{name: "../escape", typeflag: tar.TypeReg, body: []byte("x")}),
+		buildTar(tarEntry{name: "/abs", typeflag: tar.TypeReg, body: []byte("x")}),
+		buildTar(tarEntry{name: "abslink", typeflag: tar.TypeSymlink, linkname: "/etc"}),
+		buildTar(tarEntry{name: "rellink", typeflag: tar.TypeSymlink, linkname: "../../../../etc"}),
+		buildTar(
+			tarEntry{name: "target", typeflag: tar.TypeReg, body: []byte("hi")},
+			tarEntry{name: "link", typeflag: tar.TypeSymlink, linkname: "target"},
+		),
+		buildTar(
+			tarEntry{name: "evil", typeflag: tar.TypeSymlink, linkname: ".."},
+			tarEntry{name: "evil/x", typeflag: tar.TypeReg, body: []byte("x")},
+		),
+		buildTar(tarEntry{name: "dev", typeflag: tar.TypeChar}),
+	}
 }

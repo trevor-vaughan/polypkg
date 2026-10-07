@@ -12,20 +12,32 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// schemaBaseURL is the absolute base every embedded schema is registered
+// under. The jsonschema compiler resolves a bare file name against the process
+// working directory, which leaked the CWD into every validation error as a
+// file:// URL. It matches the $id most embedded schemas declare; nothing is
+// fetched, because each schema is supplied in-process via AddResource.
+const schemaBaseURL = "https://polypkg.dev/schemas/"
+
 // validateAgainstSchema validates instanceJSON against the given embedded JSON
 // Schema, with format assertion enabled (so "format" keywords like uri and
-// date-time are enforced, not merely annotated).
+// date-time are enforced, not merely annotated). schemaName is the embedded
+// file's base name, e.g. "ownership-v1.json".
 func validateAgainstSchema(instanceJSON, schemaJSON []byte, schemaName string) error {
+	if err := checkNotNewer(instanceJSON, schemaJSON); err != nil {
+		return err
+	}
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(instanceJSON))
 	if err != nil {
 		return fmt.Errorf("unmarshal for validation: %w", err)
 	}
+	url := schemaBaseURL + schemaName
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	if err := compiler.AddResource(schemaName, mustParseSchemaJSON(schemaJSON)); err != nil {
+	if err := compiler.AddResource(url, mustParseSchemaJSON(schemaJSON)); err != nil {
 		return fmt.Errorf("add schema resource: %w", err)
 	}
-	sch, err := compiler.Compile(schemaName)
+	sch, err := compiler.Compile(url)
 	if err != nil {
 		return fmt.Errorf("compile schema: %w", err)
 	}

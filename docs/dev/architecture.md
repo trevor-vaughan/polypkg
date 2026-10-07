@@ -107,13 +107,81 @@ flowchart LR
    (the 12 registered actions — `install`, `symlink`, `dir`, `perms`, `config`,
    `unmanaged`, `state`, `path`, `alternatives`, `completion`, `desktop`, `mime`)
    into the substrate, commits the manifest as a new immutable generation, writes
-   the `audit` record, and releases the lock.
+   the `audit` record, and releases the lock. The commit's durability order is
+   described in [Generation commits and incomplete
+   generations](#generation-commits-and-incomplete-generations).
 
 3. **Integrate** — after the generation commits, `apply` reconciles the
    user-visible surface: the `bridge` puts the generation's exposed commands on
    `$PATH`, and the `completion`, `desktop`, and `mime` integrators install shell
    completions, `.desktop` entries, and shared-mime-info files. `rollback` and
    `gc` re-run the same integration against whichever generation they activate.
+
+### Generation commits and incomplete generations
+
+`OwnStore.CommitGeneration` (`internal/substrate/ownstore.go`) makes a
+generation durable in a fixed order, and only then switches to it:
+
+1. Each of `ownership.json` and the config-base snapshots is written to a temp
+   file, fsynced, and renamed into place; then their directories are fsynced.
+2. The package payload that actions placed under `active/` is flushed. On Linux
+   that is one `syncfs(2)` of the store's filesystem. It flushes every dirty
+   page on that filesystem, not only this generation's, and it reports
+   writeback errors only on Linux 5.8 and later; an older kernel can return
+   success after a failed writeback. Other platforms fsync each file and
+   directory under `active/` instead. On Linux the `syncfs` also covers the
+   files of step 1; their individual fsyncs are there for the non-Linux path.
+3. The generation directory is fsynced.
+4. `manifest.json` is written last, the same way as step 1, stamped with the
+   generation id. Then the generation directory, `generations/` and the store
+   root are fsynced.
+5. The `active` symlink is swapped by rename, and the store root is fsynced
+   again. A failure of that last fsync is logged, not returned: the switch is
+   already visible and cannot be undone.
+
+A generation is in one of three states, decided by `ReadManifest`:
+
+- **Complete:** `manifest.json` exists, parses, and records the generation's
+  own id (0 is accepted from older binaries, which did not stamp it).
+- **Incomplete** (`ErrIncompleteGeneration`): `manifest.json` is missing. An
+  apply was interrupted before step 4. `rollback` and `generation pin` refuse
+  it, the default `rollback` target skips it, `gc` removes it whatever
+  `--count` and `--age` say (unless it is current or pinned), `status -v`
+  marks it `[incomplete]`, and `attestation report` skips it and lists it
+  under `skipped_incomplete`. An apply still in progress has not written its
+  manifest yet either, so `status -v` run alongside it shows that apply's
+  generation as `[incomplete]` too.
+- **Damaged** (`ErrDamagedGeneration`): `manifest.json` exists but does not
+  parse, fails its schema, or records another generation's id. A crash cannot
+  cause this: step 4 renames the manifest into place only after it is fsynced
+  and stamped, so a crash leaves it missing, never torn or misplaced. Damage
+  means corruption or tampering, and the generation is evidence. `rollback`
+  and `generation pin` refuse it with their own error, the default `rollback`
+  target skips it with a warning, `gc` never removes it (at any age, under any
+  `--count`) and names it with a hint to inspect it and delete it by hand,
+  `status -v` marks it `[damaged]`, `attestation report` fails naming it, and
+  the store sweep keeps every extract dir and cached download while it exists.
+
+A manifest that exists but cannot be read (EACCES, EIO) is none of these: it
+is an error reported as such, never a reason to delete or skip. So is a
+manifest a newer polypkg wrote (`schema.NewerSchemaError`, detected before the
+damage checks): it is not corrupt, this binary just cannot judge it.
+`ListGenerations` fails naming it, so `gc` removes nothing, and `rollback`,
+`generation pin` and `attestation report` refuse with the upgrade message.
+
+Removing a generation (`gc`, or `Abort` after a failed apply) deletes
+`manifest.json` and fsyncs the directory before deleting the rest, so a removal
+cut short also leaves an incomplete generation, never a complete-looking one
+over a partial payload.
+
+**Orphaned complete generation.** A power loss after step 4 but before the swap
+in step 5 is durable leaves generation N complete but not active: `active`
+still names N-1. Nothing repairs this, because nothing is broken: N is a valid
+generation. `status -v` lists it as a retained generation newer than the
+current one. A default `rollback` ignores it, because it only looks below the
+current generation, but `rollback --to N` activates it. `gc` keeps or removes it
+under the normal `--count` and `--age` rules, and the next apply creates N+1,
+because generation ids are never reused.
 
 ## Package map
 
@@ -157,7 +225,7 @@ version.
 | `gc` | Pure mark-and-sweep generation-retention algorithm (`--count`, `--age`, pins). |
 | `lock` | Per-scope advisory file locking that serializes applies. |
 | `merge` | Line-based three-way (diff3) merge used when reconciling managed config files. |
-| `audit` | JSON Lines audit-log writer. |
+| `audit` | JSON Lines audit-log writer. Rotates `audit.log` by size (`DefaultRotation`: 10 MiB, three old files kept) under an flock on the `audit.log.lock` sidecar, because `applyProfile` writes some events before the runner takes `apply.lock`. |
 | `config` | Layered configuration loading (defaults → config file → env → flags). `setDefaults` registers a key only once a consumer exists: `revocation.near_expiry_threshold` and the four integrator `*.enabled` toggles, nothing else. |
 | `paths` | Resolves polypkg's data, config, and state directories (XDG). |
 | `profileedit` | Comment-preserving edits to an existing profile, used by `install`/`remove`/`source`. |
@@ -170,15 +238,16 @@ version.
 ## The extract store
 
 `planner.Plan` extracts every verified artifact under
-`<stateHome>/pkg-extract` before the runner ever opens a transaction; the
-committed generation's symlinks then resolve through that tree for as long as
-the generation is retained.
+`<stateHome>/pkg-extract` before the runner ever opens a transaction. The
+`install` action copies from that tree into the generation by default; under
+`policy: symlink` (or `hardlink`) the generation instead links into it and
+depends on it for as long as the generation is retained.
 
 Ownership is split. `internal/extractstore` is the naming-and-sweep library:
 it exports `Root`, `DirName`, `LegacyDirName`, `Dir`, `Sweep`, and
 `DefaultMinAge`, and nothing else. The two callers own the policy — the
 planner's unexported `ensureExtracted` (`internal/planner/planner.go`) writes
-into the store, and the CLI's unexported `sweepExtracts`
+into the store, and the CLI's unexported `sweepStores`
 (`internal/cli/gc.go`) assembles the keep-set and calls `Sweep`. The
 invariants:
 
@@ -187,31 +256,71 @@ invariants:
   chars of the artifact's BLAKE3 `content_hash` (the full hash is enforced by
   artifact verification before extraction ever runs). A same-version republish
   is a *different* artifact and lands in a *different* dir, so it can never
-  rewrite the tree a retained or pinned generation symlinks through — the
-  integrity bug the previous `RemoveAll`+extract-in-place layout had.
-- **Atomic extraction, idempotent reuse.** The planner's `ensureExtracted`
+  rewrite the tree a retained or pinned generation was installed from (and,
+  under `policy: symlink`, still resolves through) — the integrity bug the
+  previous `RemoveAll`+extract-in-place layout had.
+- **Atomic extraction, verified reuse.** The planner's `ensureExtracted`
   extracts into an
   `.extract-*` temp sibling and lands it via atomic rename: a dir either exists
   complete or not at all, and a crash leaves only a temp dir for the sweep.
-  Because the dir is content-addressed, an existing dir already holds the
-  correct bytes and is reused as-is — reuse refreshes the dir's mtime so it
-  counts as recent activity for the sweep's grace window.
+  The store is user-writable, so an existing dir is reused only after
+  `source.VerifyExtractedTarZst` confirms it still matches the verified
+  artifact bytes. It checks the same paths, types, symlink targets, and file
+  content, and that no file has gained a permission bit (losing one to the umask
+  is expected). Directory modes are not compared. A modified dir is replaced:
+  the artifact is extracted to a fresh `.extract-*` temp, the old dir is renamed
+  to another `.extract-*` name, the fresh one is renamed into place, and the old
+  one is removed, with a warning logged. Verification decompresses and hashes
+  every reused package on each `plan`/`apply`. Reuse refreshes the dir's mtime so
+  it counts as recent activity for the sweep's grace window.
 - **Manifest-driven sweep.** `gc` and every successful `apply` run the CLI's
-  `sweepExtracts`, which builds the keep-set — the union of every retained
+  `sweepStores`, which builds the keep-set — the union of every retained
   generation's manifest entries — and hands it to `extractstore.Sweep`.
   Anything else older than `extractstore.DefaultMinAge` (one hour) is removed.
   The grace window exists because extraction happens
   *before* the runner takes `apply.lock` — a young unreferenced dir (or
   in-flight `.extract-*` temp) may belong to a concurrent apply whose
   generation has not committed yet.
+- **Accepted residual risk: the post-apply sweep runs unlocked.** `gc` sweeps
+  under `apply.lock`, but `applyProfile` sweeps after the runner has released
+  it. A concurrent plan that reuses an extract dir older than the grace
+  window can therefore race that sweep: the sweep may judge the dir
+  unreferenced and remove it after the plan verified it and before the plan's
+  apply installs from it. Under `policy: copy` the install then fails on the
+  missing source and the apply aborts, so a retry re-extracts and succeeds.
+  Under `policy: symlink` the apply could commit links into the removed dir;
+  they dangle, and drift detection reports them.
 - **Legacy layout kept while referenced.** Generations committed by older
   binaries recorded symlink targets under the pre-content-addressed
   `<name>-<version>` name; the sweep keeps both spellings for every retained
   manifest entry.
-- **Fail-safe on unreadable manifests.** If any retained generation's manifest
-  cannot be read, the sweep is skipped entirely (with a warning) — deleting a
-  dir a generation might still reference would recreate exactly the bug the
-  content-addressed store fixed.
+- **Fail-safe on unusable manifests.** A generation with no manifest
+  (incomplete) records no references and is skipped. A concurrent apply's
+  not-yet-committed generation looks the same, and the grace window above keeps
+  its dirs. The exception is the current generation: if it has no manifest,
+  the sweep is skipped, because it is live and nothing records what its payload
+  links to. If any retained generation's manifest is damaged, the sweep is
+  skipped entirely, keeping every dir (with a warning naming the generation).
+  Its references cannot be known, it may be the current generation, and the
+  dirs it used may be evidence. A manifest that cannot be read at all also skips
+  the sweep. Deleting a dir a generation might still reference would recreate
+  exactly the bug the content-addressed store fixed.
+- **The artifact cache is swept in the same pass.** `NativeBackend.Fetch`
+  caches HTTP downloads at `<stateHome>/cache/<source>/<artifact base name>`
+  (`source.CacheRoot`). `sweepStores` keeps `path.Base(SourceURL)` and
+  `<hex>.att.json` for each recorded attestation hash of every retained entry,
+  and `source.SweepArtifactCache` removes any other regular file older than
+  the same `DefaultMinAge`. The signed metadata documents (`index.json`,
+  `trust.json`, `trust-bundle.json`, `revocations.json`) are never removed.
+  The fail-safe rules above apply unchanged: whenever the extract sweep is
+  skipped, so is the cache sweep. Deleting a cached file is always safe for
+  correctness: `Fetch` reads the whole file at once and re-downloads on a miss.
+  Only the attestation hash each generation records is kept: the manifest
+  records the last verified native attestation and each carried binding, so
+  any other cached `.att.json` (e.g. a package's second native ref) may be
+  pruned after the grace period. The next plan re-fetches and re-verifies it,
+  and a plan always needs the network anyway, because `FetchIndex` never reads
+  the cached `index.json`.
 
 ## The supply chain
 

@@ -27,6 +27,10 @@ func seedGen(entries []schema.OwnershipEntry) {
 	b, err := json.MarshalIndent(&own, "", "  ")
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.WriteFile(filepath.Join(gen1, "ownership.json"), b, 0o600)).To(Succeed())
+	m := schema.Manifest{Schema: "polypkg.manifest/v2", Generation: 1, Scope: "user", Entries: []schema.ManifestEntry{}}
+	mb, err := json.MarshalIndent(&m, "", "  ")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(filepath.Join(gen1, "manifest.json"), mb, 0o600)).To(Succeed())
 	Expect(os.Symlink(filepath.Join("generations", "1", "active"), filepath.Join(root, "active"))).To(Succeed())
 }
 
@@ -61,6 +65,16 @@ var _ = Describe("genIDStrings", func() {
 	It("renders generation IDs as strings", func() {
 		Expect(genIDStrings([]substrate.GenInfo{{ID: 3}, {ID: 1}, {ID: 2}})).
 			To(ConsistOf("1", "2", "3"))
+	})
+
+	It("omits incomplete generations, which rollback --to refuses", func() {
+		Expect(genIDStrings([]substrate.GenInfo{{ID: 1}, {ID: 2, Incomplete: true}, {ID: 3}})).
+			To(ConsistOf("1", "3"))
+	})
+
+	It("omits damaged generations, which rollback --to refuses", func() {
+		Expect(genIDStrings([]substrate.GenInfo{{ID: 1}, {ID: 2, Damaged: true}, {ID: 3}})).
+			To(ConsistOf("1", "3"))
 	})
 })
 

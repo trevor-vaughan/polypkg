@@ -130,7 +130,30 @@ func runPin(cmd *cobra.Command, id int, reason string, format Format) error {
 	}
 	defer func() { _ = w.Close() }()
 
+	// Check the target here, as rollback does, rather than only through
+	// sub.PinGeneration, whose error cannot tell a manifest read failure from
+	// a failed pin write.
+	genDir := filepath.Join(dataHome, "generations", strconv.Itoa(id))
+	if _, serr := os.Stat(genDir); serr != nil {
+		if errors.Is(serr, fs.ErrNotExist) {
+			return &CLIError{
+				Msg:  fmt.Sprintf("generation %d does not exist", id),
+				Hint: "run `polypkg status -v` to list retained generations",
+				Err:  serr,
+			}
+		}
+		return fmt.Errorf("pin generation %d: %w", id, serr)
+	}
+	if _, merr := sub.ReadManifest(id); merr != nil {
+		return generationManifestError(id, genDir, "pinned", merr)
+	}
 	if err := sub.PinGeneration(id, reason); err != nil {
+		// The checks above ran under the apply lock, so only a change made
+		// outside polypkg can still land here. Test the manifest states first:
+		// a missing manifest also wraps fs.ErrNotExist.
+		if errors.Is(err, substrate.ErrIncompleteGeneration) || errors.Is(err, substrate.ErrDamagedGeneration) {
+			return generationManifestError(id, genDir, "pinned", err)
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return &CLIError{
 				Msg:  fmt.Sprintf("generation %d does not exist", id),

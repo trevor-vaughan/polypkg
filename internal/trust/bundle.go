@@ -44,7 +44,7 @@ func (v *minisignVerifier) LoadBundle(doc []byte, sig string, lastSerial uint64,
 		return nil, 0, false, err
 	}
 	if b.Serial < lastSerial {
-		return nil, 0, false, fmt.Errorf("trust bundle rollback: serial %d is below last-seen %d", b.Serial, lastSerial)
+		return nil, 0, false, &RollbackError{Document: "trust bundle", Serial: b.Serial, LastSeen: lastSerial}
 	}
 	return &Bundle{keys: b.BuilderKeys, roots: b.SigstoreRoots}, b.Serial, graced, nil
 }
@@ -164,7 +164,7 @@ func (v *minisignVerifier) LoadRevocationList(doc []byte, sig string, lastSerial
 		return nil, 0, false, "", err
 	}
 	if rl.Serial < lastSerial {
-		return nil, 0, false, "", fmt.Errorf("revocation list rollback: serial %d is below last-seen %d", rl.Serial, lastSerial)
+		return nil, 0, false, "", &RollbackError{Document: "revocation list", Serial: rl.Serial, LastSeen: lastSerial}
 	}
 	r := &Revocations{keys: map[string]struct{}{}, atts: map[string]struct{}{}}
 	for _, k := range rl.RevokedBuilderKeys {

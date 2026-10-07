@@ -114,9 +114,52 @@ and on-disk formats may change in breaking ways.
   fuzzing, and the shared MegaLinter policy), Dependabot dependency updates, and
   a GoReleaser release pipeline producing Cosign-signed checksums, per-archive
   Syft SBOMs, and GitHub SLSA build-provenance attestations.
+- `polypkg source set-trust-root <name>` replaces the key a source is pinned
+  to. It shows the pinned and new key ids, needs confirmation
+  (`--trust-root-fingerprint <key id>`, or a prompt on a TTY), keeps the
+  source's URL and order position, and clears the source's anti-rollback state
+  so a repository rebuilt from scratch is accepted again. It also works on a
+  single-source profile, where the previously documented recovery
+  (`source remove` then `source add`) could not run because `remove` refuses
+  the last source. For a repository re-created with the same key,
+  `--reset-state` clears the anti-rollback state even though the key is
+  unchanged; it requires `--trust-root-fingerprint`.
+- `--trust-root-fingerprint <key id>` on `init` and `source add` confirms a
+  `--trust-root-url` download without a prompt, and checks a local trust-root
+  file when given. The key id is the one `polypkg repo key show` prints.
 
 ### Changed
 
+- `gc` now also prunes the download cache (`cache/<source>/` in the state
+  dir), which used to keep every package ever downloaded. Cached packages and
+  attestations that no retained or pinned generation records are removed
+  once they are more than an hour old (an attestation a generation used but
+  did not record is downloaded and verified again by the next `plan`); the
+  sweep after every successful `apply` does the same. Like the extract sweep,
+  it keeps everything while a generation is damaged or the current one has no
+  manifest. `gc` lists the extract dirs and cached files it removed (the first
+  20 of each in text output), and `--format json` adds `extract_dirs_pruned`
+  and `cache_artifacts_pruned` (every name) and `cache_artifacts_removed`
+  (count) beside the existing `extract_dirs_removed`.
+- `audit.log` rotates at 10 MiB to `audit.log.1`, keeping three old files, so
+  the audit trail stays under about 40 MiB. A new `audit.log.lock` file in the
+  state dir coordinates concurrent writers.
+- `plan` no longer opens `audit.log`. It never wrote events there; it only
+  created the file and needed write access to it.
+- **Breaking:** `--trust-root-yes` is removed from `init` and `source add`. It
+  trusted whatever key the URL served. Unattended runs now pass
+  `--trust-root-fingerprint <key id>`, and the download is refused unless it
+  matches.
+- **Breaking:** `source add` refuses a name that is already in the profile
+  (`source "<name>" already exists`). Change a trust root with
+  `source set-trust-root`; change anything else with `source remove` then
+  `source add`.
+- **Breaking:** `mirror pull --source-name` must be a valid slug
+  (`^[a-zA-Z0-9_-]+$`); see Security.
+- `source add`, `source remove`, and `source set-trust-root` take the apply
+  lock and stop at once, naming the holder, while another command holds it.
+  An `apply` running alongside could otherwise store a source's old
+  anti-rollback serials right after `set-trust-root` cleared them.
 - **Breaking (`polypkg-repo.yaml`):** `packages:` maps each name to a *list* of
   entries, so one repository can publish several versions of a package:
 
@@ -132,9 +175,34 @@ and on-disk formats may change in breaking ways.
   every version and `repo remove <name>@<version>` drops one. An exact client
   pin now stays resolvable after the publisher ships a newer version, which is
   what the README's held-back wording has always described.
+- **Behaviour change:** the `install` action copies by default. An `install`
+  that omits `policy` used to place a symlink into polypkg's extract cache
+  (`$XDG_STATE_HOME/polypkg/pkg-extract/`). It now places a regular file inside
+  the generation with the source's permission bits, so the generation no longer
+  depends on the cache and drift detection hashes the file that actually runs.
+  Each retained generation holds its own copy, so installed packages use more
+  disk. Authors who want the old placement can set `policy: symlink`. The first
+  `apply` after upgrading replaces each such symlink with a copy.
+- **Behaviour change:** a package archive with an entry that passes through or
+  replaces a symlink earlier in the same archive is now refused at extraction
+  (for example a symlink `a -> c` followed by a file `a/b`, or a symlink `l`
+  followed by a file `l`). Archives made by `pkg build` cannot contain these,
+  because it refuses symlinks in `content/`. Extraction also gives every
+  regular file owner-read and every directory owner read, write and search,
+  whatever mode the archive records, so an extracted package can always be
+  checked against its artifact.
 
 ### Fixed
 
+- An older polypkg reading state a newer polypkg wrote now says so —
+  `<path> was written by a newer polypkg (polypkg.ownership/v2; this version
+  reads v1); upgrade polypkg` — instead of failing with a schema-validation
+  dump. A generation manifest a newer polypkg wrote is not mistaken for a
+  damaged one: `gc` removes nothing while it is present.
+- An older polypkg treats a generation pinned by a newer polypkg as pinned, so
+  its `gc` cannot collect it.
+- Validation errors for polypkg's own files no longer print your working
+  directory as a `file://` URL.
 - `search`'s interactive picker can install again. The picker ran inside the
   closure that holds the apply lock, so the install it started could never
   acquire that lock and failed with `another polypkg command is already running
@@ -149,9 +217,61 @@ and on-disk formats may change in breaking ways.
   absent. The cache defaults under the XDG data dir and is written after the
   repository is built, signed, and published, so a missing directory turned
   completed work into a non-zero exit.
+- A power loss right after `apply` no longer leaves polypkg unusable.
+  Generation files were renamed into place and the `active` pointer was
+  switched without any fsync, so on XFS, ZFS, APFS (or ext4 outside
+  `auto_da_alloc`) `active` could point at an empty `ownership.json`, and
+  every command then failed with `unmarshal for validation: EOF`. The
+  generation's files and directories are now fsynced before the switch and the
+  store root after it.
+- A generation left behind by an interrupted `apply` (killed or powered off
+  before it committed, so it has no manifest) is no longer kept forever or
+  used as a rollback target. `gc` and the cleanup after each `apply` remove it
+  regardless of `--age`. `rollback` skips it, `rollback --to` and
+  `generation pin` refuse it, `status -v` marks it `[incomplete]`
+  (`"incomplete": true` in `--format json`), and `attestation report` skips it
+  and names it instead of failing.
+- A generation whose manifest is present but damaged (it does not parse, or
+  names another generation) is treated as possible corruption or tampering,
+  not as a crash, which cannot cause it. `gc` never removes it and names it,
+  with a hint to inspect it and delete it by hand if it is not needed as
+  evidence (`"damaged"` in `--format json`). `rollback --to` and
+  `generation pin` refuse it, the default `rollback` skips it with a warning,
+  `status -v` marks it `[damaged]` (`"damaged": true`), `attestation report`
+  fails naming it, and the store sweep keeps every extracted package and
+  cached download while it exists.
+- `rollback` now takes the same lock as `apply`. Without it, a concurrent
+  `apply` could garbage-collect the generation being rolled back to and leave
+  the `active` pointer dangling.
 
 ### Security
 
+- The `dir` and `perms` actions no longer apply a mode with group-write,
+  other-write, setuid, setgid, or sticky bits. They passed any octal mode
+  straight to `chmod`, which ignores the umask. A package declaring
+  `mode: "0o777"` therefore left root-owned, world-writable paths under the
+  system active tree that `/usr/local/bin` links to, and any local user could
+  replace a binary that root later runs. A mode written above `0o7777`
+  (`"0o40000755"`) set a real setuid bit while the recorded mode read `0755`,
+  so `status` did not report it. A four-digit `"0o4755"` was silently dropped
+  to `0755` instead. A mode may now use only the bits in `0755`. `apply`
+  refuses anything else in every scope, before touching the filesystem, and
+  names the path and mode. `pkg lint` reports the same modes as `PKG010`. A
+  package that relied on a group-writable directory must drop that bit.
+- A source server can no longer hang `plan`, `apply`, `mirror pull`, or any
+  other command that fetches from it. Fetches had only a 30-second limit on
+  response headers, so a server that sent headers and then dripped the body,
+  or went silent, froze the command until it was killed. A fetch now fails
+  once the body goes 60 seconds without a byte. Repository metadata (the
+  index, trust document, trust bundle, revocation list, and every signature)
+  must also arrive within 5 minutes in total, so a server cannot hold it open
+  by sending one byte a minute. Package artifacts, which can be up to 2 GiB,
+  have only the 60-second idle limit, so a slow but steady download still
+  completes. The error names the URL and says the server stalled.
+- An https source can no longer be redirected to plain http, matching the
+  `--trust-root-url` download. A redirect that leaves https is refused before
+  the http request is made. Redirects from https to https, including to
+  another host such as a CDN, are still followed, up to 10 hops.
 - Trust roots supplied as a local file are now pinned by content, not by path.
   `init --trust-root-file` and `source add --trust-root` recorded the path you
   gave them and re-read the anchor from it on every verification, so a key that
@@ -169,5 +289,51 @@ and on-disk formats may change in breaking ways.
   now names a path under `<config>/trust/` rather than the one you passed, and
   two sources can no longer be made to share one managed key by pointing
   `--trust-root` at another source's anchor — each gets its own copy. Existing
-  profiles are untouched; re-run `init` or `source add` (or copy the key under
-  `<config>/trust/` yourself) to pin an anchor that is currently a bare path.
+  profiles are untouched; to pin an anchor that is currently a bare path, copy
+  the key to `<config>/trust/<source>.pub` and point the source's `trust_root`
+  at that copy.
+- `source add` with an existing name silently replaced that source's pinned
+  trust root, so one `source add` run after a repository compromise (following
+  instructions the attacker published, say) made the next `upgrade` accept the
+  attacker's key. The name is now refused before any key is read. Nothing but
+  `source set-trust-root` overwrites a pinned key: `init` and `source add` also
+  refuse to replace a different key already at `<config>/trust/<source>.pub`
+  (for example one left behind after deleting `profile.yaml`) and name the
+  file.
+- `--trust-root-url` refuses plain `http://`, and an https download no longer
+  follows a redirect to http. The downloaded key anchors every later signature
+  check; over plain http anyone on the network path could substitute their own,
+  and `--trust-root-yes` accepted it unseen.
+- A source or trust-root URL carrying credentials (`https://user:password@host/...`
+  or a bare token, `https://TOKEN@host/...`) no longer prints them in errors
+  from `plan`, `apply`, `install`, `upgrade`, `mirror pull`, `init` or
+  `source add`/`set-trust-root`. Errors show the URL with its whole user info
+  replaced by `xxxxx`. A URL that does not parse, or that cannot be split into
+  user info and host, is shown only as `<scheme>://<redacted>`.
+- `mirror pull` now enforces anti-rollback serial floors against each upstream.
+  It used to accept any validly signed, unexpired upstream document regardless
+  of serial, and it treated a missing revocation list as "nothing revoked". A
+  replayed older revocation list, or a 404 in place of the current one,
+  silently dropped upstream revocations from the mirror and from every
+  air-gapped site fed by it. The pull now records the serials of each
+  upstream's trust document, index, trust bundle and revocation list under
+  `<key-dir>/<repo-source>.mirror-state/`. A later pull refuses any of them at
+  a lower serial, and refuses a trust bundle or revocation list that has
+  disappeared after being seen. The records are written only after a fully
+  successful pull, and a corrupt record stops the pull instead of resetting.
+  `--source-name` must now be a valid slug. The upstream's signed documents
+  already had to match it, so a working configuration is unaffected. If an
+  upstream is legitimately re-created, see "Resetting after an upstream is
+  re-created" in `docs/mirroring.md`.
+- An edit to polypkg's extract cache could change an installed command without
+  polypkg noticing. Installs that omitted `policy` were symlinks into
+  `$XDG_STATE_HOME/polypkg/pkg-extract/`, which the user can write. Drift
+  detection compared only the link's own `lstat`, so `status` reported no drift
+  and `apply` kept the edited file. Three changes close this:
+  - `install` copies by default (see Changed).
+  - Drift detection re-hashes the target of every `policy: symlink` install on
+    each check, and reports a dangling one as missing.
+  - Every `plan` and `apply` checks each reused extract dir against the signed
+    artifact and re-extracts one that was modified, logging a warning. An edited
+    cache therefore can't be copied into a new generation or stay live behind a
+    symlink.

@@ -51,6 +51,14 @@ SLSA provenance statement, an upstream signature bundle. Rules:
 `pkg build` packs `polypkg.yaml` plus `content/**` and nothing else, so adding
 `attestations/` does not change your artifact's digest.
 
+`content/` may hold only regular files and directories: `pkg build` refuses a
+symlink or any other special file there. If you assemble an artifact by hand
+instead, polypkg refuses at install time any archive with an entry that passes
+through, or replaces, a symlink earlier in the same archive. When polypkg
+unpacks an artifact, every file stays readable by its owner and every
+directory stays readable, writable and searchable by its owner, whatever mode
+the archive records.
+
 ## Scaffold: `polypkg pkg init <dir>`
 
 ```
@@ -210,6 +218,46 @@ For `config` the split is one-sided: `policy: replace` gets `notify_heal`, and
 every other value — `preserve`, `preserve_warn`, `three_way_merge`, and the
 omitted default, which is `preserve` — gets `notify_preserve`.
 
+#### File modes
+
+The `dir` and `perms` actions take an octal `mode` such as `"0o755"` or
+`"0644"`. Quote it: YAML reads an unquoted `0o755` as a number. A mode may use
+only the bits in `0755`: read, write and execute for the owner, read and
+execute for group and other. polypkg refuses, in every scope, a mode that sets
+any of these:
+
+| Bit | Name | Why it is refused |
+| --- | --- | --- |
+| `0o002` | other-write | Any local user could replace the file, and in system scope `/usr/local/bin` links to it. |
+| `0o020` | group-write | Same exposure for every member of the file's group. On systems without per-user groups, that is often every user. |
+| `0o4000` / `0o2000` | setuid / setgid | Turns a package file into a privilege boundary. |
+| `0o1000` | sticky | Has no use on a path the package owns. |
+
+`polypkg pkg lint` reports such a mode as `PKG010`. `polypkg apply` refuses
+it before touching the filesystem, and the error names the path and the mode.
+Lint cannot check a `mode` computed by `!starlark`, so `apply` is where that
+case is caught.
+
+`install` with `policy: copy` creates the copy with the source file's read,
+write and execute bits, less the umask (`apply` uses `0022` in system scope),
+and never its setuid, setgid or sticky bits.
+
+#### How `install` places a file
+
+`install`'s optional `policy` decides what lands in the generation:
+
+| `policy` | What lands in the generation | What drift detection checks |
+| --- | --- | --- |
+| `copy` | **Default when `policy` is omitted.** A regular file with the source's permission bits, less the umask. Setuid, setgid, and sticky bits are never copied. | File type and content hash. |
+| `symlink` | A symlink to the file in polypkg's extract cache (`$XDG_STATE_HOME/polypkg/pkg-extract/`). It saves disk, but the generation depends on the cache. | File type, plus the content hash of the link's target, re-hashed on every check. |
+| `hardlink` | A hard link to the file in the extract cache. It is the same inode, so an edit through either name changes both. Fails if the cache and the generation are on different filesystems. | File type and content hash. |
+
+Every `plan` and `apply` also checks each package's extract cache against its
+signed artifact and re-extracts a cache that was modified, so no policy lets an
+edit to the cache reach a new generation. Prefer `copy`. With `hardlink`, a
+`perms` action on the installed file also changes the cache's copy, and if it
+adds permission bits, every `apply` re-extracts the cache.
+
 ## Reference: `polypkg pkg explain`
 
 Prints an authoring reference — the lifecycle phases, every available action
@@ -230,7 +278,8 @@ each finding with a `PKGxxx` rule ID and a source location:
 
 - **structure** — the file parses and satisfies the JSON Schema (`PKG000`).
 - **action** — the phase and action names are real and legal together.
-- **parameter** — required params are present, typed, and within their enums.
+- **parameter** — required params are present, typed, and within their enums,
+  and every `mode` stays within `0755` (`PKG010`; see [File modes](#file-modes)).
 - **identity** — every relation name is an ASCII slug (`PKG007`), and no two
   identifiers in the recipe collide when case-folded (`PKG008`).
 - **content-reference** — every literal `$PKG/...` param resolves to a file

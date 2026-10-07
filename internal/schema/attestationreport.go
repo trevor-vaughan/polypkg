@@ -30,11 +30,15 @@ type AttestationReport struct {
 }
 
 // ReportSource records what the report was generated from: the scope and the
-// sorted set of retained generation ids included. No wall-clock field — the
-// report must be reproducible purely from on-disk state.
+// sorted set of retained generation ids included. SkippedIncomplete lists, in
+// order, the retained generations left out because an interrupted apply left
+// them without a manifest (they hold no recorded evidence); it is
+// omitted when none were skipped. No wall-clock field — the report must be
+// reproducible purely from on-disk state.
 type ReportSource struct {
-	Scope       string `json:"scope"`
-	Generations []int  `json:"generations"`
+	Scope             string `json:"scope"`
+	Generations       []int  `json:"generations"`
+	SkippedIncomplete []int  `json:"skipped_incomplete,omitempty"`
 }
 
 // PackageEvidence is one installed package's recorded provenance, keyed to the

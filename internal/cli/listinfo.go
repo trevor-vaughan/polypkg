@@ -545,7 +545,8 @@ func readGenManifest(dataHome string, gen int) (*schema.Manifest, error) {
 		return nil, err
 	}
 	defer func() { _ = mf.Close() }()
-	return schema.ParseManifest(mf)
+	m, err := schema.ParseManifest(mf)
+	return m, schema.WithPath(err, mPath)
 }
 
 // bestEffortProfile tries to parse the current profile and returns it. On any

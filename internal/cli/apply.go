@@ -278,7 +278,6 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 	planRes, err := planner.Plan(ctx, p, planner.Options{
 		DataHome:             dataHome,
 		StateHome:            stateHome,
-		AuditWriter:          w,
 		Scope:                scope,
 		WeakPolicy:           weakPolicy,
 		StarlarkLimits:       starlarkLimits,
@@ -376,9 +375,10 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 		return nil, fmt.Errorf("run: %w", err)
 	}
 
-	// Opportunistic extract sweep: generation GC just ran inside the runner,
-	// so dirs referenced only by pruned generations are now garbage.
-	_ = sweepExtracts(sub, stateHome, cmd.ErrOrStderr())
+	// Opportunistic store sweep: generation GC just ran inside the runner, so
+	// extract dirs and cached downloads referenced only by pruned generations
+	// are now garbage.
+	_ = sweepStores(sub, stateHome, cmd.ErrOrStderr())
 
 	out := &applyOutcome{
 		gen:      gen,

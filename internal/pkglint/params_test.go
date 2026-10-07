@@ -35,6 +35,14 @@ var _ = Describe("params layer", func() {
 		Expect(f.Loc.Line).To(BeNumerically(">", 0))
 	})
 
+	It("PKG010 reports a mode apply would refuse (dir mode=0o777)", func() {
+		f := findRule(pkglintMust("testdata/unsafemode"), "PKG010")
+		Expect(f.Severity).To(Equal(pkglint.SeverityError))
+		Expect(f.Message).To(ContainSubstring(`"0o777"`))
+		Expect(f.Message).To(ContainSubstring("sets group-write, other-write;"))
+		Expect(f.Loc.Line).To(BeNumerically(">", 0))
+	})
+
 	It("PKG005 reports a ForbiddenWith constraint (alternatives master with name)", func() {
 		f := findRule(pkglintMust("testdata/altconflict"), "PKG005")
 		Expect(f.Severity).To(Equal(pkglint.SeverityError))

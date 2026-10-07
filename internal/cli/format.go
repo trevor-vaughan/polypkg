@@ -134,5 +134,26 @@ func withRecoveryHint(err error) error {
 			Err: err,
 		}
 	}
+	var ne *schema.NewerSchemaError
+	if errors.As(err, &ne) {
+		return newerStateError(err, ne)
+	}
 	return err
+}
+
+// newerStateError is the user-facing error for err, whose chain holds ne: a
+// document a newer polypkg wrote. A named file makes ne's own sentence
+// complete; without one (a fetched document), the whole chain is kept so its
+// context ("source \"x\": …") says which document it was, and the hint names
+// the repository rather than local state.
+func newerStateError(err error, ne *schema.NewerSchemaError) *CLIError {
+	msg, subject := ne.Error(), "running polypkg against this state"
+	if ne.Path == "" {
+		msg, subject = err.Error(), "using this repository"
+	}
+	return &CLIError{
+		Msg:  msg,
+		Hint: fmt.Sprintf("you are running polypkg %s; install a newer release (see the README's Install section) before %s", Version, subject),
+		Err:  err,
+	}
 }

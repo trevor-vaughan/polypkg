@@ -167,7 +167,8 @@ func readAcceptedDrift(path string) (*schema.AcceptedDrift, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return schema.ParseAcceptedDrift(f)
+	a, err := schema.ParseAcceptedDrift(f)
+	return a, schema.WithPath(err, path)
 }
 
 func fileTypeOf(info os.FileInfo) string {

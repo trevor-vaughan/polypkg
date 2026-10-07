@@ -3,6 +3,7 @@ package planner_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,8 +176,13 @@ func TestFetchCatalogRejectsIndexRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := planner.FetchCatalog(context.Background(), p, planner.Options{Scope: "user", StateHome: stateHome})
-	if err == nil || !strings.Contains(err.Error(), "rollback") {
+	if err == nil || !strings.Contains(err.Error(), "index rollback: serial 1 is below last-seen 5") {
 		t.Fatalf("want index rollback rejection, got %v", err)
+	}
+	// Typed like the trust loaders' rollbacks, so errors.As finds every one.
+	var rb *trust.RollbackError
+	if !errors.As(err, &rb) || rb.Document != "index" || rb.Serial != 1 || rb.LastSeen != 5 {
+		t.Fatalf("want a *trust.RollbackError{index, 1, 5} in the chain, got %#v", rb)
 	}
 }
 

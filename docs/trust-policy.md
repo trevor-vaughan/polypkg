@@ -15,8 +15,8 @@ the next fetch is refused while the installed package keeps working:
 <sub>Rendered from [`.taskfiles/demo/trust.tape`](../.taskfiles/demo/trust.tape); regenerate with `task demo:render SCENARIO=trust`.</sub>
 
 > **The trust root is pinned by content, not by path.** Whichever way you
-> supply it — `init --trust-root-file`, `init --trust-root-url`, the wizard, or
-> `source add --trust-root` — polypkg copies the key into
+> supply it — `init --trust-root-file`, `init --trust-root-url`, the wizard,
+> `source add --trust-root`, or `source set-trust-root` — polypkg copies the key into
 > `<config>/trust/<source>.pub` and records *that* path in the profile. Your own
 > copy is read once and never referenced again, so it does not matter if you
 > pointed at a file inside the repository's own published tree (where `repo init`
@@ -248,7 +248,25 @@ A graced revocation list is still fully enforced at its last-known state; only r
 
 polypkg remembers the highest serial it has ever seen for a source's metadata (index, trust document, and — if published — trust bundle and revocation list) and refuses any fetch that looks like a rollback.
 
-If a repository is legitimately rebuilt from scratch (new signing key, serials reset to 0), that protection will correctly but unhelpfully treat the rebuild as a downgrade and refuse it. `polypkg source remove <name>` clears the locally-remembered trust state for that source; re-adding it with `polypkg source add <name> ...` re-pins from scratch against the new trust root.
+If a repository is legitimately rebuilt from scratch (new signing key, serials reset to 0), that protection will correctly but unhelpfully treat the rebuild as a downgrade and refuse it. Re-pin the source to the new key:
+
+```
+polypkg source set-trust-root <name> --trust-root <new trust_root.pub> --trust-root-fingerprint <key id>
+```
+
+Get the key id from the publisher (`polypkg repo key show` on the repository host). On a terminal you can leave out `--trust-root-fingerprint` and answer the prompt instead, which shows the pinned and the new key ids. The command replaces the pinned key, keeps the source's URL and place in the order, and clears the locally-remembered trust state for that source, so the next fetch pins the new serials from scratch. It works on a profile whose only source is the one being re-pinned. `--trust-root-url <https-url>` can stand in for `--trust-root`.
+
+If the repository was re-created with the **same** signing key, the key does not
+change, so `set-trust-root` leaves the source's remembered serials alone. Clear
+them explicitly:
+
+```
+polypkg source set-trust-root <name> --trust-root <path-to-.pub> \
+    --trust-root-fingerprint <key-id> --reset-state
+```
+
+`--reset-state` requires the fingerprint because it lowers rollback protection:
+the next fetch accepts whatever serials the repository now publishes.
 
 Publishers should never need this: always **increase** a serial to fix a bad release or ship an update — never reuse or lower one.
 
@@ -263,6 +281,8 @@ polypkg attestation report --scope system    # audit the system-scope installs
 ```
 
 The report is a faithful aggregation of evidence that was already recorded and individually anchored at install time — it is not signed by polypkg. Trust derives from the upstream signatures each recorded hash verifies against, not from any consumer signature. Output is reproducible: identical installed state yields identical bytes (packages are sorted; timestamps are the recorded install times, never the wall clock).
+
+A generation with a missing manifest (an interrupted `apply` left it incomplete) holds no recorded evidence. The report skips it and names it: under `generated_from.skipped_incomplete` in `--format json`, and in a warning on stderr in text mode. `polypkg gc` removes such generations. A manifest that is present but damaged (it does not parse, or names another generation) fails the report with an error naming the generation: a crash cannot cause that, so it points to corruption or tampering, and the report will not leave that generation's evidence out. A manifest that exists but cannot be read also fails the report, and so does one a newer polypkg wrote, with a message to upgrade.
 
 ## Downgrade guard
 

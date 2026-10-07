@@ -63,9 +63,22 @@ type Seen struct {
 	RevocationExpires string `json:"revocation_expires,omitempty"`
 }
 
-// seenPath is the per-source state file. filepath.Base on the source name keeps
+// RollbackError is a signed document served at a serial below the persisted
+// anti-rollback floor. Its text is the one the loaders have always returned;
+// the type lets a caller tell a floor refusal apart from any other failure.
+type RollbackError struct {
+	Document string // "trust document", "index", "trust bundle", "revocation list"
+	Serial   uint64 // the serial the document carries
+	LastSeen uint64 // the floor it fell below
+}
+
+func (e *RollbackError) Error() string {
+	return fmt.Sprintf("%s rollback: serial %d is below last-seen %d", e.Document, e.Serial, e.LastSeen)
+}
+
+// SeenPath is the per-source state file. filepath.Base on the source name keeps
 // a stray separator from escaping the trust state directory.
-func seenPath(stateHome, source string) string {
+func SeenPath(stateHome, source string) string {
 	return filepath.Join(stateHome, "trust", filepath.Base(source)+".json")
 }
 
@@ -73,7 +86,7 @@ func seenPath(stateHome, source string) string {
 // trust-on-first-use baseline and returns a zero Seen with no error.
 func LoadSeen(stateHome, source string) (Seen, error) {
 	var s Seen
-	data, err := os.ReadFile(seenPath(stateHome, source))
+	data, err := os.ReadFile(SeenPath(stateHome, source))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Seen{}, nil
@@ -96,13 +109,48 @@ func StoreSeen(stateHome, source string, s Seen) error {
 	if err != nil {
 		return fmt.Errorf("marshal trust state: %w", err)
 	}
-	final := seenPath(stateHome, source)
-	tmp := final + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	final := SeenPath(stateHome, source)
+	// A unique temp name per call, so concurrent writers of one source never
+	// share (and rename) each other's half-written file. CreateTemp opens it
+	// 0600, the same mode the record always had.
+	tmp, err := os.CreateTemp(dir, filepath.Base(final)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create trust state tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("write trust state tmp: %w", err)
 	}
-	if err := os.Rename(tmp, final); err != nil {
+	// Flush the bytes before the rename publishes them: otherwise a crash can
+	// leave a renamed but empty record, which LoadSeen then refuses to parse.
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync trust state tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close trust state tmp: %w", err)
+	}
+	if err := os.Rename(tmpName, final); err != nil {
 		return fmt.Errorf("rename trust state: %w", err)
+	}
+	committed = true
+	// Make the rename itself durable.
+	d, err := os.Open(dir) //nolint:gosec // G304: the trust state dir created above
+	if err != nil {
+		return fmt.Errorf("open trust state dir: %w", err)
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return fmt.Errorf("sync trust state dir: %w", err)
+	}
+	if err := d.Close(); err != nil {
+		return fmt.Errorf("close trust state dir: %w", err)
 	}
 	return nil
 }
@@ -114,7 +162,7 @@ func StoreSeen(stateHome, source string, s Seen) error {
 // baseline instead of inheriting stale anti-rollback floors that would refuse a
 // legitimately re-created repository.
 func ForgetSeen(stateHome, source string) error {
-	if err := os.Remove(seenPath(stateHome, source)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(SeenPath(stateHome, source)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove trust state: %w", err)
 	}
 	return nil

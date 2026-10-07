@@ -48,6 +48,13 @@ type StatusGenSummary struct {
 	PinnedReason string    `json:"pinned_reason,omitempty"`
 	IsCurrent    bool      `json:"is_current,omitempty"`
 	BytesOnDisk  int64     `json:"bytes_on_disk,omitempty"`
+	// Incomplete is true for a generation an interrupted apply left without a
+	// manifest; rollback refuses it and gc removes it.
+	Incomplete bool `json:"incomplete,omitempty"`
+	// Damaged is true for a generation whose manifest is present but does not
+	// parse or names another generation (corruption or tampering); rollback
+	// refuses it and gc keeps it for an operator to inspect.
+	Damaged bool `json:"damaged,omitempty"`
 }
 
 // StatusGCPreview describes what the next opportunistic GC would do under

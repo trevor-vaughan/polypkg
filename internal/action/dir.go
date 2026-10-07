@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -26,6 +27,10 @@ func Dir(inv Invocation, scope Scope) (Result, error) {
 		if err != nil {
 			return Result{Action: "dir", Path: path, Outcome: "error"},
 				fmt.Errorf("dir: parse mode %q: %w", modeStr, err)
+		}
+		if err := checkModeBits(m); err != nil {
+			return Result{Action: "dir", Path: path, Outcome: "error"},
+				fmt.Errorf("dir: refusing mode %q for %s: %w", modeStr, path, err)
 		}
 		mode = m
 	}
@@ -68,6 +73,63 @@ func parseMode(s string) (os.FileMode, error) {
 		return 0, err
 	}
 	return os.FileMode(n), nil
+}
+
+// AllowedModeBits is every bit a manifest mode (the dir and perms actions'
+// mode param) may set: owner rwx, group and other r-x. Group- or other-write
+// would let another local user replace a file that root placed and that
+// /usr/local/bin links to; setuid and setgid would make a package file a
+// privilege boundary; sticky has no use on a package-owned path. chmod ignores
+// the umask, so nothing downstream masks these. The rule does not depend on
+// scope, which lets pkg lint (which cannot know the scope) flag exactly what
+// apply refuses.
+const AllowedModeBits = os.FileMode(0o755)
+
+// modeBitNames names each bit outside AllowedModeBits that a mode literal of
+// at most 0o7777 can set, in the order checkModeBits lists them.
+var modeBitNames = []struct {
+	bit  os.FileMode
+	name string
+}{
+	{0o4000, "setuid"},
+	{0o2000, "setgid"},
+	{0o1000, "sticky"},
+	{0o020, "group-write"},
+	{0o002, "other-write"},
+}
+
+// checkModeBits refuses a mode from parseMode that sets any bit outside
+// AllowedModeBits, naming each offending bit. parseMode returns the raw octal
+// value, so 0o4000 here is the literal setuid bit. A value above 0o7777 is
+// refused too: os.FileMode reads those bits as type flags (0o40000000 is
+// os.ModeSetuid), and chmod would honour them.
+func checkModeBits(mode os.FileMode) error {
+	extra := mode &^ AllowedModeBits
+	if extra == 0 {
+		return nil
+	}
+	var names []string
+	for _, b := range modeBitNames {
+		if extra&b.bit != 0 {
+			names = append(names, b.name)
+			extra &^= b.bit
+		}
+	}
+	if extra != 0 {
+		names = append(names, "bits outside 0o7777")
+	}
+	return fmt.Errorf("sets %s; a mode may use only the bits in %#o", strings.Join(names, ", "), AllowedModeBits)
+}
+
+// CheckMode parses a manifest mode literal and applies the rule the dir and
+// perms actions enforce at apply time (see AllowedModeBits), so pkg lint
+// reports exactly the modes apply would refuse, in the same words.
+func CheckMode(s string) error {
+	mode, err := parseMode(s)
+	if err != nil {
+		return err
+	}
+	return checkModeBits(mode)
 }
 
 // CanonicalMode normalizes a manifest mode literal (e.g. "0o755", "0755",

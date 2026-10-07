@@ -104,7 +104,7 @@ fixtures/  ─┐                       (bind-mounted, ro)
 | `publish/20-attestation-publish` | `.att.json`/`.minisig` pool blobs; v2 index with `attestations`/`expires`; republish persists the old blob and bumps `revision` |
 | `publish/30-mirror-verify` | `repo export-bundle` → `mirror verify` (2e-2 offline-mirror surface); a post-export content byte-flip (hash mismatch) and a smuggled un-listed file are both refused, then the pristine bundle is proven to still verify |
 | `user/10-user-lifecycle` | `init`(explicit trust) → `source list` → `search` → `info` → `install` → `list` → `status` → `upgrade` → `remove` → `rollback` |
-| `user/15-user-tofu` | `init --trust-root-url --trust-root-yes`; non-TTY refusal + headless accept |
+| `user/15-user-tofu` | `init --trust-root-url` over `file://`: plain-http refusal, non-TTY refusal without a fingerprint, mismatched-fingerprint refusal, headless accept with `--trust-root-fingerprint` (key id from `repo key show`); `source set-trust-root`: unchanged key, mismatched-fingerprint refusal leaves the pin intact |
 | `system/20-system-lifecycle` | the lifecycle `--scope system` as real root in FHS paths; auto-bridge of exposed commands into `/usr/local/bin`; system-scope init regression |
 | `user/30-conflicts` | `alternatives list/set/auto` (via the `alternatives` action); hard-conflict rejection; `unlink`/`link` of a bridged command |
 | `user/40-drift` | tamper a placed file → `status` drift → `apply --heal-drift`; `accept-drift` of a drifted config path |

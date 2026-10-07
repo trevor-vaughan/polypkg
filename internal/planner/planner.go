@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/trevor-vaughan/polypkg/internal/action"
 	"github.com/trevor-vaughan/polypkg/internal/attest"
-	"github.com/trevor-vaughan/polypkg/internal/audit"
 	"github.com/trevor-vaughan/polypkg/internal/extractstore"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/runner"
@@ -43,7 +43,6 @@ import (
 type Options struct {
 	DataHome       string
 	StateHome      string
-	AuditWriter    audit.Writer
 	Scope          string
 	StarlarkLimits starlarkeval.Limits
 	// BaselineActiveRoot is the absolute active root of the generation the
@@ -863,34 +862,40 @@ func weakPolicyString(p resolver.WeakPolicy) string {
 	return ""
 }
 
-// ensureExtracted materializes the artifact's tree at dir exactly once. The
-// dir is content-addressed, so an existing dir already holds the correct
-// content: extraction goes to a temp sibling and lands via atomic rename, so
-// a dir either exists complete or not at all, and a crash leaves only an
-// ".extract-*" temp for the sweep. The previous RemoveAll+extract-in-place
-// both rewrote the tree retained generations symlink through (same-version
-// republish) and dangled the live generation if interrupted.
+// ensureExtracted materializes the artifact's tree at dir and guarantees it
+// matches the artifact. The dir is content-addressed, so an existing dir is
+// normally reused in place; but the store is user-writable, so reuse first
+// verifies the tree against data (bytes the caller has already verified by
+// signature and content hash). A tree modified since extraction is replaced
+// from data, so an edited extract cache can never be copied into a new
+// generation or stay behind a symlink-policy install. Extraction goes to a temp
+// sibling and lands via atomic rename, so a dir either exists complete or not
+// at all, and a crash leaves only ".extract-*" temps for the sweep.
 func ensureExtracted(data []byte, dir string) error {
-	if _, err := os.Stat(dir); err == nil {
+	// Lstat, not Stat: a dangling symlink at dir must reach the repair path.
+	if _, err := os.Lstat(dir); err == nil {
 		// Reuse counts as activity: refresh the mtime so the sweep's grace
 		// window (extractstore.DefaultMinAge) protects a dir an in-flight
-		// apply is reusing, not only freshly extracted ones.
+		// apply is reusing, not only freshly extracted ones. Refresh BEFORE
+		// verifying: planning runs before apply.lock, so a concurrent gc may
+		// sweep while verification is still hashing the tree.
 		now := time.Now()
 		_ = os.Chtimes(dir, now, now)
-		return nil
+		verr := source.VerifyExtractedTarZst(bytes.NewReader(data), dir)
+		if verr == nil {
+			return nil
+		}
+		if !errors.Is(verr, source.ErrExtractedTreeMismatch) {
+			return fmt.Errorf("verify extracted tree: %w", verr)
+		}
+		slog.Warn("extract cache was modified after extraction; replacing it from the verified artifact",
+			"dir", dir, "detail", verr.Error())
+		return replaceExtracted(data, dir)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	parent := filepath.Dir(dir)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.MkdirTemp(parent, ".extract-*")
+	tmp, err := extractToTemp(data, filepath.Dir(dir))
 	if err != nil {
-		return err
-	}
-	if err := source.ExtractTarZst(bytes.NewReader(data), tmp); err != nil {
-		_ = os.RemoveAll(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, dir); err != nil {
@@ -899,6 +904,65 @@ func ensureExtracted(data []byte, dir string) error {
 			return nil // lost a benign race; content-addressed ⇒ identical bytes
 		}
 		return err
+	}
+	return nil
+}
+
+// extractToTemp extracts the artifact into a fresh ".extract-*" temp dir under
+// parent and returns its path. On failure nothing is left behind.
+func extractToTemp(data []byte, parent string) (string, error) {
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp(parent, ".extract-*")
+	if err != nil {
+		return "", err
+	}
+	if err := source.ExtractTarZst(bytes.NewReader(data), tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
+// replaceExtracted swaps a modified tree at dir for a fresh extraction. The
+// fresh tree is complete before the old one moves, and the old one moves to an
+// ".extract-*" name. A crash between the two renames leaves dir absent until
+// the next plan or apply re-extracts it, and the orphaned ".extract-*" temps
+// are removed by the extract-store sweep that gc and apply run. A concurrent
+// apply repairing the same dir is a benign race: either rename may find its
+// work already done, and the tree it then finds was extracted from verified
+// bytes. The swap may fail a concurrent apply's copy out of dir; a retry
+// succeeds.
+func replaceExtracted(data []byte, dir string) error {
+	parent := filepath.Dir(dir)
+	fresh, err := extractToTemp(data, parent)
+	if err != nil {
+		return err
+	}
+	stale, err := os.MkdirTemp(parent, ".extract-*")
+	if err != nil {
+		_ = os.RemoveAll(fresh)
+		return err
+	}
+	// os.Rename refuses an existing directory as its target; free the name.
+	if err := os.Remove(stale); err != nil {
+		_ = os.RemoveAll(fresh)
+		return err
+	}
+	if err := os.Rename(dir, stale); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		_ = os.RemoveAll(fresh)
+		return err
+	}
+	if err := os.Rename(fresh, dir); err != nil {
+		_ = os.RemoveAll(fresh)
+		if _, statErr := os.Stat(dir); statErr != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(stale); err != nil {
+		slog.Warn("could not remove a replaced extract dir; the extract-store sweep will retry",
+			"dir", stale, "error", err)
 	}
 	return nil
 }

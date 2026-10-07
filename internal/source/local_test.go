@@ -44,13 +44,13 @@ var _ = Describe("localTransport", func() {
 			content := []byte("hello from local repo")
 			Expect(os.WriteFile(filepath.Join(root, "index.json"), content, 0o644)).To(Succeed())
 
-			got, err := lt.get(ctx, "index.json", maxIndexBytes)
+			got, err := lt.get(ctx, "index.json", maxIndexBytes, metadataFetch)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(content))
 		})
 
 		It("returns a FetchError wrapping 404 for a missing file", func() {
-			_, err := lt.get(ctx, "nonexistent.json", maxIndexBytes)
+			_, err := lt.get(ctx, "nonexistent.json", maxIndexBytes, metadataFetch)
 			Expect(err).To(HaveOccurred())
 
 			var fe *FetchError
@@ -65,7 +65,7 @@ var _ = Describe("localTransport", func() {
 			Expect(os.WriteFile(secret, []byte("secret"), 0o644)).To(Succeed())
 			DeferCleanup(func() { _ = os.Remove(secret) })
 
-			_, err := lt.get(ctx, "../secret.txt", maxIndexBytes)
+			_, err := lt.get(ctx, "../secret.txt", maxIndexBytes, metadataFetch)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("escapes"))
 		})
@@ -74,7 +74,7 @@ var _ = Describe("localTransport", func() {
 			// Write 10 bytes but pass a limit of 5.
 			Expect(os.WriteFile(filepath.Join(root, "big.bin"), make([]byte, 10), 0o644)).To(Succeed())
 
-			_, err := lt.get(ctx, "big.bin", 5)
+			_, err := lt.get(ctx, "big.bin", 5, metadataFetch)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("limit"))
 		})

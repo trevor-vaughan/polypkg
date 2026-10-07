@@ -209,6 +209,39 @@ var _ = Describe("ApplySourceEdits (YAML)", func() {
 		})
 	})
 
+	Describe("CreateOnly", func() {
+		It("refuses an existing source with SourceExistsError and leaves the file untouched", func() {
+			path := writeProfile(minimalProfile)
+			before := readFile(path)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "native",
+				Type:       "polypkg-native",
+				URL:        "https://attacker.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/attacker.pub",
+				CreateOnly: true,
+			}})
+			var exists *profileedit.SourceExistsError
+			Expect(errors.As(err, &exists)).To(BeTrue(), "expected SourceExistsError, got %T: %v", err, err)
+			Expect(exists.Name).To(Equal("native"))
+			Expect(readFile(path)).To(Equal(before))
+		})
+
+		It("adds a source that does not exist yet", func() {
+			path := writeProfile(minimalProfile)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "extra",
+				Type:       "polypkg-native",
+				URL:        "https://extra.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/extra.pub",
+				CreateOnly: true,
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reparse(path).Sources.Sources).To(HaveKey("extra"))
+		})
+	})
+
 	Describe("reserved source name", func() {
 		It("rejects an add of a source named \"order\" without touching the file", func() {
 			path := writeProfile(minimalProfile)
@@ -313,6 +346,63 @@ var _ = Describe("ApplySourceEdits (YAML)", func() {
 			second := readFile(path)
 
 			Expect(second).To(Equal(first))
+		})
+	})
+
+	Describe("update keeps the source's place in the preference order", func() {
+		// pinonly is defined but deliberately left out of sources.order, which
+		// makes it reachable only through a per-package source pin.
+		const threeSources = `schema: polypkg.spec/v1
+name: bare
+scopes:
+  user:
+    substrate: store
+sources:
+  order: [native, extra]
+  native:
+    type: polypkg-native
+    url: https://repo.example.com/polypkg
+    trust_root: /etc/polypkg/repo.pub
+  extra:
+    type: polypkg-native
+    url: https://extra.example.com/polypkg
+    trust_root: /etc/polypkg/extra.pub
+  pinonly:
+    type: polypkg-native
+    url: https://pinonly.example.com/polypkg
+    trust_root: /etc/polypkg/pinonly.pub
+`
+		It("keeps a non-first source at its position, even with OrderFirst set", func() {
+			path := writeProfile(threeSources)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "extra",
+				Type:       "polypkg-native",
+				URL:        "https://extra.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/extra-new.pub",
+				OrderFirst: true,
+			}})
+			Expect(err).NotTo(HaveOccurred())
+
+			p := reparse(path)
+			Expect(p.Sources.Order).To(Equal([]string{"native", "extra"}))
+			Expect(p.Sources.Sources["extra"].TrustRoot).To(Equal("/etc/polypkg/extra-new.pub"))
+		})
+
+		It("does not add a pin-only source to the order", func() {
+			path := writeProfile(threeSources)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:      "pinonly",
+				Type:      "polypkg-native",
+				URL:       "https://pinonly.example.com/polypkg",
+				TrustRoot: "/etc/polypkg/pinonly-new.pub",
+			}})
+			Expect(err).NotTo(HaveOccurred())
+
+			p := reparse(path)
+			Expect(p.Sources.Order).To(Equal([]string{"native", "extra"}))
+			Expect(p.Sources.Sources["pinonly"].TrustRoot).To(Equal("/etc/polypkg/pinonly-new.pub"))
 		})
 	})
 })
@@ -457,6 +547,39 @@ var _ = Describe("ApplySourceEdits (JSONC)", func() {
 		})
 	})
 
+	Describe("CreateOnly in JSONC", func() {
+		It("refuses an existing source with SourceExistsError and leaves the file untouched", func() {
+			path := writeJSONCProfile(baseJSONCWithSource)
+			before := readFile(path)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "native",
+				Type:       "polypkg-native",
+				URL:        "https://attacker.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/attacker.pub",
+				CreateOnly: true,
+			}})
+			var exists *profileedit.SourceExistsError
+			Expect(errors.As(err, &exists)).To(BeTrue(), "expected SourceExistsError, got %T: %v", err, err)
+			Expect(exists.Name).To(Equal("native"))
+			Expect(readFile(path)).To(Equal(before))
+		})
+
+		It("adds a source that does not exist yet", func() {
+			path := writeJSONCProfile(baseJSONCWithSource)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "extra",
+				Type:       "polypkg-native",
+				URL:        "https://extra.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/extra.pub",
+				CreateOnly: true,
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reparse(path).Sources.Sources).To(HaveKey("extra"))
+		})
+	})
+
 	Describe("reserved source name in JSONC", func() {
 		It("rejects an add of a source named \"order\" without touching the file", func() {
 			path := writeJSONCProfile(baseJSONCWithSource)
@@ -518,6 +641,53 @@ var _ = Describe("ApplySourceEdits (JSONC)", func() {
 			Expect(snipe.Known).To(Equal([]string{"native"}))
 			// File untouched.
 			Expect(readFile(path)).To(Equal(before))
+		})
+	})
+
+	Describe("update in JSONC keeps the source's place in the preference order", func() {
+		const threeSourcesJSONC = `{
+  "schema": "polypkg.spec/v1",
+  "name": "bare",
+  "scopes": { "user": { "substrate": "store" } },
+  "sources": {
+    "order": ["native", "extra"],
+    "native": { "type": "polypkg-native", "url": "https://repo.example.com/polypkg", "trust_root": "/etc/polypkg/repo.pub" },
+    "extra": { "type": "polypkg-native", "url": "https://extra.example.com/polypkg", "trust_root": "/etc/polypkg/extra.pub" },
+    "pinonly": { "type": "polypkg-native", "url": "https://pinonly.example.com/polypkg", "trust_root": "/etc/polypkg/pinonly.pub" },
+  },
+}
+`
+		It("keeps a non-first source at its position, even with OrderFirst set", func() {
+			path := writeJSONCProfile(threeSourcesJSONC)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:       "extra",
+				Type:       "polypkg-native",
+				URL:        "https://extra.example.com/polypkg",
+				TrustRoot:  "/etc/polypkg/extra-new.pub",
+				OrderFirst: true,
+			}})
+			Expect(err).NotTo(HaveOccurred())
+
+			p := reparse(path)
+			Expect(p.Sources.Order).To(Equal([]string{"native", "extra"}))
+			Expect(p.Sources.Sources["extra"].TrustRoot).To(Equal("/etc/polypkg/extra-new.pub"))
+		})
+
+		It("does not add a pin-only source to the order", func() {
+			path := writeJSONCProfile(threeSourcesJSONC)
+
+			_, err := profileedit.ApplySourceEdits(path, []profileedit.SourceEdit{{
+				Name:      "pinonly",
+				Type:      "polypkg-native",
+				URL:       "https://pinonly.example.com/polypkg",
+				TrustRoot: "/etc/polypkg/pinonly-new.pub",
+			}})
+			Expect(err).NotTo(HaveOccurred())
+
+			p := reparse(path)
+			Expect(p.Sources.Order).To(Equal([]string{"native", "extra"}))
+			Expect(p.Sources.Sources["pinonly"].TrustRoot).To(Equal("/etc/polypkg/pinonly-new.pub"))
 		})
 	})
 })

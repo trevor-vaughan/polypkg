@@ -139,6 +139,8 @@ func runStatus(cmd *cobra.Command, format Format, verbosity int) error {
 			CommittedAt: g.CommittedAt,
 			Pinned:      g.Pinned,
 			IsCurrent:   g.IsCurrent,
+			Incomplete:  g.Incomplete,
+			Damaged:     g.Damaged,
 		})
 	}
 	decision := gc.Decide(algGens, policy, time.Now())
@@ -503,6 +505,8 @@ func emitStatusJSON(w io.Writer, cur int, gens []substrate.GenInfo,
 			PinnedReason: g.PinnedReason,
 			IsCurrent:    g.IsCurrent,
 			BytesOnDisk:  g.BytesOnDisk,
+			Incomplete:   g.Incomplete,
+			Damaged:      g.Damaged,
 		})
 	}
 	data, err := json.Marshal(sr)
@@ -596,11 +600,18 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 			}
 			pin += "]"
 		}
+		state := ""
+		switch {
+		case g.Incomplete:
+			state = " " + st.Changed.Render("[incomplete]")
+		case g.Damaged:
+			state = " " + st.Changed.Render("[damaged]")
+		}
 		age := "?"
 		if !g.CommittedAt.IsZero() {
 			age = humanAge(time.Since(g.CommittedAt)) + " ago"
 		}
-		fmt.Fprintf(w, "  %s %s  %s  %d bytes%s\n", marker, genID, age, g.BytesOnDisk, pin)
+		fmt.Fprintf(w, "  %s %s  %s  %d bytes%s%s\n", marker, genID, age, g.BytesOnDisk, pin, state)
 	}
 	if len(grace) > 0 {
 		fmt.Fprintln(w, "")

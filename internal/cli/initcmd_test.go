@@ -202,8 +202,11 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("persists the downloaded trust root as trust/<source-name>.pub with --trust-root-url", func() {
+			key, kerr := os.ReadFile(keyFile)
+			Expect(kerr).NotTo(HaveOccurred())
 			out, err := runInit("--source-url", sourceURL,
-				"--trust-root-url", "file://"+keyFile, "--trust-root-yes",
+				"--trust-root-url", "file://"+keyFile,
+				"--trust-root-fingerprint", keyIDOf(string(key)),
 				"--source-name", "handtest")
 			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 			savedKey := filepath.Join(tmp, "polypkg", "trust", "handtest.pub")
@@ -279,6 +282,57 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			after, aerr := os.ReadFile(filepath.Join(tmp, "polypkg", "trust", "native.pub"))
 			Expect(aerr).NotTo(HaveOccurred())
 			Expect(string(after)).To(Equal(string(pinned)))
+		})
+
+		// Deleting profile.yaml leaves trust/<source>.pub behind. A later init
+		// must not quietly swap that anchor for a different key: whoever can
+		// get an operator to re-run init would otherwise re-anchor the source.
+		It("refuses to overwrite a different key left by an earlier init", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "first init failed: %s", out)
+			profile := filepath.Join(tmp, "polypkg", "profile.yaml")
+			Expect(os.Remove(profile)).To(Succeed())
+			savedKey := filepath.Join(tmp, "polypkg", "trust", "native.pub")
+			pinned, rerr := os.ReadFile(savedKey)
+			Expect(rerr).NotTo(HaveOccurred())
+
+			otherKey := filepath.Join(tmp, "other.pub")
+			Expect(os.WriteFile(otherKey, []byte(minisignPubFile()), 0o600)).To(Succeed())
+			_, err = runInit("--source-url", sourceURL, "--trust-root-file", otherKey)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring("already pinned at " + savedKey))
+			Expect(os.ReadFile(savedKey)).To(Equal(pinned))
+			Expect(profile).NotTo(BeAnExistingFile())
+		})
+
+		It("reuses an anchor left by an earlier init when it is the same key", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "first init failed: %s", out)
+			Expect(os.Remove(filepath.Join(tmp, "polypkg", "profile.yaml"))).To(Succeed())
+
+			out, err = runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "re-init with the same key failed: %s", out)
+		})
+
+		It("accepts --trust-root-file with a matching --trust-root-fingerprint", func() {
+			key, kerr := os.ReadFile(keyFile)
+			Expect(kerr).NotTo(HaveOccurred())
+			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile,
+				"--trust-root-fingerprint", keyIDOf(string(key)))
+			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
+		})
+
+		It("refuses --trust-root-file with a mismatched --trust-root-fingerprint", func() {
+			_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile,
+				"--trust-root-fingerprint", "0000000000000000")
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(`not the expected "0000000000000000"`))
+			Expect(filepath.Join(tmp, "polypkg", "trust", "native.pub")).NotTo(BeAnExistingFile())
+			Expect(filepath.Join(tmp, "polypkg", "profile.yaml")).NotTo(BeAnExistingFile())
 		})
 
 		It("writes no key file when a profile already exists", func() {
@@ -439,6 +493,24 @@ var _ = Describe("normalizeSourceURL", func() {
 		Entry("file with host", rejectCase{input: "file://example.com/srv/repo", wantMsg: "invalid file URL"}),
 	)
 
+	// Every rejection path echoes the input, which may carry a user-name-only
+	// token; it must reach the message only through source.RedactURL.
+	DescribeTable("never echoes credentials in a rejection",
+		func(input, wantMsg string) {
+			_, err := normalizeSourceURL(input)
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError for %q, got %T: %v", input, err, err)
+			Expect(ce.Msg).To(ContainSubstring(wantMsg))
+			Expect(ce.Msg).NotTo(ContainSubstring("ghp_secret"))
+		},
+		Entry("whitespace", "https://ghp_secret@h/a b", "invalid --source-url"),
+		Entry("unparseable", "https://ghp_secret@h/%zz", "invalid --source-url"),
+		Entry("missing host", "https://ghp_secret@", "invalid --source-url"),
+		Entry("unsupported scheme", "ftp://ghp_secret@h/x", "invalid --source-url"),
+		Entry("file URL with a host", "file://ghp_secret@example.com/srv/repo", "invalid file URL"),
+		Entry("file URL without an absolute path", "file://ghp_secret@", "invalid file URL"),
+	)
+
 	It("~/repo normalizes to a file:// URI under home", func() {
 		home, err := os.UserHomeDir()
 		Expect(err).NotTo(HaveOccurred())
@@ -558,7 +630,9 @@ var _ = Describe("init command: pasted key material", func() {
 		keyPath := filepath.Join(trustDir, entries[0].Name())
 		fi, sErr := os.Stat(keyPath)
 		Expect(sErr).NotTo(HaveOccurred())
-		Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o600)), "key file must be 0o600")
+		// Public key material, written like every other managed anchor; the
+		// enclosing trust/ dir is 0o700.
+		Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o644)), "key file must be 0o644")
 		// Profile must reference the key path.
 		raw, rerr := os.ReadFile(written)
 		Expect(rerr).NotTo(HaveOccurred())
@@ -649,6 +723,41 @@ var _ = Describe("init command: pasted key validation", func() {
 			_, statErr := os.Stat(filepath.Join(cfgDir, name))
 			Expect(os.IsNotExist(statErr)).To(BeTrue(), "profile must not be created on validation failure")
 		}
+	})
+
+	It("pasted key replaces a symlink planted at the managed path instead of following it", func() {
+		cfgDir := filepath.Join(tmp, "polypkg")
+		trustPub := filepath.Join(cfgDir, "trust", "native.pub")
+		Expect(os.MkdirAll(filepath.Dir(trustPub), 0o700)).To(Succeed())
+		// A dangling link: the old direct write would have created its target.
+		victim := filepath.Join(tmp, "victim.pub")
+		Expect(os.Symlink(victim, trustPub)).To(Succeed())
+
+		pasted := minisignPubFile()
+		_, werr := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", pasted, "user")
+		Expect(werr).NotTo(HaveOccurred())
+
+		Expect(victim).NotTo(BeAnExistingFile(), "the symlink target must not be written")
+		fi, lerr := os.Lstat(trustPub)
+		Expect(lerr).NotTo(HaveOccurred())
+		Expect(fi.Mode().IsRegular()).To(BeTrue(), "the managed path must now be a regular file")
+		Expect(os.ReadFile(trustPub)).To(Equal([]byte(pasted)))
+	})
+
+	It("pasted key refuses to overwrite a different anchor already in trust/", func() {
+		cfgDir := filepath.Join(tmp, "polypkg")
+		trustPub := filepath.Join(cfgDir, "trust", "native.pub")
+		Expect(os.MkdirAll(filepath.Dir(trustPub), 0o700)).To(Succeed())
+		pinned := []byte(minisignPubFile())
+		Expect(os.WriteFile(trustPub, pinned, 0o644)).To(Succeed())
+
+		_, werr := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", minisignPubFile(), "user")
+		Expect(werr).To(HaveOccurred())
+		var ce *CLIError
+		Expect(errors.As(werr, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", werr, werr)
+		Expect(ce.Msg).To(ContainSubstring("already pinned at " + trustPub))
+		Expect(os.ReadFile(trustPub)).To(Equal(pinned))
+		Expect(filepath.Join(cfgDir, "profile.yaml")).NotTo(BeAnExistingFile())
 	})
 
 	It("existing profile with pasted key returns already-exists and no key file written", func() {

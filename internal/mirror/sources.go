@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/trevor-vaughan/polypkg/internal/source"
 )
 
 // SourceSpec is one upstream source in a --sources-file: what to pull and how to
@@ -49,7 +51,7 @@ func ParseSourcesFile(path string) ([]SourceSpec, error) {
 			return nil, fmt.Errorf("sources file entry %d: url is required", i+1)
 		}
 		if specs[i].TrustRoot == "" {
-			return nil, fmt.Errorf("sources file entry %d (%s): trust_root is required", i+1, specs[i].URL)
+			return nil, fmt.Errorf("sources file entry %d (%s): trust_root is required", i+1, source.RedactURL(specs[i].URL))
 		}
 	}
 	return specs, nil

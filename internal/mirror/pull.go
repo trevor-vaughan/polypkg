@@ -3,6 +3,7 @@ package mirror
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/jedisct1/go-minisign"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/source"
@@ -44,6 +46,11 @@ type PullOptions struct {
 	// it is already unambiguous.
 	AllVersions bool
 	StageDir    string // root under which staging/ is written
+	// StateHome holds this mirror's per-upstream anti-rollback floors
+	// (<StateHome>/trust/<PullResult.SeenKey>.json, the trust.Seen format the
+	// consumer uses). Required: an empty value is refused rather than pulling
+	// without floors.
+	StateHome string
 }
 
 // PulledPackage records one verified (and, from Task 2, staged) package.
@@ -73,6 +80,17 @@ type PullResult struct {
 	// revocations.json.
 	RevokedAttestations []string
 	RevokedBuilderKeys  []string
+	// SeenKey names this upstream's anti-rollback record under
+	// PullOptions.StateHome: "<SourceName>.<hex trust-root key id>". Keying on
+	// the pinned anchor as well as the name stops two upstreams that sign under
+	// the same source name from sharing, and wedging, one floor.
+	SeenKey string
+	// Seen holds the serials this pull verified, each at or above the stored
+	// floor. Pull does not persist them. The caller stores them with
+	// trust.StoreSeen(StateHome, SeenKey, Seen) only after the whole mirror run
+	// has succeeded, so a run that fails later never ratchets a floor past what
+	// the mirror actually published.
+	Seen trust.Seen
 }
 
 // PrebuiltManifestParams are the local re-publish settings for the generated
@@ -85,22 +103,115 @@ type PrebuiltManifestParams struct {
 }
 
 // Pull fetches and verifies one upstream source's trust document and signed
-// index, resolves the selection to one entry per package name, and (from Task 2)
-// stages each verified artifact + its attestation blobs and (Task 3) the trust
-// bundle. It reuses the trust crypto kernel (state.Verify); the digest re-binding
-// is repo build's ingest job (2e-3a), not done here. No anti-rollback serial
-// floor: a pull is a stateless one-shot fetch of current state for re-publish.
+// index, resolves the selection to one entry per package name, and stages each
+// verified artifact, its attestation blobs, and the trust bundle. It reuses the
+// trust crypto kernel (state.Verify). The digest re-binding is repo build's
+// ingest job (2e-3a), not done here.
+//
+// Anti-rollback: the mirror re-signs what it pulls, so its clients can only be
+// as current as the mirror. Pull therefore enforces the upstream's serial
+// floors persisted under opts.StateHome (the consumer's trust.Seen format) for
+// all four signed documents. It also refuses a trust bundle or revocation list
+// that has vanished after one was seen. Pull only reads the floors. The
+// advanced serials come back in PullResult.Seen for the caller to persist.
+// When a sources file lists one upstream more than once, each entry's Pull
+// loads the same pre-run floor; StoreFloors merges what they verified.
+//
+// Every error Pull returns is an *UpstreamError naming the upstream.
 func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
+	res, seenKey, err := pull(ctx, opts)
+	if err == nil {
+		return res, nil
+	}
+	ue := &UpstreamError{SourceName: opts.SourceName, URL: source.RedactURL(opts.URL), Err: err}
+	var rb *trust.RollbackError
+	var se *StrippedError
+	var fe *FloorStateError
+	if seenKey != "" && (errors.As(err, &rb) || errors.As(err, &se) || errors.As(err, &fe)) {
+		ue.FloorRecord = trust.SeenPath(opts.StateHome, seenKey)
+	}
+	return nil, ue
+}
+
+// UpstreamError is every error Pull returns. A mirror pull may name several
+// upstreams, so the error says which one failed, by name and by URL (with any
+// credentials redacted).
+type UpstreamError struct {
+	SourceName string
+	URL        string // redacted
+	// FloorRecord is the path of this upstream's anti-rollback record when the
+	// refusal comes from it: a rollback, a stripped trust bundle or revocation
+	// list, or a record that cannot be read. Empty for any other failure.
+	FloorRecord string
+	Err         error
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("upstream %q (%s): %v", e.SourceName, e.URL, e.Err)
+}
+
+func (e *UpstreamError) Unwrap() error { return e.Err }
+
+// StrippedError is an optional signed document (trust bundle or revocation
+// list) the upstream no longer serves although this mirror has recorded one.
+type StrippedError struct {
+	Document string // "trust bundle" or "revocation list"
+	LastSeen uint64 // the serial recorded for it
+}
+
+func (e *StrippedError) Error() string {
+	return fmt.Sprintf("%s absent but upstream previously published serial %d (rollback)", e.Document, e.LastSeen)
+}
+
+// FloorStateError is an anti-rollback record that exists but cannot be read
+// or parsed. Pull refuses rather than treat it as a first pull.
+type FloorStateError struct {
+	Path string
+	Err  error
+}
+
+func (e *FloorStateError) Error() string {
+	return fmt.Sprintf("load anti-rollback state %s: %v", e.Path, e.Err)
+}
+
+func (e *FloorStateError) Unwrap() error { return e.Err }
+
+// pull is Pull's body. It also returns the upstream's state key once known
+// (before any document is verified), so Pull can name the record on a floor
+// refusal.
+func pull(ctx context.Context, opts PullOptions) (*PullResult, string, error) {
+	var seenKey string
 	if opts.SourceType == "" {
 		opts.SourceType = "polypkg-native"
 	}
+	if opts.StateHome == "" {
+		return nil, seenKey, errors.New("mirror pull needs a state directory for the upstream anti-rollback floors")
+	}
+	// The source name becomes a state file name, so confine it to the slug
+	// charset before it reaches the filesystem. The upstream's signed documents
+	// must carry this same name, so a legitimate upstream always passes.
+	if err := schema.ValidateSourceName(opts.SourceName); err != nil {
+		return nil, seenKey, fmt.Errorf("upstream source name: %w", err)
+	}
 	anchor, err := os.ReadFile(filepath.Clean(opts.TrustRoot)) //nolint:gosec // G304: operator-supplied trust anchor path
 	if err != nil {
-		return nil, fmt.Errorf("read trust root %q: %w", opts.TrustRoot, err)
+		return nil, seenKey, fmt.Errorf("read trust root %q: %w", opts.TrustRoot, err)
 	}
 	verifier, err := trust.NewVerifier(opts.SourceType, string(anchor), opts.SourceName)
 	if err != nil {
-		return nil, fmt.Errorf("trust verifier: %w", err)
+		return nil, seenKey, fmt.Errorf("trust verifier: %w", err)
+	}
+	anchorKey, err := minisign.DecodePublicKey(string(anchor))
+	if err != nil {
+		return nil, seenKey, fmt.Errorf("decode trust root %q: %w", opts.TrustRoot, err)
+	}
+	seenKey = opts.SourceName + "." + hex.EncodeToString(anchorKey.KeyId[:])
+	// A state file that exists but cannot be read or parsed fails closed.
+	// Treating it as a first pull would reset every floor to zero and accept
+	// exactly the replayed documents the floors exist to refuse.
+	seen, err := trust.LoadSeen(opts.StateHome, seenKey)
+	if err != nil {
+		return nil, seenKey, &FloorStateError{Path: trust.SeenPath(opts.StateHome, seenKey), Err: err}
 	}
 	backend := source.NewNativeBackend(source.NativeBackendOpts{
 		URL:      opts.URL,
@@ -109,11 +220,11 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 
 	docBytes, docSig, err := backend.FetchTrustDoc(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetch trust document: %w", err)
+		return nil, seenKey, fmt.Errorf("fetch trust document: %w", err)
 	}
-	state, _, trustGraced, err := verifier.LoadTrust(docBytes, docSig, 0, opts.AcceptExpiryUntil)
+	state, trustSerial, trustGraced, err := verifier.LoadTrust(docBytes, docSig, seen.TrustSerial, opts.AcceptExpiryUntil)
 	if err != nil {
-		return nil, fmt.Errorf("verify trust document: %w", err)
+		return nil, seenKey, fmt.Errorf("verify trust document: %w", err)
 	}
 	var graced []string
 	if trustGraced {
@@ -122,47 +233,62 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 
 	rawIndex, idxSig, err := backend.FetchIndex(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetch index: %w", err)
+		return nil, seenKey, fmt.Errorf("fetch index: %w", err)
 	}
-	if _, err := state.Verify(trust.RoleIndex, rawIndex, idxSig); err != nil {
-		return nil, fmt.Errorf("index signature verification failed: %w", err)
+	idxClaims, err := state.Verify(trust.RoleIndex, rawIndex, idxSig)
+	if err != nil {
+		return nil, seenKey, fmt.Errorf("index signature verification failed: %w", err)
+	}
+	indexSerial, err := idxClaims.IndexSerial()
+	if err != nil {
+		return nil, seenKey, fmt.Errorf("index: %w", err)
+	}
+	if indexSerial < seen.IndexSerial {
+		return nil, seenKey, &trust.RollbackError{Document: "index", Serial: indexSerial, LastSeen: seen.IndexSerial}
 	}
 	index, err := schema.ParseIndex(bytes.NewReader(rawIndex))
 	if err != nil {
-		return nil, fmt.Errorf("parse index: %w", err)
+		return nil, seenKey, fmt.Errorf("parse index: %w", err)
 	}
 	idxGraced, err := trust.CheckExpiry("index", index.Expires, opts.AcceptExpiryUntil)
 	if err != nil {
-		return nil, err
+		return nil, seenKey, err
 	}
 	if idxGraced {
 		graced = append(graced, "index (grace until "+opts.AcceptExpiryUntil+")")
 	}
 
-	// Optional revocation list — fetched and enforced so the pull cannot LAUNDER
-	// an upstream revocation (repo build does not carry revocations forward, and
-	// the consumer treats revocation as absolute). Absent ⇒ nothing revoked.
+	// Optional revocation list. It is fetched and enforced so the pull cannot
+	// LAUNDER an upstream revocation (repo build does not carry revocations
+	// forward, and the consumer treats revocation as absolute). Absent and never
+	// seen means nothing is revoked. Absent after one was seen is a strip, and
+	// is refused.
+	revSerial := seen.RevocationSerial
 	var revocations *trust.Revocations
 	rDoc, rSig, rerr := backend.FetchRevocationList(ctx)
 	switch {
 	case rerr == nil:
 		var rGraced bool
-		revocations, _, rGraced, _, err = verifier.LoadRevocationList(rDoc, rSig, 0, opts.AcceptExpiryUntil)
+		revocations, revSerial, rGraced, _, err = verifier.LoadRevocationList(rDoc, rSig, seen.RevocationSerial, opts.AcceptExpiryUntil)
 		if err != nil {
-			return nil, fmt.Errorf("verify revocation list: %w", err)
+			return nil, seenKey, fmt.Errorf("verify revocation list: %w", err)
 		}
 		if rGraced {
 			graced = append(graced, "revocation list (grace until "+opts.AcceptExpiryUntil+")")
 		}
 	case errors.Is(rerr, source.ErrMetadataAbsent):
-		// no revocation list published ⇒ nothing revoked
+		// serial 0 is schema-forbidden for this optional doc (min 1), so a
+		// stored floor of 0 unambiguously means never-seen.
+		if seen.RevocationSerial > 0 {
+			return nil, seenKey, &StrippedError{Document: "revocation list", LastSeen: seen.RevocationSerial}
+		}
 	default:
-		return nil, fmt.Errorf("fetch revocation list: %w", rerr)
+		return nil, seenKey, fmt.Errorf("fetch revocation list: %w", rerr)
 	}
 
 	selected, narrowed, err := resolvePullSelection(index, opts.Selectors, opts.AllVersions)
 	if err != nil {
-		return nil, err
+		return nil, seenKey, err
 	}
 	stagingRoot := filepath.Join(opts.StageDir, "staging")
 	res := &PullResult{
@@ -175,46 +301,46 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		sel := &selected[i]
 		data, err := backend.Fetch(ctx, sel.entry.Artifact)
 		if err != nil {
-			return nil, fmt.Errorf("fetch artifact %s-%s: %w", sel.name, sel.version, err)
+			return nil, seenKey, fmt.Errorf("fetch artifact %s-%s: %w", sel.name, sel.version, err)
 		}
 		sig, err := backend.FetchSignature(ctx, sel.entry.Artifact)
 		if err != nil {
-			return nil, fmt.Errorf("fetch artifact signature %s-%s: %w", sel.name, sel.version, err)
+			return nil, seenKey, fmt.Errorf("fetch artifact signature %s-%s: %w", sel.name, sel.version, err)
 		}
 		if err := verifyClaim(state, trust.RoleArtifact, data, sig, sel.name, sel.version, sel.entry.ContentHash); err != nil {
-			return nil, err
+			return nil, seenKey, err
 		}
 		pkgDir, err := stagedPkgDir(stagingRoot, sel.name, sel.version)
 		if err != nil {
-			return nil, err
+			return nil, seenKey, err
 		}
 		attDir := filepath.Join(pkgDir, "attestations")
 		if err := os.MkdirAll(attDir, 0o755); err != nil { //nolint:gosec // G301: operator-local staging dir
-			return nil, fmt.Errorf("create staging dir for %s-%s: %w", sel.name, sel.version, err)
+			return nil, seenKey, fmt.Errorf("create staging dir for %s-%s: %w", sel.name, sel.version, err)
 		}
 		artPath := filepath.Join(pkgDir, sel.name+".tar.zst")
 		if err := os.WriteFile(artPath, data, 0o644); err != nil { //nolint:gosec // G306: operator-local staging file
-			return nil, fmt.Errorf("stage artifact %s-%s: %w", sel.name, sel.version, err)
+			return nil, seenKey, fmt.Errorf("stage artifact %s-%s: %w", sel.name, sel.version, err)
 		}
 		for j := range sel.entry.Attestations {
 			ref := &sel.entry.Attestations[j]
 			if revocations != nil && revocations.IsAttestationRevoked(ref.ContentHash) {
-				return nil, fmt.Errorf("refusing to pull %s-%s: attestation %s is revoked by the upstream revocation list", sel.name, sel.version, ref.ContentHash)
+				return nil, seenKey, fmt.Errorf("refusing to pull %s-%s: attestation %s is revoked by the upstream revocation list", sel.name, sel.version, ref.ContentHash)
 			}
 			attData, err := backend.Fetch(ctx, ref.Artifact)
 			if err != nil {
-				return nil, fmt.Errorf("fetch attestation %s: %w", ref.Artifact, err)
+				return nil, seenKey, fmt.Errorf("fetch attestation %s: %w", ref.Artifact, err)
 			}
 			attSig, err := backend.FetchSignature(ctx, ref.Artifact)
 			if err != nil {
-				return nil, fmt.Errorf("fetch attestation signature %s: %w", ref.Artifact, err)
+				return nil, seenKey, fmt.Errorf("fetch attestation signature %s: %w", ref.Artifact, err)
 			}
 			if err := verifyClaim(state, trust.RoleAttestation, attData, attSig, sel.name, sel.version, ref.ContentHash); err != nil {
-				return nil, err
+				return nil, seenKey, err
 			}
 			blobName := strings.TrimPrefix(ref.ContentHash, "blake3:") + ".att.json"
 			if err := os.WriteFile(filepath.Join(attDir, blobName), attData, 0o644); err != nil { //nolint:gosec // G306: operator-local staging file
-				return nil, fmt.Errorf("stage attestation %s: %w", ref.Artifact, err)
+				return nil, seenKey, fmt.Errorf("stage attestation %s: %w", ref.Artifact, err)
 			}
 		}
 		res.Packages = append(res.Packages, PulledPackage{
@@ -223,14 +349,19 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		})
 	}
 
-	// Optional upstream trust bundle → stage verbatim (verified) for carry-forward
-	// by `repo build` (2e-3a). Absent ⇒ nothing to carry.
+	// Optional upstream trust bundle. Stage it verbatim (verified) for
+	// carry-forward by `repo build` (2e-3a). The same absence rules as the
+	// revocation list apply: absent and never seen means nothing to carry, and
+	// absent after one was seen is a strip.
+	bundleSerial := seen.BundleSerial
 	bDoc, bSig, berr := backend.FetchTrustBundle(ctx)
 	switch {
 	case berr == nil:
-		if _, _, bGraced, verr := verifier.LoadBundle(bDoc, bSig, 0, opts.AcceptExpiryUntil); verr != nil {
-			return nil, fmt.Errorf("verify trust bundle: %w", verr)
-		} else if bGraced {
+		var bGraced bool
+		if _, bundleSerial, bGraced, err = verifier.LoadBundle(bDoc, bSig, seen.BundleSerial, opts.AcceptExpiryUntil); err != nil {
+			return nil, seenKey, fmt.Errorf("verify trust bundle: %w", err)
+		}
+		if bGraced {
 			res.Graced = append(res.Graced, "trust bundle (grace until "+opts.AcceptExpiryUntil+")")
 		}
 		if revocations != nil {
@@ -239,28 +370,86 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 			// carry-forward would otherwise launder the upstream's revocation.
 			tb, perr := schema.ParseTrustBundle(bytes.NewReader(bDoc))
 			if perr != nil {
-				return nil, fmt.Errorf("parse verified trust bundle: %w", perr)
+				return nil, seenKey, fmt.Errorf("parse verified trust bundle: %w", perr)
 			}
 			for i := range tb.BuilderKeys {
 				if revocations.IsBuilderKeyRevoked(tb.BuilderKeys[i].KeyID) {
-					return nil, fmt.Errorf("refusing to carry trust bundle forward: builder key %q is revoked by the upstream revocation list", tb.BuilderKeys[i].KeyID)
+					return nil, seenKey, fmt.Errorf("refusing to carry trust bundle forward: builder key %q is revoked by the upstream revocation list", tb.BuilderKeys[i].KeyID)
 				}
 			}
 		}
 		if err := os.MkdirAll(stagingRoot, 0o755); err != nil { //nolint:gosec // G301: operator-local staging dir
-			return nil, fmt.Errorf("create staging dir: %w", err)
+			return nil, seenKey, fmt.Errorf("create staging dir: %w", err)
 		}
 		tbPath := filepath.Join(stagingRoot, "trust-bundle.json")
 		if err := os.WriteFile(tbPath, bDoc, 0o644); err != nil { //nolint:gosec // G306: operator-local staging file
-			return nil, fmt.Errorf("stage trust bundle: %w", err)
+			return nil, seenKey, fmt.Errorf("stage trust bundle: %w", err)
 		}
 		res.TrustBundlePath = tbPath
 	case errors.Is(berr, source.ErrMetadataAbsent):
-		// no bundle → nothing to carry forward
+		// serial 0 is schema-forbidden for this optional doc (min 1), so a
+		// stored floor of 0 unambiguously means never-seen.
+		if seen.BundleSerial > 0 {
+			return nil, seenKey, &StrippedError{Document: "trust bundle", LastSeen: seen.BundleSerial}
+		}
 	default:
-		return nil, fmt.Errorf("fetch trust bundle: %w", berr)
+		return nil, seenKey, fmt.Errorf("fetch trust bundle: %w", berr)
 	}
-	return res, nil
+
+	res.SeenKey = seenKey
+	res.Seen = trust.Seen{
+		TrustSerial:      trustSerial,
+		IndexSerial:      indexSerial,
+		BundleSerial:     bundleSerial,
+		RevocationSerial: revSerial,
+	}
+	return res, seenKey, nil
+}
+
+// StoreFloors persists the verified serial floors of a mirror run's pull
+// results under stateHome, one trust.Seen record per PullResult.SeenKey. Call
+// it only after the whole run has succeeded.
+//
+// It is a ratchet. A sources file may list one upstream more than once, so the
+// results are first merged per key by per-document maximum. Each key's current
+// record is then re-read and only raised, never lowered, so a floor stored
+// since this run's Pull loaded its baseline survives. A record that cannot be
+// read or parsed fails the store rather than being overwritten.
+//
+// The re-read-then-store is not atomic on its own. The ratchet holds only
+// while the caller holds the mirror's lock (<stateHome>/lock, taken by
+// runMirrorPull for the whole run); without it two writers can interleave and
+// the later store can lower the earlier one's floor.
+func StoreFloors(stateHome string, results []*PullResult) error {
+	merged := make(map[string]trust.Seen, len(results))
+	order := make([]string, 0, len(results))
+	for _, r := range results {
+		cur, ok := merged[r.SeenKey]
+		if !ok {
+			order = append(order, r.SeenKey)
+		}
+		merged[r.SeenKey] = maxSerials(cur, r.Seen)
+	}
+	for _, key := range order {
+		cur, err := trust.LoadSeen(stateHome, key)
+		if err != nil {
+			return fmt.Errorf("re-read anti-rollback state %s: %w", trust.SeenPath(stateHome, key), err)
+		}
+		if err := trust.StoreSeen(stateHome, key, maxSerials(cur, merged[key])); err != nil {
+			return fmt.Errorf("record anti-rollback state %s: %w", trust.SeenPath(stateHome, key), err)
+		}
+	}
+	return nil
+}
+
+// maxSerials raises base's four document serials to at least those in s,
+// keeping base's other fields.
+func maxSerials(base, s trust.Seen) trust.Seen {
+	base.TrustSerial = max(base.TrustSerial, s.TrustSerial)
+	base.IndexSerial = max(base.IndexSerial, s.IndexSerial)
+	base.BundleSerial = max(base.BundleSerial, s.BundleSerial)
+	base.RevocationSerial = max(base.RevocationSerial, s.RevocationSerial)
+	return base
 }
 
 // WritePrebuiltManifest writes a `repo build`-ready manifest for a single pull.

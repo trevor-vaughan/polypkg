@@ -2,13 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
@@ -926,5 +931,423 @@ func TestMirrorPullResolvesRelativeOutputAndKeyAgainstCwd(t *testing.T) {
 	}
 	if out, kErr := runRepo(t, env, "repo", "key", "show", "--manifest", mPath, "--key-dir", keyDir); kErr != nil {
 		t.Fatalf("repo key show from an unrelated cwd: %v (out=%s)", kErr, out)
+	}
+}
+
+// mirrorPullArgs is the single-source `mirror pull` invocation the anti-rollback
+// tests repeat against one upstream ("example") and one mirror ("local").
+func mirrorPullArgs(upstream, upTrust, outputDir, keyPath, keyDir string) []string {
+	return []string{"mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "example",
+		"--repo-source", "local", "--output-dir", outputDir,
+		"--key", keyPath, "--key-dir", keyDir}
+}
+
+// unrelatedRevocationList is a valid upstream revocation list at serial that
+// revokes only a builder key the upstream does not use, so a pull carrying it
+// succeeds.
+func unrelatedRevocationList(serial uint64) schema.RevocationList {
+	return schema.RevocationList{
+		Schema:             "polypkg.revocation-list/v1",
+		Source:             "example",
+		Serial:             serial,
+		Expires:            "2999-01-01T00:00:00Z",
+		RevokedBuilderKeys: []string{"builder-unrelated"},
+	}
+}
+
+// mirrorUpstreamFloors reads the floors mirror pull recorded for upstream
+// "example" in mirror "local" under keyDir. ok is false when nothing was
+// recorded. More than one record, or a record for any other upstream, fails the
+// test.
+func mirrorUpstreamFloors(t *testing.T, keyDir string) (seen trust.Seen, statePath string, ok bool) {
+	t.Helper()
+	stateHome := filepath.Join(keyDir, "local.mirror-state")
+	names, err := trust.ListSeenSources(stateHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 {
+		return trust.Seen{}, "", false
+	}
+	if len(names) != 1 || !strings.HasPrefix(names[0], "example.") {
+		t.Fatalf("mirror state records = %v, want exactly one example.<keyid>", names)
+	}
+	seen, err = trust.LoadSeen(stateHome, names[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seen, filepath.Join(stateHome, "trust", names[0]+".json"), true
+}
+
+func TestMirrorPullRecordsUpstreamFloorsUnderKeyDir(t *testing.T) {
+	home := sandboxUserEnv(t)
+	upstreamDir, upTrust, upKey := buildUpstreamRepoReturningKey(t)
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(1))
+	keyPath, keyDir := makeLocalKey(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	if out, err := runRepo(t, env, mirrorPullArgs(upstreamDir, upTrust, filepath.Join(t.TempDir(), "mirror"), keyPath, keyDir)...); err != nil {
+		t.Fatalf("mirror pull: %v (out=%s)", err, out)
+	}
+	seen, _, ok := mirrorUpstreamFloors(t, keyDir)
+	if !ok {
+		t.Fatal("a successful pull recorded no upstream floors under --key-dir")
+	}
+	if seen.TrustSerial == 0 || seen.IndexSerial == 0 || seen.RevocationSerial != 1 {
+		t.Fatalf("recorded floors = %+v, want non-zero trust/index and revocation serial 1", seen)
+	}
+	// The mirror's floors must not land in (or collide with) consumer state.
+	if err := filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && filepath.Base(filepath.Dir(p)) == "trust" {
+			t.Errorf("mirror pull wrote trust state under the sandboxed HOME/XDG tree: %s", p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMirrorPullRefusesReplayedRevocationList(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust, upKey := buildUpstreamRepoReturningKey(t)
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(1))
+	oldDoc, err := os.ReadFile(filepath.Join(upstreamDir, "revocations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSig, err := os.ReadFile(filepath.Join(upstreamDir, "revocations.json.minisig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "mirror")
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	args := mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)
+
+	if out, err := runRepo(t, env, args...); err != nil {
+		t.Fatalf("first mirror pull: %v (out=%s)", err, out)
+	}
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(2))
+	if out, err := runRepo(t, env, args...); err != nil {
+		t.Fatalf("second mirror pull: %v (out=%s)", err, out)
+	}
+
+	// Replay the still-unexpired, validly signed serial-1 list.
+	if err := os.WriteFile(filepath.Join(upstreamDir, "revocations.json"), oldDoc, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upstreamDir, "revocations.json.minisig"), oldSig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runRepo(t, env, args...)
+	if err == nil {
+		t.Fatal("mirror pull accepted a replayed older revocation list")
+	}
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T %v, want a *CLIError", err, err)
+	}
+	if want := `upstream "example" refused: revocation list serial 1 is below last-seen 2`; ce.Msg != want {
+		t.Fatalf("Msg = %q, want %q", ce.Msg, want)
+	}
+	if !strings.Contains(ce.Err.Error(), "revocation list rollback: serial 1 is below last-seen 2") {
+		t.Fatalf("Err = %v, want the full refusal kept in the chain", ce.Err)
+	}
+}
+
+func TestMirrorPullRefusesStrippedRevocationList(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust, upKey := buildUpstreamRepoReturningKey(t)
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(1))
+	keyPath, keyDir := makeLocalKey(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	args := mirrorPullArgs(upstreamDir, upTrust, filepath.Join(t.TempDir(), "mirror"), keyPath, keyDir)
+
+	if out, err := runRepo(t, env, args...); err != nil {
+		t.Fatalf("first mirror pull: %v (out=%s)", err, out)
+	}
+	for _, f := range []string{"revocations.json", "revocations.json.minisig"} {
+		if err := os.Remove(filepath.Join(upstreamDir, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := runRepo(t, env, args...)
+	if err == nil {
+		t.Fatal("mirror pull accepted an upstream that stopped serving its revocation list")
+	}
+	// The refusal names the upstream and tells the operator which record to
+	// delete, and where the reset is documented.
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T %v, want a *CLIError", err, err)
+	}
+	if want := `upstream "example" no longer publishes its revocation list (last seen at serial 1)`; ce.Msg != want {
+		t.Fatalf("Msg = %q, want %q", ce.Msg, want)
+	}
+	if !strings.Contains(ce.Err.Error(), "revocation list absent but upstream previously published serial 1") {
+		t.Fatalf("Err = %v, want the full refusal kept in the chain", ce.Err)
+	}
+	_, record, ok := mirrorUpstreamFloors(t, keyDir)
+	if !ok {
+		t.Fatal("fixture invalid: no record after the first pull")
+	}
+	if !strings.Contains(ce.Hint, record) || !strings.Contains(ce.Hint, "Resetting after an upstream is re-created") || !strings.Contains(ce.Hint, "docs/mirroring.md") {
+		t.Fatalf("Hint = %q, want the record path %s and the docs/mirroring.md reset section", ce.Hint, record)
+	}
+}
+
+// A run that fails after mirror.Pull verified newer documents (here: the local
+// signing key will not unlock, which happens in repo.NewBuilder, after every
+// upstream fetch) must leave the stored floors exactly where they were.
+func TestMirrorPullStoresFloorsOnlyOnSuccess(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust, upKey := buildUpstreamRepoReturningKey(t)
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(1))
+	badPw := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "definitely-wrong"}
+
+	// First-ever pull fails: nothing may be recorded.
+	freshKeyPath, freshKeyDir := makeLocalKey(t)
+	if _, err := runRepo(t, badPw, mirrorPullArgs(upstreamDir, upTrust, filepath.Join(t.TempDir(), "m1"), freshKeyPath, freshKeyDir)...); err == nil {
+		t.Fatal("expected the wrong-password pull to fail")
+	}
+	if _, _, ok := mirrorUpstreamFloors(t, freshKeyDir); ok {
+		t.Fatal("a failed first pull recorded upstream floors")
+	}
+
+	// A later pull fails after verifying a newer list: the floor must not move.
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "m2")
+	if out, err := runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}, mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)...); err != nil {
+		t.Fatalf("baseline mirror pull: %v (out=%s)", err, out)
+	}
+	publishUpstreamRevocationList(t, upstreamDir, upKey, unrelatedRevocationList(2))
+	if _, err := runRepo(t, badPw, mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)...); err == nil {
+		t.Fatal("expected the wrong-password pull to fail")
+	}
+	seen, _, ok := mirrorUpstreamFloors(t, keyDir)
+	if !ok || seen.RevocationSerial != 1 {
+		t.Fatalf("floors after a failed run = %+v (recorded=%v), want revocation serial still 1", seen, ok)
+	}
+}
+
+func TestMirrorPullFailsClosedOnCorruptState(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust := buildUpstreamRepo(t)
+	keyPath, keyDir := makeLocalKey(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	args := mirrorPullArgs(upstreamDir, upTrust, filepath.Join(t.TempDir(), "mirror"), keyPath, keyDir)
+
+	if out, err := runRepo(t, env, args...); err != nil {
+		t.Fatalf("first mirror pull: %v (out=%s)", err, out)
+	}
+	_, statePath, ok := mirrorUpstreamFloors(t, keyDir)
+	if !ok {
+		t.Fatal("fixture invalid: first pull recorded no floors")
+	}
+	const garbage = "{not json"
+	if err := os.WriteFile(statePath, []byte(garbage), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runRepo(t, env, args...)
+	if err == nil {
+		t.Fatal("mirror pull treated a corrupt state file as a first pull")
+	}
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T %v, want a *CLIError", err, err)
+	}
+	// Msg is a sentence for the operator, not the JSON parser's complaint.
+	if want := `cannot read the rollback record for upstream "example"`; ce.Msg != want {
+		t.Fatalf("Msg = %q, want %q", ce.Msg, want)
+	}
+	if want := "the record at " + statePath + " is unreadable or damaged; restore it from backup, or delete it to re-baseline"; !strings.HasPrefix(ce.Hint, want) {
+		t.Fatalf("Hint = %q, want it to start %q", ce.Hint, want)
+	}
+	if !strings.Contains(ce.Hint, "docs/mirroring.md") {
+		t.Fatalf("Hint = %q, want it to point at docs/mirroring.md", ce.Hint)
+	}
+	if !strings.Contains(ce.Err.Error(), "parse trust state") {
+		t.Fatalf("Err = %v, want the parse failure kept in the chain", ce.Err)
+	}
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != garbage {
+		t.Fatalf("corrupt state file was rewritten to %q; it must be left for the operator", raw)
+	}
+}
+
+// Under --fresh the build uses a throwaway cache, so repo.NewBuilder never
+// checks --key-dir against --output-dir. The upstream anti-rollback state
+// still goes to --key-dir, so the CLI itself must refuse a key dir inside the
+// published tree, and any overlap between the published tree and the state
+// dir, before any fetch, under --fresh or not.
+func TestMirrorPullRefusesKeyDirInsideOutputDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// layout returns (outputDir, keyDir) under a fresh temp root.
+		layout  func(root string) (outputDir, keyDir string)
+		fresh   bool
+		wantMsg string
+	}{
+		{"key dir under output, fresh", func(r string) (string, string) {
+			return filepath.Join(r, "mirror"), filepath.Join(r, "mirror", "sub")
+		}, true, "is inside --output-dir"},
+		{"key dir under output", func(r string) (string, string) {
+			return filepath.Join(r, "mirror"), filepath.Join(r, "mirror", "sub")
+		}, false, "is inside --output-dir"},
+		{"output is the state dir, fresh", func(r string) (string, string) {
+			return filepath.Join(r, "keys", "local.mirror-state"), filepath.Join(r, "keys")
+		}, true, "overlaps the mirror's anti-rollback state directory"},
+		{"output is the state dir's trust records, fresh", func(r string) (string, string) {
+			return filepath.Join(r, "keys", "local.mirror-state", "trust"), filepath.Join(r, "keys")
+		}, true, "overlaps the mirror's anti-rollback state directory"},
+		{"output under the state dir's trust records", func(r string) (string, string) {
+			return filepath.Join(r, "keys", "local.mirror-state", "trust", "pub"), filepath.Join(r, "keys")
+		}, false, "overlaps the mirror's anti-rollback state directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxUserEnv(t)
+			upstreamDir, upTrust := buildUpstreamRepo(t)
+			keyPath, _ := makeLocalKey(t)
+			outputDir, keyDir := tc.layout(t.TempDir())
+			args := mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)
+			if tc.fresh {
+				args = append(args, "--fresh")
+			}
+			_, err := runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}, args...)
+			if err == nil {
+				t.Fatal("mirror pull accepted an --output-dir that overlaps its private state")
+			}
+			var ce *CLIError
+			if !errors.As(err, &ce) {
+				t.Fatalf("error = %T %v, want a *CLIError", err, err)
+			}
+			if !strings.Contains(ce.Msg, keyDir) || !strings.Contains(ce.Msg, outputDir) || !strings.Contains(ce.Msg, tc.wantMsg) {
+				t.Fatalf("Msg = %q, want %q naming both --key-dir %s and --output-dir %s", ce.Msg, tc.wantMsg, keyDir, outputDir)
+			}
+			if strings.Contains(ce.Msg, " puts ") {
+				t.Fatalf("Msg = %q reads as the key dir putting itself somewhere", ce.Msg)
+			}
+			if ce.Hint == "" {
+				t.Fatal("refusal carries no hint")
+			}
+			if _, statErr := os.Stat(outputDir); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Fatalf("refused pull wrote into --output-dir (stat: %v)", statErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(keyDir, "local.mirror-state")); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Fatalf("refused pull created the state dir (stat: %v)", statErr)
+			}
+		})
+	}
+}
+
+// The key's own directory may hold the published tree (key at /srv/m.key,
+// output /srv/mirror-repo): nothing private is inside the output, and the
+// state dir is a sibling of it.
+func TestMirrorPullAllowsOutputDirBesideTheStateDir(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust := buildUpstreamRepo(t)
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(keyDir, "mirror-repo")
+	if out, err := runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}, mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)...); err != nil {
+		t.Fatalf("mirror pull with --output-dir beside the state dir: %v (out=%s)", err, out)
+	}
+	if _, _, ok := mirrorUpstreamFloors(t, keyDir); !ok {
+		t.Fatal("no floors recorded")
+	}
+}
+
+// Two concurrent pulls into one mirror would race on the output dir and on the
+// floor records, so a pull holds <state-dir>/lock for its whole run and fails
+// fast when another holds it.
+func TestMirrorPullFailsFastWhileAnotherPullHoldsTheLock(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust := buildUpstreamRepo(t)
+	keyPath, keyDir := makeLocalKey(t)
+	outputDir := filepath.Join(t.TempDir(), "mirror")
+	lockPath := filepath.Join(keyDir, "local.mirror-state", "lock")
+	held, err := lock.Acquire(context.Background(), lockPath, lock.Options{TxID: "mirror-pull", Command: "polypkg mirror pull"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Release() }()
+
+	_, err = runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}, mirrorPullArgs(upstreamDir, upTrust, outputDir, keyPath, keyDir)...)
+	if err == nil {
+		t.Fatal("a second mirror pull ran while the first held the mirror lock")
+	}
+	var ce *CLIError
+	if !errors.As(err, &ce) || !strings.Contains(ce.Msg, "another polypkg command is already running") {
+		t.Fatalf("error = %T %v, want the lock-holder CLIError", err, err)
+	}
+	if _, statErr := os.Stat(outputDir); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("a pull refused on the lock wrote into --output-dir (stat: %v)", statErr)
+	}
+	if _, _, ok := mirrorUpstreamFloors(t, keyDir); ok {
+		t.Fatal("a pull refused on the lock recorded floors")
+	}
+}
+
+// An upstream URL with credentials must not leak into a mirror pull error.
+func TestMirrorPullRedactsUpstreamCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	for _, tc := range []struct{ name, url string }{
+		{"refused connection", "https://user:secret@127.0.0.1:9"},
+		{"404", strings.Replace(srv.URL, "http://", "http://user:secret@", 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxUserEnv(t)
+			_, upTrust := buildUpstreamRepo(t)
+			keyPath, keyDir := makeLocalKey(t)
+			out, err := runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"},
+				mirrorPullArgs(tc.url, upTrust, filepath.Join(t.TempDir(), "mirror"), keyPath, keyDir)...)
+			if err == nil {
+				t.Fatal("expected the pull to fail")
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(out, "secret") {
+				t.Fatalf("mirror pull leaked the URL password: err=%q out=%q", err, out)
+			}
+			var ce *CLIError
+			if errors.As(err, &ce) && strings.Contains(ce.Msg, "secret") {
+				t.Fatalf("CLIError.Msg leaked the URL password: %q", ce.Msg)
+			}
+			if !strings.Contains(err.Error(), "://xxxxx@") || strings.Contains(err.Error(), "user") {
+				t.Fatalf("error = %q, want the redacted URL", err)
+			}
+		})
+	}
+}
+
+// The per-upstream stderr notes (freshness grace, narrowing) name the upstream
+// by URL, so they must redact a token in it too.
+func TestMirrorPullRedactsTheUpstreamURLInStderrNotes(t *testing.T) {
+	sandboxUserEnv(t)
+	upstreamDir, upTrust, upKey := buildUpstreamRepoReturningKey(t)
+	expired := unrelatedRevocationList(1)
+	expired.Expires = "2000-01-01T00:00:00Z"
+	publishUpstreamRevocationList(t, upstreamDir, upKey, expired)
+	srv := httptest.NewServer(http.FileServer(http.Dir(upstreamDir)))
+	defer srv.Close()
+	tokenURL := strings.Replace(srv.URL, "http://", "http://ghp_secret@", 1)
+	keyPath, keyDir := makeLocalKey(t)
+
+	args := append(mirrorPullArgs(tokenURL, upTrust, filepath.Join(t.TempDir(), "mirror"), keyPath, keyDir),
+		"--accept-expiry-until", "2999-01-01T00:00:00Z")
+	out, err := runRepo(t, map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}, args...)
+	if err != nil {
+		t.Fatalf("mirror pull: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "SECURITY: upstream http://xxxxx@") {
+		t.Fatalf("output lacks the grace note with the redacted URL:\n%s", out)
+	}
+	if strings.Contains(out, "ghp_secret") {
+		t.Fatalf("output leaks the URL token:\n%s", out)
 	}
 }

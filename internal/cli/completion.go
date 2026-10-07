@@ -57,10 +57,14 @@ func completionOwnership() ([]schema.OwnershipEntry, bool) {
 	return own.Entries, true
 }
 
-// genIDStrings renders generation IDs as strings for --to completion.
+// genIDStrings renders generation IDs as strings for --to completion,
+// omitting incomplete and damaged generations (rollback refuses both).
 func genIDStrings(gens []substrate.GenInfo) []string {
 	out := make([]string, 0, len(gens))
 	for _, g := range gens {
+		if g.Incomplete || g.Damaged {
+			continue
+		}
 		out = append(out, strconv.Itoa(g.ID))
 	}
 	return out

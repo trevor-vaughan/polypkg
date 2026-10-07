@@ -88,16 +88,34 @@ func attestationPolicyCLIError(err error, ape *planner.AttestationPolicyError) *
 	return &CLIError{Msg: err.Error(), Hint: hint, Err: err}
 }
 
-// fetchCLIError frames a source fetch failure for the user. A network failure
-// becomes a single-line unreachable-source message (the http client and the
-// planner together printed the URL three times; here it appears once, with the
-// transport reason reduced to its most specific tail). A status failure keeps
-// the already-clean `fetch <url>: status N` message; only a 404 on a listed
-// artifact gets the mid-update hint.
+// fetchCLIError frames a source fetch failure for the user. A stalled server
+// or a refused https→http redirect keeps the clean `fetch <url>: <reason>`
+// message (the server was reached, so "cannot reach" would mislead) with its
+// own hint. Any other network failure becomes a single-line
+// unreachable-source message (the http client and the planner together
+// printed the URL three times; here it appears once, with the transport reason
+// reduced to its most specific tail). A status failure keeps the already-clean
+// `fetch <url>: status N` message; only a 404 on a listed artifact gets the
+// mid-update hint.
 func fetchCLIError(fe *source.FetchError) *CLIError {
+	var se *source.StallError
+	if errors.As(fe, &se) {
+		return &CLIError{
+			Msg:  fe.Error(),
+			Hint: "the server stopped sending data or is sending too slowly; retry later, and if it persists contact the repository operator",
+			Err:  fe,
+		}
+	}
+	if errors.Is(fe, source.ErrInsecureRedirect) {
+		return &CLIError{
+			Msg:  fe.Error(),
+			Hint: "the server redirected an https request to a non-https URL, which would drop transport security; contact the repository operator",
+			Err:  fe,
+		}
+	}
 	if fe.Network {
 		return &CLIError{
-			Msg:  fmt.Sprintf("cannot reach source %q at %s: %s", fe.Source, fe.BaseURL, networkReason(fe.Reason())),
+			Msg:  fmt.Sprintf("cannot reach source %q at %s: %s", fe.Source, source.RedactURL(fe.BaseURL), networkReason(fe.Reason())),
 			Hint: "check the source url in your profile and your network connection",
 			Err:  fe,
 		}

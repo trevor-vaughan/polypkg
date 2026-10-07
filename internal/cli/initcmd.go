@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/paths"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/source"
 )
 
 func newInitCmd() *cobra.Command {
@@ -24,7 +25,14 @@ func newInitCmd() *cobra.Command {
 		Long: `Create a polypkg profile at the scope's default location.
 
 With --source-url and --trust-root-file the command runs non-interactively.
-Without them (on a TTY) it presents a short wizard.`,
+Without them (on a TTY) it presents a short wizard.
+
+--trust-root-url downloads the key instead (https, file://, or an absolute
+path; plain http is refused). The download is confirmed by
+--trust-root-fingerprint <key id>, the id 'polypkg repo key show' prints on the
+repository host, or else by a prompt on a TTY; without a TTY the fingerprint is
+required. With --trust-root-file the fingerprint is optional and, if given,
+must match.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -37,8 +45,8 @@ Without them (on a TTY) it presents a short wizard.`,
 	addScopeFlags(cmd)
 	cmd.Flags().String("source-url", "", "Repository URL: http(s), file://, or an absolute local path")
 	cmd.Flags().String("trust-root-file", "", "Path to the repository's minisign .pub file (copied into the config dir and pinned by content)")
-	cmd.Flags().String("trust-root-url", "", "Download the trust root from this URL (http(s), file://, or absolute path) and confirm it interactively")
-	cmd.Flags().Bool("trust-root-yes", false, "Trust the downloaded --trust-root-url key without prompting (required when not on a TTY)")
+	cmd.Flags().String("trust-root-url", "", "Download the trust root from this URL (https, file://, or absolute path) and confirm it: by --trust-root-fingerprint, or interactively")
+	cmd.Flags().String("trust-root-fingerprint", "", "Expected key id of the trust root (hex, as printed by 'polypkg repo key show'); required with --trust-root-url when not on a TTY")
 	cmd.Flags().String("source-name", "native", "Source name to record in the profile (must match the name the repository was published under)")
 	return cmd
 }
@@ -51,7 +59,7 @@ func runInit(cmd *cobra.Command, format Format) error {
 	sourceURL, _ := cmd.Flags().GetString("source-url")
 	trustRootFile, _ := cmd.Flags().GetString("trust-root-file")
 	trustRootURL, _ := cmd.Flags().GetString("trust-root-url")
-	assumeYes, _ := cmd.Flags().GetBool("trust-root-yes")
+	fingerprint, _ := cmd.Flags().GetString("trust-root-fingerprint")
 	scope, _ := cmd.Flags().GetString("scope")
 	sourceName, _ := cmd.Flags().GetString("source-name")
 	if err := validateSourceName(sourceName); err != nil {
@@ -68,7 +76,8 @@ func runInit(cmd *cobra.Command, format Format) error {
 
 	flagsProvided := cmd.Flags().Changed("source-url") ||
 		cmd.Flags().Changed("trust-root-file") ||
-		cmd.Flags().Changed("trust-root-url")
+		cmd.Flags().Changed("trust-root-url") ||
+		cmd.Flags().Changed("trust-root-fingerprint")
 
 	// Non-interactive: use flag route when running without a TTY, or when any
 	// flag is present (partial flags are an error caught below).
@@ -99,9 +108,9 @@ func runInit(cmd *cobra.Command, format Format) error {
 		}
 		var absKey string
 		if trustRootURL != "" {
-			absKey, err = acquireTrustRoot(cmd, sourceName, trustRootURL, assumeYes, cfgDir)
+			absKey, err = acquireTrustRoot(cmd, sourceName, trustRootURL, fingerprint, cfgDir)
 		} else {
-			absKey, err = pinTrustRootFile(trustRootFile, cfgDir, sourceName)
+			absKey, err = pinTrustRootFile(trustRootFile, cfgDir, sourceName, fingerprint)
 		}
 		if err != nil {
 			return err
@@ -174,7 +183,7 @@ func runInitWizard(cmd *cobra.Command, format Format, scope string) error {
 		if cerr := checkNoExistingProfile(cfgDir); cerr != nil {
 			return cerr
 		}
-		pinned, verr := pinTrustRootFile(trustRootResolved, cfgDir, "native")
+		pinned, verr := pinTrustRootFile(trustRootResolved, cfgDir, "native", "")
 		if verr != nil {
 			return verr
 		}
@@ -223,17 +232,19 @@ func writeInitProfile(cfgDir, sourceName, sourceURL, trustRootInput, scope strin
 				Err:  err,
 			}
 		}
-		// trust/ uses 0o700: the key store holds sensitive material and its
-		// permissions must be restrictive in both user and system scope.
-		trustDir := filepath.Join(cfgDir, "trust")
-		if err := os.MkdirAll(trustDir, 0o700); err != nil {
-			return "", fmt.Errorf("create trust dir: %w", err)
+		// An anchor left by an earlier init is only reused if it is this key.
+		keyPath := managedTrustRootPath(cfgDir, sourceName)
+		if err := refuseAnchorReplacement(keyPath, sourceName, []byte(trustRootInput)); err != nil {
+			return "", err
 		}
-		keyPath := filepath.Join(trustDir, sourceName+".pub")
-		if err := os.WriteFile(keyPath, []byte(trustRootInput), 0o600); err != nil {
-			return "", fmt.Errorf("write key file: %w", err)
+		// The same hardened write as every other anchor: trust/ is 0o700, and
+		// the key goes through an exclusive temp file and a rename, so nothing
+		// planted at keyPath is followed.
+		written, err := writeManagedTrustRoot(cfgDir, sourceName, []byte(trustRootInput))
+		if err != nil {
+			return "", err
 		}
-		trustRootPath = keyPath
+		trustRootPath = written
 	} else {
 		trustRootPath = trustRootInput
 	}
@@ -309,11 +320,12 @@ func scopeConfigDir(scope string) (string, error) {
 // persist. Accepts http(s) URLs (host required), file:// URLs with an absolute
 // path, and absolute local paths (~ expanded). Bare absolute paths and ~-paths
 // are canonicalized to file:// URIs so the written profile passes the schema's
-// "format: uri" constraint. Relative paths are rejected.
+// "format: uri" constraint. Relative paths are rejected. A rejection echoes
+// the input only through source.RedactURL: it may carry credentials.
 func normalizeSourceURL(s string) (string, error) {
 	if s == "" || strings.ContainsAny(s, " \t\n") {
 		return "", &CLIError{
-			Msg:  fmt.Sprintf("invalid --source-url %q", s),
+			Msg:  fmt.Sprintf("invalid --source-url %q", source.RedactURL(s)),
 			Hint: "use an http(s) URL, a file:// URL, or an absolute local path",
 		}
 	}
@@ -336,7 +348,7 @@ func normalizeSourceURL(s string) (string, error) {
 	u, err := url.Parse(s)
 	if err != nil {
 		return "", &CLIError{
-			Msg:  fmt.Sprintf("invalid --source-url %q", s),
+			Msg:  fmt.Sprintf("invalid --source-url %q", source.RedactURL(s)),
 			Hint: "use an http(s) URL, a file:// URL, or an absolute local path",
 		}
 	}
@@ -344,7 +356,7 @@ func normalizeSourceURL(s string) (string, error) {
 	case "http", "https":
 		if u.Host == "" {
 			return "", &CLIError{
-				Msg:  fmt.Sprintf("invalid --source-url %q (missing host)", s),
+				Msg:  fmt.Sprintf("invalid --source-url %q (missing host)", source.RedactURL(s)),
 				Hint: "e.g. https://repo.example.com/polypkg",
 			}
 		}
@@ -352,20 +364,20 @@ func normalizeSourceURL(s string) (string, error) {
 	case "file":
 		if u.Host != "" && u.Host != "localhost" {
 			return "", &CLIError{
-				Msg:  fmt.Sprintf("invalid file URL %q (must not have a host)", s),
+				Msg:  fmt.Sprintf("invalid file URL %q (must not have a host)", source.RedactURL(s)),
 				Hint: "use file:// with an absolute local path, e.g. file:///srv/polypkg/public",
 			}
 		}
 		if u.Path == "" || !filepath.IsAbs(u.Path) {
 			return "", &CLIError{
-				Msg:  fmt.Sprintf("invalid file URL %q", s),
+				Msg:  fmt.Sprintf("invalid file URL %q", source.RedactURL(s)),
 				Hint: "use file:// with an absolute path, e.g. file:///srv/polypkg/public",
 			}
 		}
 		return s, nil
 	default:
 		return "", &CLIError{
-			Msg:  fmt.Sprintf("invalid --source-url %q", s),
+			Msg:  fmt.Sprintf("invalid --source-url %q", source.RedactURL(s)),
 			Hint: "use an http(s) URL, a file:// URL, or an absolute local path",
 		}
 	}

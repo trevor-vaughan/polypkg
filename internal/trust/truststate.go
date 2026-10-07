@@ -47,7 +47,7 @@ func (v *minisignVerifier) LoadTrust(doc []byte, sig string, lastTrustSerial uin
 		return nil, 0, false, err
 	}
 	if td.Serial < lastTrustSerial {
-		return nil, 0, false, fmt.Errorf("trust document rollback: serial %d is below last-seen %d", td.Serial, lastTrustSerial)
+		return nil, 0, false, &RollbackError{Document: "trust document", Serial: td.Serial, LastSeen: lastTrustSerial}
 	}
 	st, err := newMinisignState(td)
 	if err != nil {

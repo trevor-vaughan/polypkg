@@ -1,19 +1,23 @@
 package action
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"lukechampine.com/blake3"
 )
 
 // Install places a file from src to dest using the specified policy
-// ("symlink", "hardlink", or "copy"). The dest must fall within the package's
+// ("copy", "symlink", or "hardlink"). The dest must fall within the package's
 // scope and src must fall within the package's own extracted files; any path
 // outside either boundary returns an error containing "outside". If policy is
-// empty it defaults to "symlink".
+// empty it defaults to "copy": the generation holds its own regular file, so
+// drift detection hashes what actually runs and an edit to the user-writable
+// extract cache cannot change an installed command.
 func Install(inv Invocation, scope Scope) (Result, error) {
 	src, ok := inv.Params["src"].(string)
 	if !ok || src == "" {
@@ -25,7 +29,7 @@ func Install(inv Invocation, scope Scope) (Result, error) {
 	}
 	policy, _ := inv.Params["policy"].(string)
 	if policy == "" {
-		policy = "symlink"
+		policy = "copy"
 	}
 
 	if !scope.AllowsSource(src) {
@@ -46,6 +50,9 @@ func Install(inv Invocation, scope Scope) (Result, error) {
 	// Remove any existing dest so the operation is idempotent.
 	_ = destRoot.Remove(relDest)
 
+	// copiedHash is the digest of the bytes the copy policy actually wrote;
+	// the link policies record a re-read of the source instead.
+	var copiedHash string
 	switch policy {
 	case "symlink":
 		if err := destRoot.Symlink(src, relDest); err != nil {
@@ -57,7 +64,8 @@ func Install(inv Invocation, scope Scope) (Result, error) {
 			return Result{}, fmt.Errorf("install: %w", err)
 		}
 		defer func() { _ = srcRoot.Close() }()
-		if err := copyConfined(srcRoot, relSrc, destRoot, relDest); err != nil {
+		copiedHash, err = copyConfined(srcRoot, relSrc, destRoot, relDest)
+		if err != nil {
 			return Result{}, fmt.Errorf("install: copy %q -> %q: %w", src, dest, err)
 		}
 	case "hardlink":
@@ -73,9 +81,12 @@ func Install(inv Invocation, scope Scope) (Result, error) {
 		fileType = "symlink"
 	}
 	// Planner mirrors this hash via HashInstallSource (capture.go) — keep in sync.
-	hash, err := hashSource(scope, src)
-	if err != nil {
-		return Result{}, fmt.Errorf("install: hash source: %w", err)
+	hash := copiedHash
+	if hash == "" {
+		var err error
+		if hash, err = hashSource(scope, src); err != nil {
+			return Result{}, fmt.Errorf("install: hash source: %w", err)
+		}
 	}
 	stat, err := capturedStat(destRoot, relDest)
 	if err != nil {
@@ -91,31 +102,38 @@ func Install(inv Invocation, scope Scope) (Result, error) {
 }
 
 // copyConfined copies relSrc within srcRoot to relDest within dstRoot,
-// preserving the source's permission bits. Both ends are confined to their
-// roots, so neither the read nor the write can escape via a symlink. The input
-// Close error is discarded (read-only fd, content fully consumed); the output
-// Close error is captured so a flush failure is not silently lost.
-func copyConfined(srcRoot *os.Root, relSrc string, dstRoot *os.Root, relDest string) (err error) {
+// preserving the source's permission bits, and returns the "blake3:<hex>"
+// digest of the bytes it wrote. Hashing during the copy, rather than
+// re-reading the source afterwards, means the recorded hash always describes
+// the installed file even if the source changes in between. Both ends are
+// confined to their roots, so neither the read nor the write can escape via a
+// symlink. The input Close error is discarded (read-only fd, content fully
+// consumed); the output Close error is captured so a flush failure is not
+// silently lost.
+func copyConfined(srcRoot *os.Root, relSrc string, dstRoot *os.Root, relDest string) (hash string, err error) {
 	in, err := srcRoot.Open(relSrc)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = in.Close() }()
 	info, err := in.Stat()
 	if err != nil {
-		return err
+		return "", err
 	}
 	out, err := dstRoot.OpenFile(relDest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		if cerr := out.Close(); cerr != nil && err == nil {
-			err = cerr
+			hash, err = "", cerr
 		}
 	}()
-	_, err = io.Copy(out, in)
-	return err
+	h := blake3.New(32, nil)
+	if _, err := io.Copy(out, io.TeeReader(in, h)); err != nil {
+		return "", err
+	}
+	return "blake3:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // hardlinkConfined creates a hardlink at relDest (within destRoot) pointing to

@@ -149,3 +149,47 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "applied generation 1"
+
+  - name: mirror pull refuses an upstream that strips a revocation list it published, until the floor is deliberately reset
+    steps:
+      - type: exec
+        # Publish an upstream revocation list (an unrelated builder key, so the
+        # pull itself is not refused), then pull: the mirror records serial 1.
+        script: |
+          set -e
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} repo revoke --builder-key e2e-unrelated-key \
+            --manifest {{.up}}/polypkg-repo.yaml --key-dir {{.upkeys}}
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} mirror pull \
+            --source-url file://{{.up}}/public --trust-root {{.up}}/public/trust_root.pub \
+            --source-name upstream \
+            --repo-source mirror --output-dir {{.mirror}} \
+            --key {{.mkeys}}/mirror.key --key-dir {{.mcache}}
+          ls {{.mcache}}/mirror.mirror-state/trust/
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "upstream."
+      - type: exec
+        script: |
+          rm {{.up}}/public/revocations.json {{.up}}/public/revocations.json.minisig && \
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} mirror pull \
+            --source-url file://{{.up}}/public --trust-root {{.up}}/public/trust_root.pub \
+            --source-name upstream \
+            --repo-source mirror --output-dir {{.mirror}} \
+            --key {{.mkeys}}/mirror.key --key-dir {{.mcache}}
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "no longer publishes its revocation list"
+      - type: exec
+        # The documented deliberate reset (docs/mirroring.md): drop the mirror's
+        # record of this upstream, and the next pull re-baselines.
+        script: |
+          set -e
+          rm -rf {{.mcache}}/mirror.mirror-state
+          POLYPKG_REPO_KEY_PASSWORD=test-pw {{.px}} mirror pull \
+            --source-url file://{{.up}}/public --trust-root {{.up}}/public/trust_root.pub \
+            --source-name upstream \
+            --repo-source mirror --output-dir {{.mirror}} \
+            --key {{.mkeys}}/mirror.key --key-dir {{.mcache}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Pulled 1 package(s)"

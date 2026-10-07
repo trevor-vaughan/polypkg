@@ -253,7 +253,8 @@ func readPendingResets(path string) (*schema.Resets, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return schema.ParseResets(f)
+	rs, err := schema.ParseResets(f)
+	return rs, schema.WithPath(err, path)
 }
 
 // confirmReset prompts on out and reads a y/N answer from in. Only "y"/"Y"

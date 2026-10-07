@@ -56,7 +56,7 @@ var _ = Describe("Sweep", func() {
 		}
 		removed, err := extractstore.Sweep(state, keep, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(Equal(2))
+		Expect(removed).To(Equal([]string{".extract-12345", "gone-2.0.0+1122334455667788"}), "basenames, in directory (sorted) order")
 		Expect(filepath.Join(state, "pkg-extract", "keep-1.0.0+aabbccddeeff0011")).To(BeADirectory())
 		Expect(filepath.Join(state, "pkg-extract", "keep-1.0.0")).To(BeADirectory())
 		Expect(filepath.Join(state, "pkg-extract", "gone-2.0.0+1122334455667788")).NotTo(BeADirectory())
@@ -74,7 +74,8 @@ var _ = Describe("Sweep", func() {
 		}
 		removed, err := extractstore.Sweep(state, keep, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(BeZero())
+		Expect(removed).To(BeEmpty())
+		Expect(removed).NotTo(BeNil(), "an empty sweep marshals as [], not null")
 		Expect(fresh).To(BeADirectory())
 	})
 
@@ -83,13 +84,15 @@ var _ = Describe("Sweep", func() {
 		Expect(os.MkdirAll(fresh, 0o700)).To(Succeed())
 		removed, err := extractstore.Sweep(state, map[string]bool{}, 0)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(Equal(5))
+		Expect(removed).To(HaveLen(5))
+		Expect(removed).To(ContainElement("young-3.0.0+99aabbccddeeff00"))
 		Expect(fresh).NotTo(BeADirectory())
 	})
 
 	It("treats a missing root as empty", func() {
 		removed, err := extractstore.Sweep(GinkgoT().TempDir(), map[string]bool{}, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(BeZero())
+		Expect(removed).To(BeEmpty())
+		Expect(removed).NotTo(BeNil())
 	})
 })

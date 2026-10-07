@@ -58,22 +58,24 @@ func Dir(stateHome, name, version, contentHash string) string {
 }
 
 // Sweep removes every entry under Root(stateHome) whose basename is not in
-// keep AND whose mtime is older than minAge, and returns how many were
-// removed. The age gate keeps a fresh extraction from an in-flight apply
-// alive (see DefaultMinAge); an entry whose mtime cannot be read is skipped
-// (fail-safe: never delete what cannot be proven old). A missing root means
-// nothing was ever extracted. Removal failures are joined and reported after
-// the full pass so one bad dir does not shadow the rest of the sweep.
-func Sweep(stateHome string, keep map[string]bool, minAge time.Duration) (int, error) {
+// keep AND whose mtime is older than minAge, and returns the removed
+// basenames in directory (sorted) order — never nil, so callers can report
+// them as a JSON array. The age gate keeps a fresh extraction from an
+// in-flight apply alive (see DefaultMinAge); an entry whose mtime cannot be
+// read is skipped (fail-safe: never delete what cannot be proven old). A
+// missing root means nothing was ever extracted. Removal failures are joined
+// and reported after the full pass so one bad dir does not shadow the rest of
+// the sweep.
+func Sweep(stateHome string, keep map[string]bool, minAge time.Duration) ([]string, error) {
+	removed := []string{}
 	entries, err := os.ReadDir(Root(stateHome))
 	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
+		return removed, nil
 	}
 	if err != nil {
-		return 0, err
+		return removed, err
 	}
 	cutoff := time.Now().Add(-minAge)
-	removed := 0
 	var errs []error
 	for _, e := range entries {
 		if keep[e.Name()] {
@@ -87,7 +89,7 @@ func Sweep(stateHome string, keep map[string]bool, minAge time.Duration) (int, e
 			errs = append(errs, err)
 			continue
 		}
-		removed++
+		removed = append(removed, e.Name())
 	}
 	return removed, errors.Join(errs...)
 }

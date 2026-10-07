@@ -2,9 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -62,7 +66,7 @@ func runAttestationReport(cmd *cobra.Command, format Format) error {
 	if err != nil {
 		return fmt.Errorf("open substrate: %w", err)
 	}
-	rep, err := buildAttestationReport(sub, scope)
+	rep, err := buildAttestationReport(sub, scope, dataHome)
 	if err != nil {
 		return err
 	}
@@ -75,18 +79,29 @@ func runAttestationReport(cmd *cobra.Command, format Format) error {
 		return nil
 	}
 	emitAttestationReportText(cmd.OutOrStdout(), rep)
+	if skipped := rep.GeneratedFrom.SkippedIncomplete; len(skipped) > 0 {
+		ids := make([]string, len(skipped))
+		for i, id := range skipped {
+			ids[i] = strconv.Itoa(id)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: skipped incomplete generation(s) %s: an interrupted apply left them without a manifest, so they hold no evidence; run `polypkg gc` to remove them\n",
+			strings.Join(ids, ", "))
+	}
 	return nil
 }
 
 // buildAttestationReport aggregates the recorded provenance of every installed
 // package across all retained generations into a deterministic report. A
-// generation whose manifest cannot be read is a hard error (an audit must not
-// silently drop evidence). Ordering: generation ids ascending; packages by
+// generation with no manifest (an interrupted apply) holds no recorded
+// evidence: it is skipped and listed in GeneratedFrom.SkippedIncomplete. Any
+// other manifest failure is a hard error naming the generation (dataHome
+// locates it): a damaged manifest means corruption or tampering, and an audit
+// must not let either hide a generation's evidence. Ordering: generation ids ascending; packages by
 // (name, version, generation, content_hash) — content_hash is the final
 // tiebreaker so a tampered manifest with duplicate name@version entries in one
 // generation still yields a provable total order. Per-package installed_at is the persisted
 // manifest timestamp, so the output is reproducible with no wall-clock input.
-func buildAttestationReport(sub substrate.Substrate, scope string) (*schema.AttestationReport, error) {
+func buildAttestationReport(sub substrate.Substrate, scope, dataHome string) (*schema.AttestationReport, error) {
 	ids, err := sub.GenerationIDs()
 	if err != nil {
 		return nil, fmt.Errorf("list generations: %w", err)
@@ -94,11 +109,18 @@ func buildAttestationReport(sub substrate.Substrate, scope string) (*schema.Atte
 	sort.Ints(ids)
 
 	pkgs := make([]schema.PackageEvidence, 0)
+	included := make([]int, 0, len(ids))
+	var skipped []int
 	for _, id := range ids {
 		m, rerr := sub.ReadManifest(id)
-		if rerr != nil {
-			return nil, fmt.Errorf("read generation %d manifest: %w", id, rerr)
+		if errors.Is(rerr, substrate.ErrIncompleteGeneration) {
+			skipped = append(skipped, id)
+			continue
 		}
+		if rerr != nil {
+			return nil, generationManifestError(id, filepath.Join(dataHome, "generations", strconv.Itoa(id)), "audited", rerr)
+		}
+		included = append(included, id)
 		for i := range m.Entries {
 			e := &m.Entries[i]
 			ev := schema.PackageEvidence{
@@ -134,7 +156,7 @@ func buildAttestationReport(sub substrate.Substrate, scope string) (*schema.Atte
 
 	return &schema.AttestationReport{
 		Schema:        schema.AttestationReportSchemaV1,
-		GeneratedFrom: schema.ReportSource{Scope: scope, Generations: ids},
+		GeneratedFrom: schema.ReportSource{Scope: scope, Generations: included, SkippedIncomplete: skipped},
 		Packages:      pkgs,
 	}, nil
 }

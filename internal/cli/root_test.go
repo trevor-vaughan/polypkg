@@ -193,9 +193,10 @@ var _ = Describe("subcommand grouping", func() {
 			"revoke":        "Revocation:",
 		},
 		"source": {
-			"list":   "Inspect:",
-			"add":    "Modify:",
-			"remove": "Modify:",
+			"list":           "Inspect:",
+			"add":            "Modify:",
+			"remove":         "Modify:",
+			"set-trust-root": "Modify:",
 		},
 		"alternatives": {
 			"list": "Inspect:",

@@ -3,15 +3,19 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/mirror"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/source"
+	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
 func newMirrorCmd() *cobra.Command {
@@ -106,7 +110,13 @@ Every pull writes a polypkg-repo.yaml into --output-dir. That is the manifest
 'repo export-bundle' read, so you can manage the mirror in place — for example
 'polypkg repo revoke --remove-builder-key <id>' to prune the mirror's revocation
 list. It points at the mirror's own published pool, so a 'repo build' against it
-is a no-op; refresh content by re-running 'mirror pull'.`,
+is a no-op; refresh content by re-running 'mirror pull'.
+
+Each successful pull records every upstream's trust-document, index,
+trust-bundle and revocation-list serials under
+<key-dir>/<repo-source>.mirror-state/. A later pull refuses an upstream that
+serves an older one, or that stops serving a trust bundle or revocation list
+it has published before. See docs/mirroring.md before resetting that state.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -132,7 +142,7 @@ is a no-op; refresh content by re-running 'mirror pull'.`,
 	cmd.Flags().String("output-dir", "", "Directory to publish the local repository into, including the polypkg-repo.yaml the repo subcommands manage it through (required)")
 	cmd.Flags().String("key", "", "Path to the local signing key file (required)")
 	cmd.Flags().String("key-kdf", "scrypt", "KDF recorded in the generated manifest's key block (scrypt or pbkdf2)")
-	cmd.Flags().String("key-dir", "", "Directory holding the build cache; must be outside --output-dir (default: the directory containing --key)")
+	cmd.Flags().String("key-dir", "", "Directory holding the build cache and the upstream anti-rollback state; must be outside --output-dir (default: the directory containing --key)")
 	cmd.Flags().String("key-password-file", "", "File containing the signing-key password")
 	cmd.Flags().Duration("valid-for", repo.DefaultValidFor, "Validity window stamped into the local signed index and trust document")
 	cmd.Flags().String("stage-dir", "", "Directory for staging fetched artifacts (default: a temp dir removed on success)")
@@ -156,6 +166,7 @@ type pullInputs struct {
 	keyPath   string
 	keyKDF    string
 	keyDir    string
+	stateHome string // <keyDir>/<repoSrc>.mirror-state: per-upstream anti-rollback floors
 	password  string
 	validFor  time.Duration
 	stageDir  string // resolved staging root
@@ -255,6 +266,33 @@ func resolveMirrorPullInputs(cmd *cobra.Command) (pullInputs, error) {
 	} else if abs, aerr := filepath.Abs(in.keyDir); aerr == nil {
 		in.keyDir = abs
 	}
+	// The upstream anti-rollback floors sit beside the build cache in --key-dir.
+	// That is the mirror's one operator-local location that is stable from run
+	// to run: the staging root is a temp dir by default, and --output-dir is
+	// served to clients and must be empty under --fresh. The per-mirror name
+	// keeps two mirrors that share a key dir apart, and keeps both apart from the
+	// consumer's own $XDG_STATE_HOME/polypkg/trust.
+	in.stateHome = filepath.Join(in.keyDir, in.repoSrc+".mirror-state")
+	// repo.NewBuilder also refuses a --key-dir inside --output-dir, but under
+	// --fresh it is handed a throwaway cache dir instead, so it never sees
+	// --key-dir. The floors still land there, so check here for every run,
+	// before any fetch. A key dir inside the output would publish the build
+	// cache and the floor records. The state dir must not overlap the output in
+	// either direction: inside it, the records are published; around it, the
+	// published tree shares a directory with the records and the lock. An
+	// output dir that is merely inside --key-dir, beside the state dir, is fine.
+	if repo.InsideOutputDir(in.outputDir, in.keyDir) {
+		return pullInputs{}, &CLIError{
+			Msg:  fmt.Sprintf("--key-dir %s is inside --output-dir %s, which would publish the build cache and the upstream anti-rollback state", in.keyDir, in.outputDir),
+			Hint: "move --key-dir outside the published tree (it defaults to the directory containing --key)",
+		}
+	}
+	if repo.InsideOutputDir(in.outputDir, in.stateHome) || repo.InsideOutputDir(in.stateHome, in.outputDir) {
+		return pullInputs{}, &CLIError{
+			Msg:  fmt.Sprintf("--output-dir %s overlaps the mirror's anti-rollback state directory %s (under --key-dir %s)", in.outputDir, in.stateHome, in.keyDir),
+			Hint: fmt.Sprintf("publish to a directory outside %s", in.stateHome),
+		}
+	}
 	validFor, err := resolveValidFor(cmd)
 	if err != nil {
 		return pullInputs{}, err
@@ -277,6 +315,17 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 	if err != nil {
 		return err
 	}
+
+	// One pull per mirror at a time, for the whole run. Two concurrent pulls
+	// would race on --output-dir and could each store a floor from the same
+	// pre-run baseline. Fail fast, as install and remove do.
+	lockPath := filepath.Join(in.stateHome, "lock")
+	l, err := lock.Acquire(context.Background(), lockPath,
+		lock.Options{TxID: "mirror-pull", Command: "polypkg mirror pull"})
+	if err != nil {
+		return lockError(lockPath, err)
+	}
+	defer func() { _ = l.Release() }()
 
 	// Resolve the staging root: an explicit --stage-dir persists (for debugging);
 	// otherwise a temp dir removed on every return path (success or error).
@@ -320,16 +369,17 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 			URL: s.URL, TrustRoot: s.TrustRoot, SourceType: s.SourceType,
 			SourceName: s.SourceName, AcceptExpiryUntil: s.AcceptExpiryUntil,
 			Selectors: s.Packages, AllVersions: s.AllVersions,
-			StageDir: filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
+			StageDir:  filepath.Join(stageRoot, fmt.Sprintf("src-%d", i)),
+			StateHome: in.stateHome,
 		})
 		if perr != nil {
-			return perr
+			return mirrorPullError(perr)
 		}
 		for _, note := range res.Graced {
-			fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: upstream %s accepted under freshness grace: %s\n", s.URL, note)
+			fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: upstream %s accepted under freshness grace: %s\n", source.RedactURL(s.URL), note)
 		}
 		for _, note := range res.Narrowed {
-			fmt.Fprintf(cmd.ErrOrStderr(), "note: upstream %s: %s\n", s.URL, note)
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: upstream %s: %s\n", source.RedactURL(s.URL), note)
 		}
 		results = append(results, res)
 	}
@@ -399,6 +449,13 @@ func runMirrorPull(cmd *cobra.Command, format Format) error {
 		bundlePath = exp.BundlePath
 	}
 
+	// Advance the upstream anti-rollback floors only now. Every step that can
+	// fail (fetch, re-publish, revocation propagation, manifest, export) has
+	// succeeded, so a floor never moves past what this mirror actually published.
+	if err := mirror.StoreFloors(in.stateHome, results); err != nil {
+		return err
+	}
+
 	pkgCount := 0
 	for _, r := range results {
 		pkgCount += len(r.Packages)
@@ -464,4 +521,45 @@ func stripFresh(stageRoot string, results []*mirror.PullResult) error {
 		}
 	}
 	return nil
+}
+
+// resetSection is where docs/mirroring.md explains resetting a floor record.
+const resetSection = `docs/mirroring.md, "Resetting after an upstream is re-created"`
+
+// mirrorPullError frames a refusal that comes from an upstream's anti-rollback
+// record as a CLIError: one sentence naming the upstream, and a hint naming the
+// record file. The full chain stays in Err. Any other error passes through.
+func mirrorPullError(perr error) error {
+	var ue *mirror.UpstreamError
+	if !errors.As(perr, &ue) || ue.FloorRecord == "" {
+		return perr
+	}
+	// A rollback or a stripped document looks exactly like a replay attack, so
+	// the hint asks for confirmation before the record is deleted.
+	replayHint := fmt.Sprintf("this upstream's anti-rollback record is %s; only if the upstream's operator confirms it was legitimately re-created, "+
+		"delete that file and pull again (%s)", ue.FloorRecord, resetSection)
+	var rb *trust.RollbackError
+	var se *mirror.StrippedError
+	var fe *mirror.FloorStateError
+	switch {
+	case errors.As(perr, &rb):
+		return &CLIError{
+			Msg:  fmt.Sprintf("upstream %q refused: %s serial %d is below last-seen %d", ue.SourceName, rb.Document, rb.Serial, rb.LastSeen),
+			Hint: replayHint,
+			Err:  perr,
+		}
+	case errors.As(perr, &se):
+		return &CLIError{
+			Msg:  fmt.Sprintf("upstream %q no longer publishes its %s (last seen at serial %d)", ue.SourceName, se.Document, se.LastSeen),
+			Hint: replayHint,
+			Err:  perr,
+		}
+	case errors.As(perr, &fe):
+		return &CLIError{
+			Msg:  fmt.Sprintf("cannot read the rollback record for upstream %q", ue.SourceName),
+			Hint: fmt.Sprintf("the record at %s is unreadable or damaged; restore it from backup, or delete it to re-baseline (see %s)", fe.Path, resetSection),
+			Err:  perr,
+		}
+	}
+	return perr
 }

@@ -7,13 +7,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
+	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
 // bytesReader wraps a byte slice as an io.Reader for the schema parsers.
@@ -117,7 +121,7 @@ func TestPullVerifiesTrustAndIndex(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
@@ -135,7 +139,7 @@ func TestPullRefusesWrongTrustRoot(t *testing.T) {
 	_, otherRoot := buildLocalRepo(t) // a different repo's trust root
 	stage := t.TempDir()
 	if _, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: otherRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: otherRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 	}); err == nil {
 		t.Fatal("expected refusal: index signed by a different key than the pinned trust root")
 	}
@@ -246,7 +250,7 @@ func corruptOnePoolArtifact(t *testing.T, outDir string) {
 func TestPullStagesArtifactAndAttestations(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithCarried(t)
 	stage := t.TempDir()
-	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -274,7 +278,7 @@ func TestPullRefusesTamperedArtifact(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t)
 	corruptOnePoolArtifact(t, outDir)
 	stage := t.TempDir()
-	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage}); err == nil {
+	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()}); err == nil {
 		t.Fatal("expected refusal: tampered upstream artifact bytes")
 	}
 }
@@ -292,7 +296,7 @@ func TestPullRefusesTamperedAttestation(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage := t.TempDir()
-	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage}); err == nil {
+	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()}); err == nil {
 		t.Fatal("expected refusal: tampered upstream attestation blob")
 	}
 }
@@ -426,7 +430,7 @@ func TestPullAcceptsBothVersionsOfSameName(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoTwoVersions(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 		Selectors: []string{"hello@1.0.0", "hello@1.1.0"},
 	})
 	if err != nil {
@@ -452,7 +456,7 @@ func TestPullEmptySelectorsNarrowsMultiVersionUpstream(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoTwoVersions(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
@@ -475,7 +479,7 @@ func TestPullBareNameNarrowsMultiVersionUpstream(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoTwoVersions(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 		Selectors: []string{"hello"},
 	})
 	if err != nil {
@@ -497,7 +501,7 @@ func TestPullExplicitVersionProducesNoNarrowingNote(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoTwoVersions(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 		Selectors: []string{"hello@1.0.0"},
 	})
 	if err != nil {
@@ -515,7 +519,7 @@ func TestPullSingleVersionUpstreamProducesNoNarrowingNote(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
@@ -605,7 +609,7 @@ func TestPullAllVersionsSingleVersionUpstreamNoNotes(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 		AllVersions: true,
 	})
 	if err != nil {
@@ -630,7 +634,7 @@ func TestPullAllVersionsStagesBothVersionsAndManifestCarriesBoth(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoTwoVersions(t)
 	stage := t.TempDir()
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage,
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
 		AllVersions: true,
 	})
 	if err != nil {
@@ -807,7 +811,7 @@ func TestPullRefusesRevokedAttestation(t *testing.T) {
 		RevokedAttestations: []string{revoked},
 	})
 	stage := t.TempDir()
-	_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err == nil {
 		t.Fatal("expected refusal: pull must not launder an upstream-revoked attestation")
 	}
@@ -826,7 +830,7 @@ func TestPullRefusesRevokedBuilderKey(t *testing.T) {
 		RevokedBuilderKeys: []string{"aa11bb22cc33dd44"},
 	})
 	stage := t.TempDir()
-	_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err == nil {
 		t.Fatal("expected refusal: pull must not carry forward an upstream-revoked builder key")
 	}
@@ -847,7 +851,7 @@ func TestPullSurfacesUpstreamRevokedSets(t *testing.T) {
 		RevokedBuilderKeys:  []string{"builder-unrelated"},
 	})
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(),
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
@@ -863,7 +867,7 @@ func TestPullSurfacesUpstreamRevokedSets(t *testing.T) {
 func TestPullSurfacesEmptyRevokedSetsWithNoUpstreamList(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithCarried(t)
 	res, err := Pull(context.Background(), PullOptions{
-		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(),
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
@@ -876,7 +880,7 @@ func TestPullSurfacesEmptyRevokedSetsWithNoUpstreamList(t *testing.T) {
 func TestPullProceedsWithNoRevocationList(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithCarried(t) // publishes no revocations.json
 	stage := t.TempDir()
-	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage}); err != nil {
+	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()}); err != nil {
 		t.Fatalf("pull with no revocation list published should succeed (absence is fine): %v", err)
 	}
 }
@@ -884,7 +888,7 @@ func TestPullProceedsWithNoRevocationList(t *testing.T) {
 func TestPullStagesTrustBundleWhenPresent(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithBundle(t)
 	stage := t.TempDir()
-	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -903,7 +907,7 @@ func TestPullStagesTrustBundleWhenPresent(t *testing.T) {
 func TestPullNoTrustBundleWhenAbsent(t *testing.T) {
 	outDir, trustRoot := buildLocalRepo(t) // publishes none
 	stage := t.TempDir()
-	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -1001,7 +1005,7 @@ func buildLocalRepoCarriedWithBundle(t *testing.T) (outDir, trustRoot string) {
 func TestPullRoundTripsThroughRepoBuild(t *testing.T) {
 	outDir, trustRoot := buildLocalRepoCarriedWithBundle(t)
 	stage := t.TempDir()
-	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -1066,7 +1070,7 @@ func TestPullRoundTripsThroughRepoBuild(t *testing.T) {
 func TestWritePrebuiltManifestIsBuildable(t *testing.T) {
 	outDir, trustRoot, _ := buildLocalRepoWithCarried(t)
 	stage := t.TempDir()
-	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage})
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1143,14 +1147,14 @@ func TestWritePrebuiltManifestMultiKeepsAllVersionsFromOneSource(t *testing.T) {
 	stage := t.TempDir()
 	r1, err := Pull(context.Background(), PullOptions{
 		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
-		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"),
+		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r2, err := Pull(context.Background(), PullOptions{
 		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
-		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"),
+		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1340,14 +1344,14 @@ func TestPullTwoVersionsSurviveMirrorRepublish(t *testing.T) {
 	stage := t.TempDir()
 	r1, err := Pull(context.Background(), PullOptions{
 		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
-		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"),
+		Selectors: []string{"hello@1.0.0"}, StageDir: filepath.Join(stage, "v1"), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r2, err := Pull(context.Background(), PullOptions{
 		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream",
-		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"),
+		Selectors: []string{"hello@1.1.0"}, StageDir: filepath.Join(stage, "v2"), StateHome: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1416,5 +1420,357 @@ func TestPullTwoVersionsSurviveMirrorRepublish(t *testing.T) {
 	}
 	if pk[0].Prebuilt.Artifact == pk[1].Prebuilt.Artifact {
 		t.Fatalf("both hello entries point at the same artifact %q; distinct versions must publish distinct pool blobs", pk[0].Prebuilt.Artifact)
+	}
+}
+
+// buildUpstreamWithAllDocs builds an upstream that publishes all four signed
+// documents a pull verifies: the trust document and index (serials minted by
+// repo build), a trust bundle at serial 1 (buildLocalRepoWithBundle), and a
+// revocation list at serial 3. The revocation list revokes only a builder key
+// that the bundle does not carry, so the pull itself succeeds.
+func buildUpstreamWithAllDocs(t *testing.T) (outDir, trustRoot string) {
+	t.Helper()
+	outDir, trustRoot, kp := buildLocalRepoWithBundle(t)
+	publishRevocationList(t, outDir, kp, schema.RevocationList{
+		Schema:             "polypkg.revocation-list/v1",
+		Source:             "upstream",
+		Serial:             3,
+		Expires:            "2099-01-01T00:00:00Z",
+		RevokedBuilderKeys: []string{"builder-unrelated"},
+	})
+	return outDir, trustRoot
+}
+
+func TestPullReportsVerifiedFloorsWithoutPersistingThem(t *testing.T) {
+	outDir, trustRoot := buildUpstreamWithAllDocs(t)
+	stateHome := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome,
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if !strings.HasPrefix(res.SeenKey, "upstream.") || len(res.SeenKey) != len("upstream.")+16 {
+		t.Fatalf("SeenKey = %q, want upstream.<16-hex trust-root key id>", res.SeenKey)
+	}
+	if res.Seen.TrustSerial == 0 || res.Seen.IndexSerial == 0 {
+		t.Fatalf("trust/index serials not reported: %+v", res.Seen)
+	}
+	if res.Seen.BundleSerial != 1 || res.Seen.RevocationSerial != 3 {
+		t.Fatalf("bundle/revocation serials = %d/%d, want 1/3", res.Seen.BundleSerial, res.Seen.RevocationSerial)
+	}
+	names, err := trust.ListSeenSources(stateHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("Pull persisted floors itself (%v); only the caller may, after the whole mirror run succeeds", names)
+	}
+}
+
+func TestPullKeysStateBySourceNameAndTrustRoot(t *testing.T) {
+	outA, rootA := buildLocalRepo(t)
+	outB, rootB := buildLocalRepo(t) // same signed source name "upstream", different key
+	a, err := Pull(context.Background(), PullOptions{URL: outA, TrustRoot: rootA, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Pull(context.Background(), PullOptions{URL: outB, TrustRoot: rootB, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SeenKey == b.SeenKey {
+		t.Fatalf("two upstreams with different trust roots share state key %q; one would wedge the other's floors", a.SeenKey)
+	}
+}
+
+func TestPullAcceptsUnchangedUpstreamAtStoredFloors(t *testing.T) {
+	outDir, trustRoot := buildUpstreamWithAllDocs(t)
+	stateHome := t.TempDir()
+	first, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	if err := trust.StoreSeen(stateHome, first.SeenKey, first.Seen); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err != nil {
+		t.Fatalf("re-pull of an unchanged upstream at its own floors must succeed: %v", err)
+	}
+	if second.Seen.TrustSerial != first.Seen.TrustSerial || second.Seen.IndexSerial != first.Seen.IndexSerial ||
+		second.Seen.BundleSerial != first.Seen.BundleSerial || second.Seen.RevocationSerial != first.Seen.RevocationSerial {
+		t.Fatalf("floors changed on an unchanged upstream: first %+v, second %+v", first.Seen, second.Seen)
+	}
+}
+
+// A stored floor one above the served serial is exactly the state a mirror is in
+// when an attacker replays an older (still unexpired) signed document.
+func TestPullRefusesRollbackOfEachSignedDocument(t *testing.T) {
+	outDir, trustRoot := buildUpstreamWithAllDocs(t)
+	baseline, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir()})
+	if err != nil {
+		t.Fatalf("baseline pull: %v", err)
+	}
+	cur := baseline.Seen
+	for _, tc := range []struct {
+		doc  string
+		bump func(s *trust.Seen)
+		want string
+	}{
+		{"trust document", func(s *trust.Seen) { s.TrustSerial++ },
+			fmt.Sprintf("trust document rollback: serial %d is below last-seen %d", cur.TrustSerial, cur.TrustSerial+1)},
+		{"index", func(s *trust.Seen) { s.IndexSerial++ },
+			fmt.Sprintf("index rollback: serial %d is below last-seen %d", cur.IndexSerial, cur.IndexSerial+1)},
+		{"trust bundle", func(s *trust.Seen) { s.BundleSerial++ },
+			"trust bundle rollback: serial 1 is below last-seen 2"},
+		{"revocation list", func(s *trust.Seen) { s.RevocationSerial++ },
+			"revocation list rollback: serial 3 is below last-seen 4"},
+	} {
+		t.Run(tc.doc, func(t *testing.T) {
+			stateHome := t.TempDir()
+			floor := cur
+			tc.bump(&floor)
+			if err := trust.StoreSeen(stateHome, baseline.SeenKey, floor); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+			if err == nil {
+				t.Fatalf("expected the %s to be refused as a rollback (stored floor above the served serial)", tc.doc)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.want)
+			}
+			assertFloorRefusal(t, err, trust.SeenPath(stateHome, baseline.SeenKey))
+		})
+	}
+}
+
+func TestPullRefusesStrippedDocumentAfterSeen(t *testing.T) {
+	for _, tc := range []struct {
+		doc   string
+		files []string
+		want  string
+	}{
+		{"revocation list", []string{"revocations.json", "revocations.json.minisig"},
+			"revocation list absent but upstream previously published serial 3 (rollback)"},
+		{"trust bundle", []string{"trust-bundle.json", "trust-bundle.json.minisig"},
+			"trust bundle absent but upstream previously published serial 1 (rollback)"},
+	} {
+		t.Run(tc.doc, func(t *testing.T) {
+			outDir, trustRoot := buildUpstreamWithAllDocs(t)
+			stateHome := t.TempDir()
+			first, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+			if err != nil {
+				t.Fatalf("first pull: %v", err)
+			}
+			if err := trust.StoreSeen(stateHome, first.SeenKey, first.Seen); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tc.files {
+				if err := os.Remove(filepath.Join(outDir, f)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+			if err == nil {
+				t.Fatalf("expected refusal: the upstream stopped serving a %s it had published", tc.doc)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.want)
+			}
+			assertFloorRefusal(t, err, trust.SeenPath(stateHome, first.SeenKey))
+		})
+	}
+}
+
+// Absence is only a strip once a serial above zero has been seen: an upstream
+// that has never published a revocation list stays pullable, on the first pull
+// and on every later one.
+func TestPullAllowsRevocationListNeverSeen(t *testing.T) {
+	outDir, trustRoot, _ := buildLocalRepoWithBundle(t) // publishes no revocations.json
+	stateHome := t.TempDir()
+	first, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err != nil {
+		t.Fatalf("first pull with no revocation list must succeed: %v", err)
+	}
+	if first.Seen.RevocationSerial != 0 {
+		t.Fatalf("RevocationSerial = %d with no list published, want 0", first.Seen.RevocationSerial)
+	}
+	if err := trust.StoreSeen(stateHome, first.SeenKey, first.Seen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome}); err != nil {
+		t.Fatalf("later pull of an upstream that never published a revocation list must succeed: %v", err)
+	}
+}
+
+func TestPullFailsClosedOnCorruptState(t *testing.T) {
+	outDir, trustRoot := buildUpstreamWithAllDocs(t)
+	stateHome := t.TempDir()
+	first, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	statePath := filepath.Join(stateHome, "trust", first.SeenKey+".json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const garbage = "{not json"
+	if err := os.WriteFile(statePath, []byte(garbage), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err == nil {
+		t.Fatal("a corrupt state file must fail closed, never reset the floors to zero")
+	}
+	if !strings.Contains(err.Error(), "parse trust state") {
+		t.Fatalf("error = %v, want it to name the unparseable trust state", err)
+	}
+	if !strings.Contains(err.Error(), statePath) {
+		t.Fatalf("error = %v, want it to name the record path %s", err, statePath)
+	}
+	assertFloorRefusal(t, err, statePath)
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != garbage {
+		t.Fatalf("corrupt state file was rewritten to %q; it must be left for the operator", raw)
+	}
+}
+
+func TestPullRequiresStateHome(t *testing.T) {
+	outDir, trustRoot := buildLocalRepo(t)
+	_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("a pull with no state directory must be refused, not run without anti-rollback floors")
+	}
+	if !strings.Contains(err.Error(), "anti-rollback") {
+		t.Fatalf("error = %v, want it to name the missing anti-rollback state", err)
+	}
+}
+
+func TestPullRejectsUnsafeSourceName(t *testing.T) {
+	outDir, trustRoot := buildLocalRepo(t)
+	for _, name := range []string{"", "../escape", "a/b", "up.stream"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: name, StageDir: t.TempDir(), StateHome: t.TempDir()})
+			if err == nil {
+				t.Fatalf("source name %q keys a state file and must be refused", name)
+			}
+			if !strings.Contains(err.Error(), "not a valid slug") {
+				t.Fatalf("error = %v, want the slug refusal", err)
+			}
+		})
+	}
+}
+
+func TestStoreFloorsTakesPerDocumentMaximum(t *testing.T) {
+	stateHome := t.TempDir()
+	if err := StoreFloors(stateHome, []*PullResult{
+		{SeenKey: "up.aaaaaaaaaaaaaaaa", Seen: trust.Seen{TrustSerial: 5, IndexSerial: 2, RevocationSerial: 7}},
+		{SeenKey: "other.bbbbbbbbbbbbbbbb", Seen: trust.Seen{TrustSerial: 1, IndexSerial: 1}},
+		{SeenKey: "up.aaaaaaaaaaaaaaaa", Seen: trust.Seen{TrustSerial: 4, IndexSerial: 3, BundleSerial: 1, RevocationSerial: 6}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]trust.Seen{
+		"up.aaaaaaaaaaaaaaaa":    {TrustSerial: 5, IndexSerial: 3, BundleSerial: 1, RevocationSerial: 7},
+		"other.bbbbbbbbbbbbbbbb": {TrustSerial: 1, IndexSerial: 1},
+	} {
+		got, err := trust.LoadSeen(stateHome, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s floors = %+v, want %+v", key, got, want)
+		}
+	}
+}
+
+// A concurrent writer (or an earlier, longer run) may have stored a higher
+// floor after this run's Pull loaded its baseline. Storing must never lower it.
+func TestStoreFloorsNeverLowersAFloorStoredSincePull(t *testing.T) {
+	outDir, trustRoot := buildUpstreamWithAllDocs(t)
+	stateHome := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: stateHome})
+	if err != nil {
+		t.Fatal(err)
+	}
+	higher := res.Seen
+	higher.TrustSerial += 10
+	higher.RevocationSerial += 10
+	if err := trust.StoreSeen(stateHome, res.SeenKey, higher); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreFloors(stateHome, []*PullResult{res}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := trust.LoadSeen(stateHome, res.SeenKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, higher) {
+		t.Fatalf("floors after StoreFloors = %+v, want the higher stored %+v kept", got, higher)
+	}
+}
+
+func TestStoreFloorsFailsClosedOnCorruptRecord(t *testing.T) {
+	stateHome := t.TempDir()
+	path := filepath.Join(stateHome, "trust", "up.aaaaaaaaaaaaaaaa.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := StoreFloors(stateHome, []*PullResult{{SeenKey: "up.aaaaaaaaaaaaaaaa", Seen: trust.Seen{TrustSerial: 1}}})
+	if err == nil || !strings.Contains(err.Error(), "parse trust state") {
+		t.Fatalf("error = %v, want the corrupt record refused rather than overwritten", err)
+	}
+}
+
+// assertFloorRefusal checks that err is Pull's UpstreamError for upstream
+// "upstream", names it in its text, and points at the anti-rollback record.
+func assertFloorRefusal(t *testing.T, err error, record string) {
+	t.Helper()
+	var ue *UpstreamError
+	if !errors.As(err, &ue) {
+		t.Fatalf("error = %T %v, want an *UpstreamError", err, err)
+	}
+	if !strings.HasPrefix(err.Error(), `upstream "upstream" (`) {
+		t.Fatalf("error = %q, want it to start by naming the upstream", err)
+	}
+	if ue.FloorRecord != record {
+		t.Fatalf("FloorRecord = %q, want %q", ue.FloorRecord, record)
+	}
+}
+
+// Every Pull error names the upstream, with any credentials in the URL it
+// adds redacted. (The wrapped transport error is source.FetchError's own
+// text.) Only a refusal that comes from the anti-rollback record points at
+// that record.
+func TestPullErrorsNameTheUpstreamWithARedactedURL(t *testing.T) {
+	_, trustRoot := buildLocalRepo(t)
+	_, err := Pull(context.Background(), PullOptions{
+		URL: "https://mirror-user:hunter2@127.0.0.1:1/repo", TrustRoot: trustRoot,
+		SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("expected the fetch from a closed port to fail")
+	}
+	var ue *UpstreamError
+	if !errors.As(err, &ue) {
+		t.Fatalf("error = %T %v, want an *UpstreamError", err, err)
+	}
+	if !strings.HasPrefix(err.Error(), `upstream "upstream" (https://xxxxx@127.0.0.1:1/repo): `) {
+		t.Fatalf("error = %q, want the upstream name and redacted URL first", err)
+	}
+	if strings.Contains(ue.URL, "hunter2") {
+		t.Fatalf("UpstreamError.URL leaks the password: %q", ue.URL)
+	}
+	if ue.FloorRecord != "" {
+		t.Fatalf("FloorRecord = %q for a fetch failure, want empty", ue.FloorRecord)
 	}
 }

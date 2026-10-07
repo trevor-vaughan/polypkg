@@ -15,6 +15,15 @@ type Generation struct {
 	CommittedAt time.Time
 	Pinned      bool
 	IsCurrent   bool
+	// Incomplete marks a generation an interrupted apply left without a
+	// manifest. It can never be activated, so neither the count nor the age
+	// rule retains it.
+	Incomplete bool
+	// Damaged marks a generation whose manifest exists but does not parse or
+	// names another generation: corruption or tampering, not a crash. It is
+	// evidence, so it is always kept for an operator to inspect, and it never
+	// takes a count slot because it can never be activated.
+	Damaged bool
 }
 
 // Decision is the algorithm's output: two disjoint, sorted lists, plus the
@@ -36,8 +45,11 @@ type Decision struct {
 // A generation is kept iff ANY of:
 //   - IsCurrent is true
 //   - Pinned is true
-//   - It is one of the policy.Count most-recent generations by ID
-//   - now.Sub(CommittedAt) <= policy.Age  (zero CommittedAt counts as now)
+//   - Damaged is true (only an operator removes it)
+//   - It is complete and one of the policy.Count most-recent complete
+//     generations by ID
+//   - It is complete and now.Sub(CommittedAt) <= policy.Age (zero
+//     CommittedAt counts as now)
 //
 // The function is pure: it never sorts gens in place and never inspects the
 // filesystem. Callers handle removal themselves via the substrate.
@@ -45,9 +57,11 @@ func Decide(gens []Generation, policy Policy, now time.Time) Decision {
 	if len(gens) == 0 {
 		return Decision{Keep: []int{}, Remove: []int{}}
 	}
-	idsByRecency := make([]int, len(gens))
-	for i, g := range gens {
-		idsByRecency[i] = g.ID
+	idsByRecency := make([]int, 0, len(gens))
+	for _, g := range gens {
+		if !g.Incomplete && !g.Damaged {
+			idsByRecency = append(idsByRecency, g.ID)
+		}
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(idsByRecency)))
 	topN := map[int]bool{}
@@ -59,8 +73,8 @@ func Decide(gens []Generation, policy Policy, now time.Time) Decision {
 	remove := []int{}
 	keptByAge := []int{}
 	for _, g := range gens {
-		survives := g.IsCurrent || g.Pinned || topN[g.ID]
-		if !survives && policy.Age > 0 {
+		survives := g.IsCurrent || g.Pinned || g.Damaged || topN[g.ID]
+		if !survives && !g.Incomplete && policy.Age > 0 {
 			if g.CommittedAt.IsZero() || now.Sub(g.CommittedAt) <= policy.Age {
 				survives = true
 				keptByAge = append(keptByAge, g.ID)

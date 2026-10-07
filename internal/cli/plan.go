@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/alternatives"
-	"github.com/trevor-vaughan/polypkg/internal/audit"
 	"github.com/trevor-vaughan/polypkg/internal/cli/style"
 	"github.com/trevor-vaughan/polypkg/internal/conflict"
 	"github.com/trevor-vaughan/polypkg/internal/diff"
@@ -99,14 +98,15 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 		return err
 	}
 
-	// Pre-create only the state home at the scope dir mode, before the audit
-	// writer AND lock.Acquire — both MkdirAll stateHome at 0o700, and for system
-	// scope stateHome IS the substrate root, so whichever ran first would pin an
-	// un-traversable root (MkdirAll never chmods an existing dir). plan keeps its
-	// data side read-only — it must not create the substrate data root as an empty
-	// dir (the read-only-open invariant); for system scope stateHome is the root,
-	// so it still gets the traversable mode here, while the data tree (generations)
-	// is created later only by apply.
+	// Pre-create only the state home at the scope dir mode, before
+	// lock.Acquire — it MkdirAlls stateHome at 0o700, and for system scope
+	// stateHome IS the substrate root, so it would pin an un-traversable root
+	// (MkdirAll never chmods an existing dir). plan keeps its data side
+	// read-only — it must not create the substrate data root as an empty dir
+	// (the read-only-open invariant); for system scope stateHome is the root, so
+	// it still gets the traversable mode here, while the data tree (generations)
+	// is created later only by apply. plan never opens the audit log: it is a
+	// preview, and apply records every decision when it takes effect.
 	if err := os.MkdirAll(stateHome, scopeDirMode(scope)); err != nil {
 		return fmt.Errorf("create state home: %w", err)
 	}
@@ -122,12 +122,6 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 	if err != nil {
 		return fmt.Errorf("open substrate: %w", err)
 	}
-
-	w, err := audit.NewFileWriter(filepath.Join(stateHome, "audit.log"))
-	if err != nil {
-		return fmt.Errorf("open audit writer: %w", err)
-	}
-	defer func() { _ = w.Close() }()
 
 	// planner.Plan advances the per-source trust serial; acquire the apply
 	// lock to serialize against concurrent applies.
@@ -156,11 +150,10 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 		}
 	}
 	res, err := planner.Plan(ctx, p, planner.Options{
-		DataHome:    dataHome,
-		StateHome:   stateHome,
-		AuditWriter: w,
-		Scope:       scope,
-		WeakPolicy:  weakPolicy,
+		DataHome:   dataHome,
+		StateHome:  stateHome,
+		Scope:      scope,
+		WeakPolicy: weakPolicy,
 		StarlarkLimits: starlarkeval.Limits{
 			MaxSteps:       rl.MaxSteps,
 			Timeout:        time.Duration(rl.Timeout),

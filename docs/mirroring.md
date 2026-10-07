@@ -212,16 +212,87 @@ except a `name@version` entry, which still selects only that version.
 Parsing enforces only `url` and `trust_root`; `source_name`, `source_type`,
 `accept_expiry_until`, `packages`, and `all_versions` are all optional to the
 schema. In practice, set `source_name` on every entry anyway. It has to match
-the source name bound into that upstream's signed trust document, and an
-omitted one is not caught at parse time — the pull starts, fetches, and fails
-part-way through against the empty name:
+the source name bound into that upstream's signed trust document, and it names
+that upstream's rollback record, so it must be a slug (`^[a-zA-Z0-9_-]+$`). An
+omitted one is not caught at parse time, but the pull refuses that entry
+before fetching anything from it. Every error from a pull is prefixed with the
+upstream's name and its URL (credentials redacted):
 
 ```
-error: verify trust document: trust document is for source "upstream-a", expected ""
+error: upstream "" (https://a.example/repo): upstream source name: source name "" is not a valid slug (must match ^[a-zA-Z0-9_-]+$)
 ```
 
 The same package name may not be pulled from more than one source, because a
 repository keys packages by name.
+
+## Upstream rollback protection
+
+A mirror re-signs whatever it pulls, so its clients can only be as current as
+the mirror. Every successful `mirror pull` records the serial of each signed
+upstream document it accepted: the trust document, the index, the trust
+bundle, and the revocation list. A later pull refuses an upstream that:
+
+- serves any of those documents at a lower serial than the recorded one (a
+  replayed older snapshot, even one that has not expired yet), or
+- stops serving a trust bundle or revocation list that the mirror has already
+  seen. A stripped revocation list would otherwise drop the upstream's
+  revocations from your mirror.
+
+```
+error: upstream "upstream" refused: revocation list serial 1 is below last-seen 2
+hint: this upstream's anti-rollback record is /srv/mirror-keys/mymirror.mirror-state/trust/upstream.<key id>.json; only if the upstream's operator confirms it was legitimately re-created, delete that file and pull again (docs/mirroring.md, "Resetting after an upstream is re-created")
+
+error: upstream "upstream" no longer publishes its revocation list (last seen at serial 2)
+```
+
+Each refusal names the upstream it came from, and the hint names that
+upstream's record file.
+
+An upstream that has never published a trust bundle or revocation list is
+fine. Absence is refused only after one has been seen. The serials are written
+only after the whole pull succeeds (re-publish, revocation propagation, and any
+`-o` export included), so a failed run never advances them.
+
+The records live beside the build cache, one file per upstream:
+
+```
+<key-dir>/<repo-source>.mirror-state/trust/<source-name>.<trust-root key id>.json
+```
+
+With the example above that is `./mirror-keys/mymirror.mirror-state/trust/`.
+`--key-dir` defaults to the directory holding `--key`. Keep pulling with the
+same `--key-dir` and `--repo-source`. A pull pointed at a different pair finds
+no records, and it accepts whatever the upstream serves, as a first pull
+does. Each record is keyed by the upstream's pinned trust-root key as well as
+its name, so pinning a new trust root starts a new record. A record that
+cannot be read or parsed stops the pull. It is never treated as empty.
+A pull holds `<repo-source>.mirror-state/lock` for its whole run, so a second
+pull into the same mirror started meanwhile is refused at once. Because the
+records must never be served, a pull refuses before fetching anything if
+`--key-dir` is inside `--output-dir`, or if `--output-dir` is inside the
+`.mirror-state` directory or contains it.
+
+### Resetting after an upstream is re-created
+
+If an upstream is legitimately rebuilt from scratch under the same trust-root
+key, its serials restart and every pull is refused as a rollback. That
+refusal is exactly what a replay attack looks like, so first confirm with the
+upstream's operator that the rebuild is genuine. Then delete that upstream's
+record and pull again:
+
+```bash
+ls ./mirror-keys/mymirror.mirror-state/trust/
+#   upstream.<key id>.json
+rm ./mirror-keys/mymirror.mirror-state/trust/upstream.<key id>.json
+polypkg mirror pull ...   # same flags as before
+```
+
+The next pull re-baselines on whatever the upstream currently serves, with no
+rollback check. That is the same trust-on-first-use exposure as the mirror's
+very first pull. A damaged record stops the pull with `cannot read the
+rollback record for upstream "…"`, and the hint names its file. Restore it
+from a backup if you have one; otherwise delete it the same way, accepting the
+same re-baseline.
 
 ## Re-anchoring on your key alone (`--fresh`)
 

@@ -80,3 +80,18 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "Hello, world!"
+
+  - name: the scaffold's install places a private copy, not a link into the extract cache
+    steps:
+      - type: exec
+        # The scaffold omits `policy`, so this checks the install default: a
+        # regular, executable file inside the generation.
+        script: |
+          f={{.chome}}/data/polypkg/active/hello/bin/hello
+          if [ -L "$f" ]; then echo INSTALLED_IS_LINK; exit 1; fi
+          [ -f "$f" ] || { echo INSTALLED_MISSING; exit 1; }
+          [ -x "$f" ] || { echo INSTALLED_NOT_EXECUTABLE; exit 1; }
+          echo INSTALLED_IS_COPY
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "INSTALLED_IS_COPY"

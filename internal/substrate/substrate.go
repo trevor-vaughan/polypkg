@@ -14,6 +14,25 @@ import (
 // errors.Is.
 var ErrNoCurrentGeneration = errors.New("no current generation")
 
+// ErrIncompleteGeneration is returned by ReadManifest, Rollback and
+// PinGeneration when a generation has no manifest: an apply was interrupted
+// (SIGKILL, power loss) before committing it, so its content is partial and it
+// must never become active.
+var ErrIncompleteGeneration = errors.New("generation is incomplete")
+
+// ErrDamagedGeneration is returned by ReadManifest, Rollback and PinGeneration
+// when a generation's manifest exists but does not parse, fails its schema, or
+// records another generation's id. A crash cannot cause this: CommitGeneration
+// renames the manifest into place only after fsyncing it, so a crash leaves it
+// missing, never torn. Damage means corruption or tampering, so the generation
+// is kept as evidence and never activated.
+//
+// A manifest that exists but cannot be read at all (EACCES, EIO) is reported
+// with neither sentinel: that says nothing about the generation. Neither is a
+// manifest a newer polypkg wrote (a *schema.NewerSchemaError): it is not
+// corrupt, this binary just cannot judge it.
+var ErrDamagedGeneration = errors.New("generation manifest is damaged")
+
 // GenInfo summarises one retained generation for the GC algorithm and for
 // any UX that wants to list generations (e.g., a future status display).
 // BytesOnDisk is best-effort: a walk error during sizing degrades to 0
@@ -25,6 +44,15 @@ type GenInfo struct {
 	PinnedReason string
 	IsCurrent    bool
 	BytesOnDisk  int64
+	// Incomplete marks a generation with no manifest. CommitGeneration writes
+	// the manifest last, after everything else is durable, so such a
+	// generation was left by an interrupted apply: it is never a rollback
+	// target and GC removes it unless it is current or pinned.
+	Incomplete bool
+	// Damaged marks a generation whose manifest exists but is unusable (see
+	// ErrDamagedGeneration). It is never a rollback target and GC never
+	// removes it: an operator inspects it and deletes it by hand.
+	Damaged bool
 }
 
 // Substrate is the interface that each substrate backend implements.
@@ -32,6 +60,11 @@ type Substrate interface {
 	BeginTransaction(txID string) error
 	CommitGeneration(txID string, m *schema.Manifest, own *schema.Ownership, configBases map[string][]byte) (int, error)
 	Abort(txID string) error
+	// Rollback atomically switches the active generation to genID. It returns
+	// an error wrapping fs.ErrNotExist when the generation does not exist,
+	// ErrIncompleteGeneration when its manifest is missing, and
+	// ErrDamagedGeneration when its manifest is unusable. Other manifest read
+	// errors are returned without any of those wraps.
 	Rollback(genID int) error
 	CurrentGeneration() (int, error)
 	// StagingRoot returns the directory where actions should place files for the
@@ -50,7 +83,10 @@ type Substrate interface {
 	ListGenerations() ([]GenInfo, error)
 	// ReadManifest parses generations/<id>/manifest.json. Callers use it to
 	// derive cross-generation reference sets (e.g. which extract-store dirs
-	// retained generations still depend on).
+	// retained generations still depend on). The error wraps
+	// ErrIncompleteGeneration when the manifest is missing and
+	// ErrDamagedGeneration when it is present but unusable; any other read
+	// failure is returned without either wrap.
 	ReadManifest(id int) (*schema.Manifest, error)
 	// GenerationIDs enumerates the IDs of every retained generation from the
 	// directory names under generations/ — without parsing any manifest or
@@ -60,7 +96,8 @@ type Substrate interface {
 	// sort. A never-applied store (no generations/ dir) enumerates as empty.
 	GenerationIDs() ([]int, error)
 	// PinGeneration writes pin.json next to manifest.json. Errors if the
-	// generation does not exist or is already pinned. PinnedAt is set to
+	// generation does not exist, is incomplete or damaged (wrapping
+	// ErrIncompleteGeneration or ErrDamagedGeneration), or is already pinned. PinnedAt is set to
 	// time.Now().UTC(); PinnedBy is taken from $USER or "unknown".
 	PinGeneration(id int, reason string) error
 	// UnpinGeneration removes the per-generation pin.json. Idempotent: a

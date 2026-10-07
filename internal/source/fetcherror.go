@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"regexp"
+	"strings"
 )
 
 // repoMetaNames are the fixed repository-metadata filenames a native source
@@ -39,12 +41,51 @@ type FetchError struct {
 	Err     error  // underlying cause, with any *url.Error unwrapped
 }
 
+// Error names the fetched URL with any credentials redacted (RedactURL). The
+// raw URL stays in the URL field for callers that need it.
 func (e *FetchError) Error() string {
 	if e.Status != 0 {
-		return fmt.Sprintf("fetch %s: status %d", e.URL, e.Status)
+		return fmt.Sprintf("fetch %s: status %d", RedactURL(e.URL), e.Status)
 	}
-	return fmt.Sprintf("fetch %s: %s", e.URL, e.Reason())
+	return fmt.Sprintf("fetch %s: %s", RedactURL(e.URL), e.Reason())
 }
+
+// RedactURL renders rawURL for an error message or log line without its
+// credentials. It is the one redaction rule for URLs in polypkg's messages.
+//
+//   - A parseable URL with userinfo has the whole userinfo replaced by
+//     "xxxxx", user name included: a user-name-only token
+//     (https://TOKEN@host/) is as secret as a password, and url.Redacted
+//     masks only the password.
+//   - A URL that does not parse, or that parses without a host but still
+//     contains '@' (an opaque "user:secret@host" or a scheme-less
+//     "TOKEN@host/path"), fails closed: only its scheme survives, as
+//     "<scheme>://<redacted>", or "<redacted>" when it has none. Nothing that
+//     could be userinfo is guessed at and kept.
+//
+// Accepted limitation: an unescaped '/' inside the userinfo
+// (https://ab/cd@host/r) parses with host "ab" and path "/cd@host/r", so it
+// is rendered as is. No HTTP client would send "ab/cd" as a credential, since
+// it reads that URL the same way, so nothing secret is exposed in practice.
+func RedactURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		if u.User != nil {
+			u.User = url.User("xxxxx")
+			return u.String()
+		}
+		if u.Host != "" || !strings.Contains(rawURL, "@") {
+			return u.String()
+		}
+	}
+	if i := strings.Index(rawURL, "://"); i > 0 && urlScheme.MatchString(rawURL[:i]) {
+		return rawURL[:i] + "://<redacted>"
+	}
+	return "<redacted>"
+}
+
+// urlScheme is RFC 3986's scheme production.
+var urlScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*$`)
 
 func (e *FetchError) Unwrap() error { return e.Err }
 

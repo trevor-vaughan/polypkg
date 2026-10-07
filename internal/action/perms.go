@@ -2,6 +2,7 @@ package action
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -23,6 +24,20 @@ func Perms(inv Invocation, scope Scope) (Result, error) {
 		return Result{Action: "perms", Path: path, Outcome: "error"},
 			fmt.Errorf("perms: group is not supported in M1 (mode only)")
 	}
+	modeStr, _ := inv.Params["mode"].(string)
+	var mode os.FileMode
+	if modeStr != "" {
+		m, err := parseMode(modeStr)
+		if err != nil {
+			return Result{Action: "perms", Path: path, Outcome: "error"},
+				fmt.Errorf("perms: parse mode: %w", err)
+		}
+		if err := checkModeBits(m); err != nil {
+			return Result{Action: "perms", Path: path, Outcome: "error"},
+				fmt.Errorf("perms: refusing mode %q for %s: %w", modeStr, path, err)
+		}
+		mode = m
+	}
 	root, rel, err := scope.openScope(path)
 	if err != nil {
 		return Result{Action: "perms", Path: path, Outcome: "error"}, fmt.Errorf("perms: %w", err)
@@ -32,12 +47,7 @@ func Perms(inv Invocation, scope Scope) (Result, error) {
 		return Result{Action: "perms", Path: path, Outcome: "error"},
 			fmt.Errorf("perms: stat: %w", err)
 	}
-	if modeStr, ok := inv.Params["mode"].(string); ok && modeStr != "" {
-		mode, err := parseMode(modeStr)
-		if err != nil {
-			return Result{Action: "perms", Path: path, Outcome: "error"},
-				fmt.Errorf("perms: parse mode: %w", err)
-		}
+	if modeStr != "" {
 		if err := root.Chmod(rel, mode); err != nil {
 			return Result{Action: "perms", Path: path, Outcome: "error"},
 				fmt.Errorf("perms: chmod: %w", err)

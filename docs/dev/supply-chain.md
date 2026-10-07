@@ -451,10 +451,19 @@ two escape hatches exist for the two ways that strictness can bite:
 - *Consumer — re-pin a legitimately re-created repository.* If a repository is
   rebuilt from scratch (new `trust_root`, all serials reset), the consumer's
   stored floors will correctly — but unhelpfully — read that as a downgrade and
-  refuse every document. Run `polypkg source remove <name>` followed by
-  `polypkg source add <name> ...`: `remove` clears the persisted floors
-  (`trust.ForgetSeen`, in `internal/trust/seen.go`) for that source name, and
-  the subsequent `add` re-establishes trust-on-first-use against the new root.
+  refuse every document. Run `polypkg source set-trust-root <name> ...`
+  (`internal/cli/sourcetrustroot.go`): once the operator confirms the new key id
+  (`--trust-root-fingerprint` or a TTY prompt), it rewrites the managed anchor
+  `<config>/trust/<name>.pub`, repoints the profile entry if it named another
+  path, and clears the persisted floors (`trust.ForgetSeen`, in
+  `internal/trust/seen.go`) for that source name, so the next fetch
+  re-establishes trust-on-first-use against the new root. Floors are cleared
+  when the key actually changes, or for an unchanged key with `--reset-state`
+  (which requires `--trust-root-fingerprint`), and a failure to clear them
+  fails the command. `source remove` clears them too, so a later `source add` of the same
+  name also starts clean; `source add` itself refuses a name already in the
+  profile, and `init`/`source add` never overwrite a different key already at
+  the managed path.
 
 **The source name is a path component.** Every floor above is stored per source,
 in a file `trust.seenPath` (`internal/trust/seen.go`) names by joining
@@ -798,25 +807,54 @@ verifies, what it deliberately does not, and how it stages.
     forwarding the revocation, would *launder* it across the hop. Downstream
     clients follow the mirror's revocation list, not the upstream's, and would
     never learn.
-  - The list is fetched with no anti-rollback floor (like the index and
-    bundle), so a pull always enforces the source's current revocation state.
+  - The list is checked against the upstream's persisted revocation-serial
+    floor, and once one has been seen its absence is refused. A replayed older
+    list or a 404 therefore cannot shrink the set the pull enforces and
+    propagates.
 - **One version per package name** (`resolvePullSelection`). Empty selectors
   pick the latest semver of every package in the index; a bare `name` picks
   the latest of that name; `name@version` pins an exact version. Selecting
   the same name twice among explicit selectors is refused — a `repo build`
   manifest keys `packages:` by name, so the staged output can only hold one
   version per name regardless.
-- **No anti-rollback serial floor.**
-  - Unlike `apply`/`plan`, which track a `last_serial` per source and refuse a
-    metadata regression, `Pull` has no persisted floor: it is a stateless
-    one-shot fetch of whatever the upstream index currently publishes.
-  - This is intentional, not an oversight — the anti-rollback property is
-    re-established downstream: the republished repo mints its own fresh serial at
-    `repo build`, and that repo's own consumers re-verify (and track their own
-    floor) against it normally at install.
-  - A pull that happens to fetch a stale-but-validly-signed upstream snapshot
-    produces a staleness problem for the mirror operator to notice, not a
-    security bypass for a downstream consumer.
+- **Per-upstream anti-rollback floors** (`Pull`, `runMirrorPull`).
+  - `Pull` loads a `trust.Seen` record with `trust.LoadSeen`, the consumer's
+    format, from `PullOptions.StateHome`. The record is keyed
+    `<SourceName>.<hex trust-root key id>`, because two upstreams may sign under
+    the same source name and serials are monotonic per signer. `Pull` passes
+    the stored serials to `LoadTrust`, `LoadRevocationList` and `LoadBundle`,
+    compares the index's signed serial claim itself, and refuses a missing trust
+    bundle or revocation list once its stored serial is above zero.
+  - `Pull` never writes the record. It returns `PullResult.SeenKey` and
+    `PullResult.Seen`. `runMirrorPull` calls `mirror.StoreFloors` only after
+    build, revocation propagation, the management manifest and any export
+    have succeeded. `StoreFloors` merges the results per document by maximum
+    (a sources file may name one upstream twice), then re-reads each record
+    and only raises it, so a floor stored since the run's `Pull` is never
+    lowered.
+  - `StateHome` is `<key-dir>/<repo-source>.mirror-state`. The staging root
+    is a temp dir deleted after a default run, and `--output-dir` is served and
+    must be empty under `--fresh`, so `--key-dir` (already home to
+    `<repo-source>.build-cache.json`) is the stable, operator-local choice. It
+    cannot collide with consumer state under `$XDG_STATE_HOME/polypkg/trust`.
+  - An unreadable or unparseable record fails the pull, and is never treated
+    as a zero baseline. An empty `StateHome` is refused.
+  - Every `Pull` error is a `*mirror.UpstreamError` naming the upstream and
+    its redacted URL. Its `FloorRecord` is set (to `trust.SeenPath`) only for
+    a refusal that comes from the record: a `*trust.RollbackError` from any
+    of the four documents, a `*mirror.StrippedError` (bundle or revocation
+    list gone), or a `*mirror.FloorStateError` (unusable record).
+    `mirrorPullError` turns each into a `CLIError` with a one-sentence `Msg`
+    naming the upstream, keeps the full chain in `Err`, and gives a hint
+    naming the record and the reset section of `docs/mirroring.md`.
+  - `runMirrorPull` holds `internal/lock` on `<StateHome>/lock` (fail-fast,
+    reported through `lockError`) for the whole run, so two pulls into one
+    mirror can neither race on `--output-dir` nor store floors from the same
+    pre-run baseline.
+  - Why: the mirror's clients follow the mirror's revocation list, not the
+    upstream's, and track floors only against the mirror's own serials. Without
+    an upstream floor, a replayed or stripped upstream document would launder
+    revocations across the hop with nothing downstream able to notice.
 - **`stagedPkgDir` traversal guard.** Index package names are map keys with no
   charset constraint in `index-v2.json`, so a signature-valid index from a
   compromised source could in principle name a package `../../evil`.

@@ -350,7 +350,7 @@ func validateProfileSchema(instanceJSON []byte, name string) error {
 		if errors.As(err, &ve) {
 			return profileFriendlyError(name, ve)
 		}
-		return err
+		return WithPath(err, name)
 	}
 	return nil
 }

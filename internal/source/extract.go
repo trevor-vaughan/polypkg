@@ -98,10 +98,18 @@ func extractTar(r io.Reader, dest string, lim extractLimits) error {
 		}
 
 		switch hdr.Typeflag {
+		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink:
+			if err := refuseSymlinkRoute(root, name); err != nil {
+				return err
+			}
+		}
+
+		switch hdr.Typeflag {
 		case tar.TypeDir:
 			// Mask to the 12 POSIX mode bits: strips non-permission bits and
-			// keeps the int64->FileMode conversion provably in range.
-			if err := root.MkdirAll(name, os.FileMode(hdr.Mode&0o7777)); err != nil {
+			// keeps the int64->FileMode conversion provably in range. The owner
+			// always keeps rwx, so the tree stays readable and verifiable.
+			if err := root.MkdirAll(name, os.FileMode(hdr.Mode&0o7777)|0o700); err != nil {
 				return fmt.Errorf("mkdir %s: %w", hdr.Name, err)
 			}
 		case tar.TypeReg:
@@ -116,7 +124,8 @@ func extractTar(r io.Reader, dest string, lim extractLimits) error {
 					return fmt.Errorf("mkdir parent of %s: %w", hdr.Name, err)
 				}
 			}
-			f, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode&0o7777))
+			// The owner always keeps read, so the file stays verifiable.
+			f, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode&0o7777)|0o400)
 			if err != nil {
 				return fmt.Errorf("create %s: %w", hdr.Name, err)
 			}
@@ -152,6 +161,29 @@ func extractTar(r io.Reader, dest string, lim extractLimits) error {
 			}
 		default:
 			// Skip unsupported entry types (devices, fifos, hardlinks, etc.)
+		}
+	}
+	return nil
+}
+
+// refuseSymlinkRoute rejects an entry whose path runs through, or lands on, a
+// symlink already in the tree. os.Root keeps such a write inside dest, but it
+// still lands somewhere other than the entry's own path (a/b written through
+// a -> c becomes c/b), so the extracted tree would not be the one the archive
+// lists, and no legitimate package needs it. Only symlinks the archive itself
+// created can be found here: dest starts empty.
+func refuseSymlinkRoute(root *os.Root, name string) error {
+	parts := strings.Split(name, string(filepath.Separator))
+	for i := range parts {
+		p := filepath.Join(parts[:i+1]...)
+		info, err := root.Lstat(p)
+		if err != nil {
+			// Nothing exists here, so nothing deeper does either; any other
+			// error is left for the entry's own operation to report.
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("extraction rejected: %s passes through or replaces the symlink %s", name, p)
 		}
 	}
 	return nil

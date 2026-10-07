@@ -546,3 +546,93 @@ func TestEmitStatusJSONOmitsAppliedAtWhenCurrentGenerationIsUnknown(t *testing.T
 		t.Fatalf("applied_at emitted for an unknown current generation: %s", buf.String())
 	}
 }
+
+// A generation an interrupted apply left without a manifest must be
+// visibly flagged, not shown as an ordinary row with an unknown age.
+func TestEmitStatusJSONMarksIncompleteGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Incomplete: true},
+		{ID: 12, CommittedAt: time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	got, err := schema.ParseStatusResult(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("status JSON fails its own schema: %v (body=%s)", err, buf.String())
+	}
+	if len(got.Retained) != 2 || !got.Retained[0].Incomplete || got.Retained[1].Incomplete {
+		t.Fatalf("want only generation 11 marked incomplete; got %+v", got.Retained)
+	}
+}
+
+func TestEmitStatusTextMarksIncompleteGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Incomplete: true},
+		{ID: 12, CommittedAt: time.Now().Add(-time.Hour), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	emitStatusText(&buf, 1, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil, nil)
+	var row11, row12 string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "11":
+			row11 = line
+		case len(fields) > 1 && fields[1] == "12":
+			row12 = line
+		}
+	}
+	if !strings.Contains(row11, "[incomplete]") {
+		t.Fatalf("generation 11 row not marked incomplete: %q (output=%q)", row11, buf.String())
+	}
+	if row12 == "" || strings.Contains(row12, "[incomplete]") {
+		t.Fatalf("generation 12 row missing or wrongly marked: %q (output=%q)", row12, buf.String())
+	}
+}
+
+// A damaged generation (manifest present but unusable) is kept as evidence
+// and must be visibly distinct from an incomplete one.
+func TestEmitStatusJSONMarksDamagedGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Damaged: true},
+		{ID: 12, CommittedAt: time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	got, err := schema.ParseStatusResult(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("status JSON fails its own schema: %v (body=%s)", err, buf.String())
+	}
+	if len(got.Retained) != 2 || !got.Retained[0].Damaged || got.Retained[0].Incomplete || got.Retained[1].Damaged {
+		t.Fatalf("want only generation 11 marked damaged; got %+v", got.Retained)
+	}
+}
+
+func TestEmitStatusTextMarksDamagedGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Damaged: true},
+		{ID: 12, CommittedAt: time.Now().Add(-time.Hour), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	emitStatusText(&buf, 1, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil, nil)
+	var row11, row12 string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "11":
+			row11 = line
+		case len(fields) > 1 && fields[1] == "12":
+			row12 = line
+		}
+	}
+	if !strings.Contains(row11, "[damaged]") || strings.Contains(row11, "[incomplete]") {
+		t.Fatalf("generation 11 row not marked damaged: %q (output=%q)", row11, buf.String())
+	}
+	if row12 == "" || strings.Contains(row12, "[damaged]") {
+		t.Fatalf("generation 12 row missing or wrongly marked: %q (output=%q)", row12, buf.String())
+	}
+}

@@ -130,7 +130,7 @@ func projectExpected(actionName string, params map[string]any, pkgRoot string) (
 	switch actionName {
 	case "install":
 		fileType := "regular"
-		if policy == "" || policy == "symlink" {
+		if policy == "symlink" {
 			fileType = "symlink"
 		}
 		hash, err := action.HashInstallSource(pkgRoot, target)

@@ -28,7 +28,7 @@ Keep the trust root somewhere the repository operator cannot write. A `.pub` lef
 <details>
 <summary><b>Drift: something edits the managed tree, and <code>apply</code> puts it back</b></summary>
 
-The profile stays the source of truth. `status -vv` names every managed path that no longer matches the generation that placed it; re-applying reconciles them.
+The profile stays the source of truth. `status -vv` names every managed path that no longer matches the generation that placed it (removed, retyped, or with different content, link target, or declared mode), and re-applying reconciles them under the default drift policy. Installed files are copies by default, so editing polypkg's extract cache cannot change an installed command, and the next `apply` restores a modified cache from the signed artifact.
 
 ![polypkg drift detection: deleting a managed file makes status -vv report drift 1 entries with detail "hello/bin/hello (install): missing [policy: notify_heal]", then apply creates generation 2 and status returns to drift 0 entries](docs/demo/drift.gif)
 
@@ -163,7 +163,12 @@ is refused at fetch time (with a hint naming the correct source).
 | repository URL | `--source-url` | `--url` |
 | trust root from a local file | `--trust-root-file` | `--trust-root` |
 | trust root downloaded from a URL | `--trust-root-url` | `--trust-root-url` |
-| skip the confirmation prompt | `--trust-root-yes` | `--trust-root-yes` |
+| confirm a downloaded key without a prompt | `--trust-root-fingerprint <key id>` | `--trust-root-fingerprint <key id>` |
+
+`--trust-root-url` accepts `https://`, `file://`, or an absolute path; plain `http://` is refused. A downloaded key
+must be confirmed before it is pinned: on a TTY, by answering a prompt that shows its key id; without one, by passing
+`--trust-root-fingerprint <key id>`, where the key id is the one the publisher sees with `polypkg repo key show`. A
+mismatch is refused. With a local file the fingerprint is optional and is checked when given.
 
 **`polypkg search <name>`**: queries your configured source for packages whose name contains `<name>`. Marks packages that are already installed.
 
@@ -175,7 +180,7 @@ is refused at fetch time (with a hint naming the correct source).
 
 **`polypkg remove <name>`**: removes the package from the profile and applies. All-or-nothing: if any named package is absent from the profile, nothing is written.
 
-**`polypkg rollback`**: activates the previous generation. Pass `--to <N>` to target a specific generation number.
+**`polypkg rollback`**: activates the newest complete generation older than the current one. A generation that an interrupted `apply` left incomplete is skipped, and `--to <N>` refuses one. `polypkg status -v` marks such generations `[incomplete]`, and `gc` removes them. A generation whose manifest is damaged (possible corruption or tampering) is also skipped and refused; `status -v` marks it `[damaged]`, and `gc` keeps it for you to inspect. Pass `--to <N>` to target a specific generation number. Like `apply`, `rollback` fails immediately if another polypkg command holds the lock.
 
 ## Commands
 
@@ -209,8 +214,8 @@ is refused at fetch time (with a hint naming the correct source).
 | Command | Description |
 |---|---|
 | `apply` | Apply the profile, creating a new generation. |
-| `rollback` | Activate the previous generation (or `--to <N>` for a specific one). |
-| `gc` | Remove old generations from the store (`--count`, `--age` flags); also sweeps extracted-package dirs no retained generation references. |
+| `rollback` | Activate the newest complete generation before the current one (or `--to <N>` for a specific one). |
+| `gc` | Remove old generations from the store (`--count`, `--age` flags) and any an interrupted apply left incomplete; never removes a damaged one, but names it; then prunes the extracted packages and cached downloads that no retained or pinned generation records (an attestation a generation does not record may be pruned and is re-downloaded and re-verified when next needed), listing what it removed (the first 20 of each kind in text; all of them under `--format json`). |
 | `generation pin` / `generation unpin` | Exempt or un-exempt a generation from automatic GC. |
 
 ### Integration
@@ -356,11 +361,37 @@ Two variables are read incidentally, and neither changes where anything lands:
 `PATH`, so `link` can warn when the bridge directory is not on it, and `USER`,
 recorded as the actor in `generation pin` metadata (`unknown` when unset).
 
+### What the state dir holds
+
+The [state dir](#xdg-directories) (`/var/lib/polypkg` for system scope) holds
+working data beside the generations in the data dir. None of it grows without
+bound:
+
+| Path | Contents | How it is bounded |
+|---|---|---|
+| `cache/<source>/` | Packages and attestations downloaded from an HTTP source, plus that source's latest signed metadata (`index.json`, `trust.json`, …). A local `file://` source is read in place and never cached. | Every successful `apply` deletes cached downloads that no retained or pinned generation records, once they are more than an hour old. In user scope `gc` does the same on demand; `gc` has no system-scope mode, so in system scope only the sweep after `apply` bounds it. A generation records its package and only the attestations its manifest names, so other attestations may be pruned; the next `plan` downloads and verifies them again. The signed metadata is overwritten by each fetch. |
+| `pkg-extract/` | Unpacked packages that generations are installed from (and, under `policy: symlink`, link into). | The same sweep, by the same rule. |
+| `audit.log` | One JSON object per line for each apply, `gc`, pin, and recorded security decision. `plan` never writes to it. | At 10 MiB it is renamed to `audit.log.1`; `audit.log.2` and `audit.log.3` keep older history and the oldest is deleted. `audit.log.lock` coordinates writers. |
+| `apply.lock` | Held by `apply` and by the commands that change what it reads (packages and sources in the profile, generations, pins, and the files in this directory), including `source add`, `source remove`, and `source set-trust-root`. A command that finds it held stops at once and names the holder. | One small file. |
+| `trust/` | The highest signed-metadata serial seen per source (anti-rollback). | One small file per source. |
+| `accepted-drift.json`, `pending-resets.json` | Paths whose drift you adopted with `accept-drift`, and config files `config reset` queued for the next apply. | At most one entry per managed path. |
+
+If a generation's manifest is damaged, or the current generation has no
+manifest, the sweep keeps every cached download and extracted package: nothing
+then records what that generation uses.
+
+State files carry a format version. If a newer polypkg wrote one, an older
+polypkg refuses to read it and says so —
+`<path> was written by a newer polypkg (polypkg.ownership/v2; this version reads v1); upgrade polypkg` —
+rather than guessing at its contents. A generation a newer polypkg pinned
+stays pinned, and an older `gc` removes nothing while a generation manifest a
+newer polypkg wrote is present.
+
 ## Glossary
 
 - **profile**: the YAML/JSONC file declaring what should be installed; the single source of truth.
 - **generation**: an immutable snapshot created by each apply; rollback switches between generations.
-- **drift**: a managed file changed on disk since its generation was applied; `status -vv` shows it, `accept-drift` adopts it.
+- **drift**: a managed path changed on disk since its generation was applied (removed, retyped, or with different content, link target, or declared mode); `status -vv` shows it, `apply` restores it under the default drift policy, `accept-drift` adopts it.
 - **scope**: where software installs: `user` (your home, no root) or `system` (machine-wide).
 - **substrate**: the storage backend a scope installs into (the default is the content store).
 - **alternatives**: when several packages provide the same command, the arbitration that picks which one wins; `polypkg alternatives` inspects and overrides it.
@@ -510,18 +541,22 @@ falling back to a lower-priority source.
 ```
 polypkg source list
 polypkg source add <name> --url <http(s)|file://>  --trust-root <path-to-.pub>
-polypkg source add <name> --url <...> --trust-root-url <url> --trust-root-yes
+polypkg source add <name> --url <...> --trust-root-url <https-url> --trust-root-fingerprint <key id>
+polypkg source set-trust-root <name> --trust-root <path-to-.pub> --trust-root-fingerprint <key id>
 polypkg source remove <name>
 ```
 
-`add` validates the URL and trust root before writing. The trust root can be a local `.pub` file (`--trust-root`) or downloaded from a URL (`--trust-root-url`) and confirmed the first time you see it — trust on first use, or TOFU. On a TTY that confirmation is a prompt; without one, pass `--trust-root-yes`.
+`add` validates the URL and trust root before writing, and refuses a name that is already in the profile. The trust root can be a local `.pub` file (`--trust-root`) or downloaded from a URL (`--trust-root-url`: `https://`, `file://`, or an absolute path; plain `http://` is refused) and confirmed the first time you see it — trust on first use, or TOFU. On a TTY that confirmation is a prompt showing the key id; without one, pass `--trust-root-fingerprint <key id>` with the id the publisher gets from `polypkg repo key show`. With `--trust-root` the fingerprint is optional, and checked when given.
 
-`remove` blocks removal of the last source because a profile with no sources is invalid; it also deletes the trust-root key that `--trust-root-url` persisted for that source, while leaving externally-supplied `--trust-root` files untouched. Each named source must match the name embedded in its signed trust document.
+`remove` blocks removal of the last source because a profile with no sources is invalid; it also deletes the source's managed key copy, `<config>/trust/<name>.pub`, unless another source references it. Every route (`--trust-root`, `--trust-root-url`, `init`) pins that copy; the operator's original file is never touched, and neither is a hand-written `trust_root` outside `<config>/trust/`. Each named source must match the name embedded in its signed trust document.
+
+`set-trust-root` is the only way to change the key a source is pinned to. It shows the pinned and the new key ids and needs the same confirmation as `add` (a prompt on a TTY, otherwise `--trust-root-fingerprint`, which must match the new key). It saves the new key as `<config>/trust/<name>.pub`, keeps the source's URL and its place in the order, and clears the source's anti-rollback memory so that a repository rebuilt with restarted serials is accepted. It works on a profile with a single source. Supplying the key that is already pinned changes nothing, unless you add `--reset-state`: that clears the anti-rollback memory anyway, for a repository that was re-created with the same key and restarted its serials. Because it lowers rollback protection until the next fetch, `--reset-state` requires `--trust-root-fingerprint`.
 
 Remember that `source add` spells its flags `--url` and `--trust-root`, while `init` spells the same two `--source-url` and `--trust-root-file`. See the [table in the Quickstart](#quickstart).
 
 If a source is legitimately rebuilt from scratch and its serials reset, polypkg's
-anti-rollback memory refuses the fetch until the source is re-pinned —
+anti-rollback memory refuses the fetch until the source is re-pinned with
+`polypkg source set-trust-root` —
 [Trust policy](docs/trust-policy.md#recovering-after-a-repository-is-re-created) has the recovery.
 
 ### Supply-chain verification

@@ -375,11 +375,12 @@ pointing at those staged files — running `repo build` against it re-publishes
 the pull verbatim under your own signing key, per the `prebuilt:` mechanics
 above.
 
-A pull only verifies that the fetched bytes are authentically the upstream
-source's; it does not re-bind provenance digests itself (that is `repo
-build`'s ingest job, described above) and it enforces no anti-rollback serial
-floor of its own — it is a stateless one-shot fetch of the source's current
-state, and the republished repository mints its own serial.
+A pull verifies that the fetched bytes are authentically the upstream
+source's. It does not re-bind provenance digests itself (that is `repo
+build`'s ingest job, described above). It does enforce the upstream's
+anti-rollback serial floors, which it keeps under `--key-dir` (see
+[Upstream rollback protection](mirroring.md#upstream-rollback-protection)).
+The republished repository still mints its own serial.
 
 One consequence
 worth knowing: because a pull stages the upstream's attestations as opaque

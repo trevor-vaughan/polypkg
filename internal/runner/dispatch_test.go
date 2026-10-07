@@ -210,6 +210,37 @@ var _ = Describe("DispatchActions unknown action", func() {
 	})
 })
 
+var _ = Describe("DispatchActions computed mode", func() {
+	It("refuses a !starlark mode that evaluates to an unsafe value", func() {
+		dir := GinkgoT().TempDir()
+		active := filepath.Join(dir, "active")
+		scope := action.Scope{ActiveRoot: active, PackageName: "hello"}
+		pkg := &schema.Package{
+			Schema:  "polypkg.package/v1",
+			Name:    "hello",
+			Version: "1.0.0",
+			Actions: []schema.PackageAction{{
+				Phase:  "post-place",
+				Action: "dir",
+				Params: map[string]any{
+					"path": "$ACTIVE/hello/data",
+					"mode": schema.StarlarkExpr{Source: `return "0o777"`},
+				},
+			}},
+		}
+
+		ev := starlarkeval.NewInProcessEvaluator(starlarkeval.Limits{
+			MaxSteps: 1_000_000, Timeout: time.Second, MaxMemoryBytes: 64 << 20, MaxOutputBytes: 64 << 10,
+		})
+		_, err := DispatchActions(context.Background(), pkg, filepath.Join(dir, "pkg-root"), scope, "post-place", ev, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring(`refusing mode "0o777"`)))
+		Expect(err.Error()).To(ContainSubstring("sets group-write, other-write;"))
+
+		_, statErr := os.Stat(active)
+		Expect(os.IsNotExist(statErr)).To(BeTrue(), "a refused computed mode must not create anything")
+	})
+})
+
 var _ = Describe("substituteParams", func() {
 	It("evaluates a Starlark expression then substitutes template variables", func() {
 		ev := starlarkeval.NewInProcessEvaluator(starlarkeval.Limits{

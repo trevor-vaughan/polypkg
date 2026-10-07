@@ -336,6 +336,8 @@ func (r *Runner) runOpportunisticGC(txID string) {
 			CommittedAt: g.CommittedAt,
 			Pinned:      g.Pinned,
 			IsCurrent:   g.IsCurrent,
+			Incomplete:  g.Incomplete,
+			Damaged:     g.Damaged,
 		})
 		if g.Pinned {
 			pinnedCount++
@@ -503,7 +505,7 @@ func (r *Runner) loadResets() (map[string]bool, *schema.Resets, error) {
 	defer func() { _ = f.Close() }()
 	rs, err := schema.ParseResets(f)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pending-resets: %w", err)
+		return nil, nil, fmt.Errorf("pending-resets: %w", schema.WithPath(err, r.opts.ResetsPath))
 	}
 	if rs.Scope != r.opts.Scope {
 		return nil, nil, nil // belongs to a different scope's apply

@@ -421,3 +421,108 @@ var _ = Describe("gc", func() {
 		Expect(log).To(ContainSubstring(`"trigger":"opportunistic"`))
 	})
 })
+
+var _ = Describe("gc artifact cache pruning", func() {
+	type gcEnvelope struct {
+		Data struct {
+			ExtractDirsPruned     []string `json:"extract_dirs_pruned"`
+			CacheArtifactsPruned  []string `json:"cache_artifacts_pruned"`
+			CacheArtifactsRemoved int      `json:"cache_artifacts_removed"`
+		} `json:"data"`
+	}
+
+	// setup publishes hello and bye over HTTP (so the artifact cache is used),
+	// applies a profile with both (gen 1, pinned when pinFirst) and then hello
+	// alone (gen 2). When age is set it backdates the cache and extract store
+	// past the sweep grace window. It returns the native source's cache dir.
+	setup := func(t testing.TB, pinFirst, age bool) string {
+		root := IsolatedEnv(t)
+		t.Setenv("HOME", filepath.Join(root, "home"))
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+		t.Setenv("XDG_RUNTIME_DIR", filepath.Join(root, "runtime"))
+		repoDir := t.TempDir()
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: buildHelloPackage(t)},
+			indexPkg{name: "bye", version: "1.0.0", artifact: buildPkg(t, "bye", "1.0.0", "#!/bin/sh\necho bye\n")})
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		DeferCleanup(srv.Close)
+
+		bothProfile := filepath.Join(t.TempDir(), "both.yaml")
+		body := installHelloProfile(t, srv.URL, trustRoot) + "    bye:\n      version: \"=1.0.0\"\n"
+		Expect(os.WriteFile(bothProfile, []byte(body), 0o644)).To(Succeed())
+		out, err := runCmd("apply", bothProfile, "--no-drift-check")
+		Expect(err).NotTo(HaveOccurred(), out)
+		if pinFirst {
+			out, err = runCmd("generation", "pin", "1", "--reason", "keep bye")
+			Expect(err).NotTo(HaveOccurred(), out)
+		}
+		_, err = applyHelloOnce(t, srv.URL, trustRoot, "--no-drift-check")
+		Expect(err).NotTo(HaveOccurred())
+
+		stateRoot := filepath.Join(os.Getenv("XDG_STATE_HOME"), "polypkg")
+		cacheDir := filepath.Join(stateRoot, "cache", "native")
+		Expect(filepath.Join(cacheDir, "bye-1.0.0.tar.zst")).To(BeAnExistingFile(), "apply must have cached bye's artifact")
+		if age {
+			// ageExtractDirs backdates every entry of any directory.
+			ageExtractDirs(t, cacheDir)
+			ageExtractDirs(t, filepath.Join(stateRoot, "pkg-extract"))
+		}
+		return cacheDir
+	}
+
+	runGCJSON := func(args ...string) (string, gcEnvelope) {
+		GinkgoHelper()
+		cmd := cli.NewRootCmd()
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		var out, errBuf bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errBuf)
+		cmd.SetArgs(append([]string{"--format", "json", "gc"}, args...))
+		Expect(cmd.Execute()).To(Succeed(), errBuf.String())
+		var env gcEnvelope
+		Expect(json.Unmarshal(out.Bytes(), &env)).To(Succeed(), out.String())
+		return out.String(), env
+	}
+
+	It("prunes cache and extract entries only a collected generation referenced, and lists them in JSON", func() {
+		cacheDir := setup(GinkgoTB(), false, true)
+
+		_, env := runGCJSON("--count", "1", "--age", "0s")
+
+		Expect(env.Data.CacheArtifactsPruned).To(Equal([]string{"native/bye-1.0.0.tar.zst"}))
+		Expect(env.Data.CacheArtifactsRemoved).To(Equal(1))
+		Expect(env.Data.ExtractDirsPruned).To(ConsistOf(HavePrefix("bye-1.0.0+")))
+		Expect(filepath.Join(cacheDir, "bye-1.0.0.tar.zst")).NotTo(BeAnExistingFile())
+		Expect(filepath.Join(cacheDir, "hello-1.0.0.tar.zst")).To(BeAnExistingFile(), "the retained generation's artifact stays")
+		Expect(filepath.Join(cacheDir, "index.json")).To(BeAnExistingFile(), "signed metadata is never pruned")
+		Expect(filepath.Join(cacheDir, "trust.json")).To(BeAnExistingFile(), "signed metadata is never pruned")
+	})
+
+	It("names what it pruned in text output", func() {
+		setup(GinkgoTB(), false, true)
+		out, err := runCmd("gc", "--count", "1", "--age", "0s")
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring("gc: pruned 1 cached artifact(s)"))
+		Expect(out).To(ContainSubstring("  native/bye-1.0.0.tar.zst"))
+		Expect(out).To(ContainSubstring("swept 1 stale extract dir(s)"))
+	})
+
+	It("keeps the cached artifact of a pinned generation", func() {
+		cacheDir := setup(GinkgoTB(), true, true)
+
+		raw, env := runGCJSON("--count", "1", "--age", "0s")
+
+		Expect(env.Data.CacheArtifactsPruned).To(BeEmpty())
+		Expect(raw).To(ContainSubstring(`"cache_artifacts_pruned":[]`), "an empty list renders as [], not null")
+		Expect(filepath.Join(cacheDir, "bye-1.0.0.tar.zst")).To(BeAnExistingFile())
+	})
+
+	It("keeps young unreferenced cache entries (in-flight apply grace window)", func() {
+		cacheDir := setup(GinkgoTB(), false, false)
+
+		_, env := runGCJSON("--count", "1", "--age", "0s")
+
+		Expect(env.Data.CacheArtifactsPruned).To(BeEmpty())
+		Expect(filepath.Join(cacheDir, "bye-1.0.0.tar.zst")).To(BeAnExistingFile())
+	})
+})

@@ -223,7 +223,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 	}
 	backend := source.NewNativeBackend(source.NativeBackendOpts{
 		URL:      src.URL,
-		CacheDir: filepath.Join(opts.StateHome, "cache", sourceName),
+		CacheDir: filepath.Join(source.CacheRoot(opts.StateHome), sourceName),
 	})
 
 	acceptUntil := src.AcceptExpiryUntil
@@ -277,7 +277,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		return nil, fmt.Errorf("index: %w", err)
 	}
 	if indexSerial < seen.IndexSerial {
-		return nil, fmt.Errorf("index rollback: serial %d is below last-seen %d", indexSerial, seen.IndexSerial)
+		return nil, &trust.RollbackError{Document: "index", Serial: indexSerial, LastSeen: seen.IndexSerial}
 	}
 	index, err := schema.ParseIndex(bytes.NewReader(rawIndex))
 	if err != nil {

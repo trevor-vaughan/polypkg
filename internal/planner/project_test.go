@@ -52,6 +52,25 @@ var _ = Describe("ProjectOwnership", func() {
 		Expect(own.Entries[0].Expected.ContentHash).To(Equal(wantHash))
 	})
 
+	It("projects a regular file for an install that omits policy (the copy default)", func() {
+		pkg := &schema.Package{
+			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
+			Actions: []schema.PackageAction{{
+				Phase: "post-place", Action: "install",
+				Params: map[string]any{
+					"src":  "$PKG/content/bin/hi",
+					"dest": "$ACTIVE/hello/bin/hi",
+				},
+			}},
+		}
+		pkgRoot := writeInstallSource("#!/bin/sh\necho hi\n")
+		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, "user")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(own.Entries).To(HaveLen(1))
+		Expect(own.Entries[0].Expected.FileType).To(Equal("regular"),
+			"the projection must match what the install action records, or a converged system shows false drift")
+	})
+
 	It("projects a different content hash for different install source files", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
