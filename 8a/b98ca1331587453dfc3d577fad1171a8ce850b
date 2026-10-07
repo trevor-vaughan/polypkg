@@ -1,0 +1,27 @@
+internal/schema/profile_attestation_test.go
+  s_976d6ae9a5c17c::t_ac333fe00e75c5 69
+tests/e2e/venom/user/99-provenance-adversarial.venom.yml
+  s_976d6ae9a5c17c::t_ac333fe00e75c5 24
+.mega-linter.local.yml
+  s_976d6ae9a5c17c::t_f1ed1955cd3598 23-24,26-45
+.secretlintrc.json
+  s_976d6ae9a5c17c::t_ac333fe00e75c5 1-19
+tests/e2e/venom/user/98-provenance-genuine.venom.yml
+  s_976d6ae9a5c17c::t_ac333fe00e75c5 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ab98ca1331587453dfc3d577fad1171a8ce850b",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
