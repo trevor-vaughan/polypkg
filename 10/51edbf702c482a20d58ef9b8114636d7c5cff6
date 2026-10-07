@@ -1,0 +1,28 @@
+internal/cli/argsx_test.go
+  s_976d6ae9a5c17c::t_fe844aa55eeee7 200
+  s_976d6ae9a5c17c::t_1fc49336cf5fff 179-199,201-202
+internal/cli/commandgroup.go
+  s_976d6ae9a5c17c::t_fe844aa55eeee7 38
+docs/json-output.md
+  s_976d6ae9a5c17c::t_7f178d99c41ba7 42,59-60
+internal/cli/flagsx.go
+  s_976d6ae9a5c17c::t_fe844aa55eeee7 25
+internal/cli/argsx.go
+  s_976d6ae9a5c17c::t_fe844aa55eeee7 11,38-47,49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1051edbf702c482a20d58ef9b8114636d7c5cff6",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
