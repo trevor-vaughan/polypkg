@@ -1,0 +1,45 @@
+internal/cli/pkgbuild.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 26
+internal/cli/pkginit.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 32
+internal/cli/plan.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 43
+internal/cli/argsx_test.go
+  s_976d6ae9a5c17c::t_674255df3ed0cb 49-75
+internal/cli/apply.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 36
+internal/cli/config.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 49
+internal/cli/repoaddremove.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 184
+internal/cli/pkglint.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 27
+internal/cli/source_test.go
+  s_976d6ae9a5c17c::t_674255df3ed0cb 394
+internal/cli/repo.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 106
+internal/cli/source.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 242,288,437
+internal/cli/mirror.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 45
+internal/cli/sourcetrustroot.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 59
+internal/cli/alternatives.go
+  s_976d6ae9a5c17c::t_4a96f150cec510 179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d2a3e37702267d5e60990238d18803f1f8d0bf8",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
