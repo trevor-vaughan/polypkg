@@ -1,0 +1,23 @@
+.lycheeignore
+  s_976d6ae9a5c17c::t_7f4949dd1df285 1-22
+.mega-linter.local.yml
+  s_976d6ae9a5c17c::t_bcc54e3bd58a15 1-23
+.jscpd.json
+  s_976d6ae9a5c17c::t_4f10b5e7ed8e8d 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b756ba3cad8f2ec91ce004a753c3bb20c4b4f0b7",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
