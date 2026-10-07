@@ -1,0 +1,21 @@
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_8eec8258bf6183 172-177
+docs/dev/README.md
+  s_976d6ae9a5c17c::t_8eec8258bf6183 54,64-72,84-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89e68db768508fd4f9dfa2c6f4aa97363e76c691",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
