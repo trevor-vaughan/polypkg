@@ -24,7 +24,12 @@ services:
     # the host cannot read. chmod them host-readable on exit (the runner owns
     # them); the trap fires before the shell exits so it runs even on failure,
     # and the shell's exit status stays venom's so a failing suite still fails.
-    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/publish 2>/dev/null || true' EXIT; venom run /e2e/venom/publish --output-dir /out/${DISTRO:-centos}/publish"]
+    # Every runner passes its suites as a shell glob, never the bare directory:
+    # venom (v1.3.0) discovers a directory's files with a concurrent walk and
+    # runs them in that unsorted order, while sh sorts a glob, and the NN-
+    # prefixed suites depend on running in that order (20/30 read the repo 00
+    # builds).
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/publish 2>/dev/null || true' EXIT; venom run /e2e/venom/publish/*.venom.yml --output-dir /out/${DISTRO:-centos}/publish"]
 
   repo-server:
     image: docker.io/library/python:3.12-slim
@@ -75,7 +80,7 @@ services:
       - ghfake-out:/ghfake:ro,z
       - ../../.test-output/e2e:/out:z
     working_dir: /e2e
-    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/user 2>/dev/null || true' EXIT; venom run /e2e/venom/user --output-dir /out/${DISTRO:-centos}/user"]
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/user 2>/dev/null || true' EXIT; venom run /e2e/venom/user/*.venom.yml --output-dir /out/${DISTRO:-centos}/user"]
 
   runner-system:
     image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
@@ -93,4 +98,4 @@ services:
       - ./fixtures:/e2e/fixtures:ro,z
       - ../../.test-output/e2e:/out:z
     working_dir: /e2e
-    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/system 2>/dev/null || true' EXIT; venom run /e2e/venom/system --output-dir /out/${DISTRO:-centos}/system"]
+    command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/system 2>/dev/null || true' EXIT; venom run /e2e/venom/system/*.venom.yml --output-dir /out/${DISTRO:-centos}/system"]

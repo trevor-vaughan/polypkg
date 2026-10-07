@@ -228,8 +228,11 @@ That is the job of the VM tier (`task test:vm`; see
   serves one version per package. Suites install bare names (newest) and assert
   version-agnostically; the upgrade case (suite 10, which runs first) is the one
   place a specific `1.0.0 → 1.1.0` bump is checked.
+- Suites run in filename order: each runner hands venom a shell glob, which
+  sh sorts, because venom's own directory walk is unordered. The `publish`
+  suites depend on that order (`20`/`30` read the repo `00` builds).
 - Suites isolate themselves with a distinct `HOME`/`XDG_*` sandbox (the `px`
-  prefix var), so they are order-insensitive within a runner.
+  prefix var).
 - The benign `pod_e2e already exists` / `container ... already in use` lines
   podman-compose prints while `run` re-ensures the long-running `repo-server`
   are warnings, not failures.
