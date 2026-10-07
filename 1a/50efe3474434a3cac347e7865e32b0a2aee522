@@ -1,0 +1,23 @@
+CHANGELOG.md
+  s_976d6ae9a5c17c::t_f5448a2524308e 123-128
+.goreleaser.yaml
+  s_976d6ae9a5c17c::t_84f0458622912a 15-21,33,40-57
+internal/cli/root.go
+  s_976d6ae9a5c17c::t_84f0458622912a 11-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a50efe3474434a3cac347e7865e32b0a2aee522",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
