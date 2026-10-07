@@ -1,0 +1,21 @@
+.github/workflows/test.yml
+  s_976d6ae9a5c17c::t_5b79a11bfa64f7 26-28,49-50
+Taskfile.yml
+  s_976d6ae9a5c17c::t_8a09cc55e50d5c 60,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2f9a5f966d273758e531a02a9edcb9f1b8f1296",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
