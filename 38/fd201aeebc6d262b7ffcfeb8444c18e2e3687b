@@ -1,0 +1,21 @@
+internal/cli/mirror_test.go
+  s_976d6ae9a5c17c::t_131c5b33d047aa 1354-1378
+internal/cli/mirror.go
+  s_976d6ae9a5c17c::t_8b811d0cdfe0e9 529-534,536-543
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38fd201aeebc6d262b7ffcfeb8444c18e2e3687b",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
