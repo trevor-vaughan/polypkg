@@ -1,0 +1,23 @@
+tests/e2e/venom/user/96-mirror-pull.venom.yml
+  s_976d6ae9a5c17c::t_22f26e2d7a37e0 81-82
+tests/e2e/venom/publish/30-mirror-verify.venom.yml
+  s_976d6ae9a5c17c::t_22f26e2d7a37e0 35-36
+tests/e2e/venom/user/70-edge-cases.venom.yml
+  s_976d6ae9a5c17c::t_22f26e2d7a37e0 90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9404fd336087511d72c4cdf7d5db30221605d5de",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
