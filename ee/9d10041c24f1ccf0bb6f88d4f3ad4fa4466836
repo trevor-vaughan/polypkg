@@ -1,0 +1,24 @@
+internal/cli/profilepath.go
+  s_976d6ae9a5c17c::t_ff5ef3414e94c4 9,52-67,105,111
+internal/cli/profilepath_test.go
+  s_976d6ae9a5c17c::t_8fe32e14388232 76-77,82-92,96,125,138,170,220-231
+  s_976d6ae9a5c17c::t_f7efcbd6bc865d 232-233
+internal/cli/install.go
+  s_976d6ae9a5c17c::t_ff5ef3414e94c4 392-393,401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee9d10041c24f1ccf0bb6f88d4f3ad4fa4466836",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
