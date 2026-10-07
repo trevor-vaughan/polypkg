@@ -1,0 +1,34 @@
+internal/repo/pack.go
+  s_976d6ae9a5c17c::t_aa8d81db137e99 112
+  s_976d6ae9a5c17c::t_3850839da98ef1 39-48,82-85,88-91,101-104,109-111,113,128-131
+internal/cli/repoaddremove_test.go
+  s_976d6ae9a5c17c::t_cf1fe499fc16e8 7-8,10,17
+  s_976d6ae9a5c17c::t_b2a0bfefcf48b0 816-888
+internal/repo/pack_test.go
+  s_976d6ae9a5c17c::t_7038283674c96f 126,210-213
+internal/cli/pkgbuild_test.go
+  s_976d6ae9a5c17c::t_cf1fe499fc16e8 6-7,10,134-159
+  s_976d6ae9a5c17c::t_d98e8b5e2d2a23 160
+internal/repo/build.go
+  s_976d6ae9a5c17c::t_aa8d81db137e99 528-533
+  s_976d6ae9a5c17c::t_5028fbb724c2a2 6,526-527
+internal/cli/pkgbuild.go
+  s_976d6ae9a5c17c::t_aa8d81db137e99 59-60
+  s_976d6ae9a5c17c::t_5028fbb724c2a2 5,57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df93f4863a3d9f1ce769bec1fa8b20db8dfc64ff",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
