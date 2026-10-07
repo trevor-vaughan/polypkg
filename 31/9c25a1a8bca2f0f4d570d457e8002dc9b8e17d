@@ -1,0 +1,25 @@
+.github/workflows/integration.yml
+  s_976d6ae9a5c17c::t_fa58b7766638bd 4-5,11
+.github/workflows/lint.yml
+  s_976d6ae9a5c17c::t_fa58b7766638bd 8
+.github/workflows/release.yml
+  s_976d6ae9a5c17c::t_6b96feecc1280b 8,11-36,39,41-44
+.github/workflows/test.yml
+  s_976d6ae9a5c17c::t_fa58b7766638bd 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "319c25a1a8bca2f0f4d570d457e8002dc9b8e17d",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
