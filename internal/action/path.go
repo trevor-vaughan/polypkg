@@ -9,9 +9,9 @@ import (
 )
 
 // pathNameRe is the shared-command-name grammar: a single safe path component
-// (no separators, no "."/".."). It compiles the registry's shared namePattern
+// (no separators, no "."/".."). It compiles the registry's shared NamePattern
 // so the runtime check and the declarative lint table cannot diverge.
-var pathNameRe = regexp.MustCompile(namePattern)
+var pathNameRe = regexp.MustCompile(NamePattern)
 
 // Path exposes a package's own installed binary on $PATH by creating a symlink
 // in the shared bin directory (<ActiveRoot>/bin/<name>) pointing at the

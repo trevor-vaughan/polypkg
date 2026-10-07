@@ -1,6 +1,7 @@
 volumes:
   repo-pub: {}
   repo-keys: {}
+  ghfake-out: {}
 
 networks:
   e2e: {}
@@ -37,11 +38,30 @@ services:
       timeout: 3s
       retries: 20
 
+  # A fake GitHub (REST API, release assets, attestation blobs) for the
+  # `pkg import` suite. It mints its attestations at start and writes the
+  # trusted root that verifies them into ghfake-out, after its listener is
+  # bound, so the file's presence means it is serving.
+  github-fake:
+    image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
+    user: "1000:0"
+    networks: [e2e]
+    volumes:
+      - ghfake-out:/ghfake:z
+    command: ["/usr/local/bin/ghfake", "-addr", ":8080", "-trusted-root-out", "/ghfake/trusted_root.json"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /ghfake/trusted_root.json"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   runner-user:
     image: ${RUNNER_IMAGE:-polypkg-e2e:centos}
     user: "1000:0"
     depends_on:
       repo-server:
+        condition: service_healthy
+      github-fake:
         condition: service_healthy
     networks: [e2e]
     environment:
@@ -52,6 +72,7 @@ services:
       - ./venom:/e2e/venom:ro,z
       - ./fixtures:/e2e/fixtures:ro,z
       - ../../.test-output/e2e/provenance-fixtures:/e2e/provenance-fixtures:ro,z
+      - ghfake-out:/ghfake:ro,z
       - ../../.test-output/e2e:/out:z
     working_dir: /e2e
     command: ["sh", "-c", "trap 'chmod -R a+rX /out/${DISTRO:-centos}/user 2>/dev/null || true' EXIT; venom run /e2e/venom/user --output-dir /out/${DISTRO:-centos}/user"]

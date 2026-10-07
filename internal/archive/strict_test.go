@@ -146,6 +146,37 @@ func strictCases() []strictCase {
 			wantErr: "contains a NUL byte",
 		},
 		{
+			name:    "escape sequence and newline in a name",
+			members: []fixtureMember{{name: "evil\x1b[31mRED\nFAKE line", kind: fixtureFile, body: "x"}},
+			wantErr: `member name "evil\x1b[31mRED\nFAKE line" contains the control character U+001B`,
+		},
+		{
+			name:    "tab in a directory segment",
+			members: []fixtureMember{{name: "a\tb/c", kind: fixtureFile, body: "x"}},
+			wantErr: "contains the control character U+0009",
+		},
+		{
+			name:    "DEL in a name",
+			members: []fixtureMember{{name: "a\x7fb", kind: fixtureFile, body: "x"}},
+			wantErr: "contains the control character U+007F",
+		},
+		{
+			name:    "C1 control in a name",
+			members: []fixtureMember{{name: "a\u009bb", kind: fixtureFile, body: "x"}},
+			wantErr: "contains the control character U+009B",
+		},
+		{
+			name:    "Unicode format character in a symlink name",
+			members: []fixtureMember{{name: "a\u202egnp.exe", kind: fixtureSymlink, target: "b"}},
+			wantErr: "contains the format character U+202E",
+		},
+		{
+			name:    "control character in a part strip removes",
+			members: []fixtureMember{{name: "top\x1b/a", kind: fixtureFile, body: "x"}},
+			strip:   1,
+			wantErr: "contains the control character U+001B",
+		},
+		{
 			name:    "drive letter with a slash",
 			members: []fixtureMember{{name: "C:/evil", kind: fixtureFile, body: "x"}},
 			wantErr: "has a ':' in its first segment",
@@ -278,6 +309,22 @@ func strictCases() []strictCase {
 				{name: "a/b", kind: fixtureFile, body: "b"},
 			},
 			wantErr: `needs "a" to be a directory`,
+		},
+		{
+			name: "file where an earlier member needs a directory",
+			members: []fixtureMember{
+				{name: "a/b", kind: fixtureFile, body: "b"},
+				{name: "a", kind: fixtureFile, body: "a"},
+			},
+			wantErr: `"a" is a file, but an earlier member needs "a" to be a directory`,
+		},
+		{
+			name: "symlink where an earlier member needs a directory",
+			members: []fixtureMember{
+				{name: "a/b", kind: fixtureFile, body: "b"},
+				{name: "a", kind: fixtureSymlink, target: "b"},
+			},
+			wantErr: `"a" is a symlink, but an earlier member needs "a" to be a directory`,
 		},
 		{
 			name: "entry limit",

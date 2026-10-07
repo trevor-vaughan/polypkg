@@ -87,6 +87,23 @@ var _ = Describe("ValidateProducer", func() {
 	)
 })
 
+var _ = Describe("Ports", func() {
+	It("lists exactly the pairs ValidateProducer accepts", func() {
+		ports := Ports()
+		Expect(ports).To(Equal(knownPorts))
+		for _, p := range ports {
+			Expect(ValidateProducer(p)).To(Succeed(), p)
+		}
+	})
+
+	It("returns a copy, so a caller cannot change what ValidateProducer accepts", func() {
+		ports := Ports()
+		ports[0] = "zz/zz"
+		Expect(knownPorts[0]).NotTo(Equal("zz/zz"))
+		Expect(ValidateProducer("zz/zz")).NotTo(Succeed())
+	})
+})
+
 var _ = Describe("knownPorts", func() {
 	It("is sorted, so ValidateProducer's binary search is sound", func() {
 		Expect(slices.IsSorted(knownPorts)).To(BeTrue())

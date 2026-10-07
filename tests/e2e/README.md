@@ -95,6 +95,15 @@ fixtures/  ─┐                       (bind-mounted, ro)
   `--build-arg BASE_IMAGE`; the builder stage is shared, so venom compiles once.
 - `venom/` and `fixtures/` are **bind-mounted**, so editing a suite needs no
   image rebuild — only a `polypkg` source change does.
+- `github-fake` runs `tests/e2e/ghfake`, a fake GitHub REST API and release
+  host built into the runner image from `internal/ghrelease/ghreleasetest`.
+  At start it mints genuine sigstore bundles for its assets under a throwaway
+  Fulcio CA and Rekor log, plus a GitHub-shaped release attestation for each
+  under an unrelated CA, then writes the trusted root that verifies the
+  former to the `ghfake-out` volume, which `runner-user` mounts read-only at
+  `/ghfake`.
+  `user/59-github-import` passes that root to `pkg import --trusted-root`, so
+  the tier never contacts GitHub or the Sigstore CDN.
 
 ## Suite → verb coverage
 
@@ -111,6 +120,7 @@ fixtures/  ─┐                       (bind-mounted, ro)
 | `user/50-anti-rollback` | `repo add`/`repo build` to bump serial, fetch; serve a stale lower-serial index → consumer rejects |
 | `user/55-deps` | `install` resolves and pulls a declared `depends` |
 | `user/58-extract` | the `extract` action: a package whose content is a `.tar.gz` (built at test time with the runner's `tar`) is published, linted clean, and installed; `strip_components: 1` drops the archive's top directory, the unpacked `bin/hello` is a regular executable file (not a link into the extract cache), the `path`-exposed command runs from `~/.local/bin`, and `rollback` removes both the unpacked tree and the command |
+| `user/59-github-import` | `pkg import` against `github-fake`: one lint-clean source per platform with its provenance carried and the release attestation noted and skipped, the Windows asset skipped, a second import into the same directory refused as "already exists" with the tree unchanged; one multi-directory `repo add` plus `sigstore_roots` publishes both platforms and a `trust-bundle.json`; `init` → `install` runs the imported binary, `status -vv` shows `[carried: verified-offline]`, and `info --format json` records the workflow identity; a `builders.allow` sigstore entry naming the building workflow installs under `require` while one naming another repository's workflow is refused |
 | `user/60-gc-pin` | `generation pin`, `gc --count`, pinned generation survives |
 | `user/70-edge-cases` | missing package; unsatisfiable constraint; `plan` dry-run; `generation list` wart; idempotent install; `purge` (remove-then-purge, non-TTY abort); `config reset` |
 | `user/80-attestation` | install verifies + records attestation (`info`/`status -vv`); tampered `.att.json` refused; `require` refuses / `warn` warns on an unattested (`--skip-attestations`) repo. Expired-metadata refusal is NOT here — D13's 5-minute skew tolerance makes it unobservable without sleeping out the window; it lives in `tests/integration/e2e_freshness_test.go` (full CLI, deterministic clock) |

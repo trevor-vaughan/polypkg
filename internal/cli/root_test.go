@@ -203,6 +203,13 @@ var _ = Describe("subcommand grouping", func() {
 			"set":  "Override:",
 			"auto": "Override:",
 		},
+		"pkg": {
+			"init":    "Getting started:",
+			"import":  "Getting started:",
+			"lint":    "Author loop:",
+			"build":   "Author loop:",
+			"explain": "Reference:",
+		},
 	}
 
 	for parentName, wantTitle := range groupedMenus {

@@ -62,7 +62,7 @@ Two more recordings sit with the docs they belong to: [publishing a repository](
 - [Demo](#demo) — recorded terminal sessions: install and rollback, refused signatures, drift, upgrade
 - [Background](#background) — why this exists
 - [Install](#install) — two paths; there is no tagged release yet
-- [Quickstart](#quickstart) — `init`, `search`, `install`, `rollback`
+- [Quickstart](#quickstart) — create a repository, import a tool from GitHub, install it; then `search`, `upgrade`, `rollback`
 - [Commands](#commands) — the full command reference · [Exit codes](#exit-codes)
 - [Scripting](#scripting) — which commands emit which JSON schema
 - [Environment](#environment) — `NO_COLOR`, `POLYPKG_*`, and the `XDG_*` directories
@@ -130,6 +130,43 @@ $ go version -m "$(command -v polypkg)" | awk '$1=="mod"{print; exit}'
 Built from a working tree with uncommitted changes, that line gains a `+dirty` suffix (`...-7c59b0ffb958+dirty`) — worth reporting as-is, since it says the binary does not match the named commit.
 
 ## Quickstart
+
+polypkg installs from signed repositories, and there is no public one yet. The
+quickest start is your own: create a repository, import a tool from its GitHub
+release, publish it, and install from it. Everything runs as your user. Paste
+this into a shell in an empty directory:
+
+```sh
+# 1. Create a repository. Its signing key is encrypted with this passphrase.
+export POLYPKG_REPO_KEY_PASSWORD='choose-a-passphrase'
+polypkg repo init ./myrepo --source myrepo
+
+# 2. Turn the latest GitHub CLI release into package sources, one per platform.
+polypkg pkg import github:cli/cli ./imports --name gh --bin gh
+
+# 3. Publish them. sigstore_roots lets installs verify GitHub's build
+#    attestations offline; the path is relative to the manifest.
+printf 'sigstore_roots:\n  - ../imports/sigstore-trusted-root.json\n' >> ./myrepo/polypkg-repo.yaml
+polypkg repo add --manifest ./myrepo/polypkg-repo.yaml ./imports/gh/*/*
+
+# 4. Point your profile at the repository and install.
+polypkg init --source-url "$PWD/myrepo/public" \
+  --trust-root-file ./myrepo/public/trust_root.pub --source-name myrepo
+polypkg install gh
+~/.local/bin/gh --version
+polypkg status -vv           # gh is tagged [attested] [carried: verified-offline]
+```
+
+`pkg import` checks each downloaded asset against the digest GitHub publishes
+for it and verifies GitHub's build attestations before writing anything; see
+[Importing a GitHub release](docs/authoring.md#import-a-github-release-polypkg-pkg-import).
+It calls GitHub's API anonymously, which allows 60 requests an hour; set
+`GITHUB_TOKEN` (or `GH_TOKEN`) to raise that. `~/.local/bin` is where polypkg
+links the commands packages expose (the [bridge](#glossary)); put it on your
+`PATH`. To serve the repository to other machines, see
+[Publishing a repository](docs/publishing.md).
+
+Day to day, once a profile exists:
 
 ```
 polypkg init                 # set up your profile (scope, source URL, trust root)
@@ -243,7 +280,7 @@ These four are top-level command groups in `polypkg --help`, each with its own s
 |---|---|
 | `source` | Manage package sources and their trust roots: `source list`, `source add`, `source remove`. See [Managing sources](#managing-sources). |
 | `repo` | Build and sign a repository clients install from: `repo init`, `repo add`, `repo remove`, `repo build`, `repo export-bundle`, `repo status`, `repo key show`, `repo revoke`. See [Publishing a repository](#publishing-a-repository). |
-| `pkg` | Author a package source: `pkg init`, `pkg lint`, `pkg build`, `pkg explain`. See [Authoring a package](#authoring-a-package). |
+| `pkg` | Author a package source: `pkg init`, `pkg import` (one source per platform from a GitHub release), `pkg lint`, `pkg build`, `pkg explain`. See [Authoring a package](#authoring-a-package). |
 | `mirror` | Offline mirror bundles: `mirror pull` fetches an upstream repository and re-publishes it locally; `mirror verify` checks a bundle's signature, freshness, and completeness. See [Mirroring a repository](docs/mirroring.md). |
 
 ## Exit codes
@@ -274,7 +311,7 @@ help text to stdout and exit 0.
 
 **Envelope commands** emit a versioned `polypkg.cli-result/v2` object: `schema`, `command`, `status`, and `data` on success; `schema`, `command`, `status: "error"`, and `error` on failure. Error objects carry a `hint` field when a suggested fix is available.
 
-`accept-drift`, `alternatives auto`, `alternatives list`, `alternatives set`, `apply`, `config reset`, `gc`, `generation pin`, `generation unpin`, `info`, `init`, `install`, `link`, `list`, `mirror pull`, `mirror verify`, `pkg explain`, `purge`, `remove`, `repo add`, `repo build`, `repo export-bundle`, `repo init`, `repo key show`, `repo remove`, `repo revoke`, `repo status`, `rollback`, `search`, `source add`, `source list`, `source remove`, `unlink`, `upgrade`.
+`accept-drift`, `alternatives auto`, `alternatives list`, `alternatives set`, `apply`, `config reset`, `gc`, `generation pin`, `generation unpin`, `info`, `init`, `install`, `link`, `list`, `mirror pull`, `mirror verify`, `pkg explain`, `pkg import`, `purge`, `remove`, `repo add`, `repo build`, `repo export-bundle`, `repo init`, `repo key show`, `repo remove`, `repo revoke`, `repo status`, `rollback`, `search`, `source add`, `source list`, `source remove`, `unlink`, `upgrade`.
 
 **Own-schema commands** emit a purpose-built document instead of the envelope. An error that aborts the command is still reported as a `cli-result/v2` error envelope.
 
@@ -324,7 +361,7 @@ Platform fields in the envelope data:
 
 polypkg's own settings are namespaced `POLYPKG_`. Beyond those it also reads the
 [XDG directory variables](#xdg-directories), which relocate the paths documented
-elsewhere in this README.
+elsewhere in this README, and `pkg import` reads `GITHUB_TOKEN`/`GH_TOKEN`.
 
 | Variable | Effect | Default |
 |---|---|---|
@@ -336,8 +373,10 @@ elsewhere in this README.
 | `POLYPKG_MIME_ENABLED` | `false` stops polypkg writing into the MIME packages directory. | `true` |
 | `POLYPKG_REVOCATION_NEAR_EXPIRY_THRESHOLD` | How early a revocation list counts as "expiring soon". Same forms as other age settings (`14d`, `2w`, `12h`). | `14d` |
 | `POLYPKG_REPO_KEY_PASSWORD` | Publisher-side only: unlocks the repository signing key for `repo build`, `repo revoke`, and `repo key show`. `--key-password-file <path>` takes precedence. See [docs/publishing.md](docs/publishing.md). | unset |
+| `GITHUB_TOKEN` | `pkg import` only: a GitHub token sent to the `--api-url` host, never to asset or attestation downloads, to raise GitHub's API rate limit. Never sent over plain http except to a loopback host, and never printed. | unset |
+| `GH_TOKEN` | Read by `pkg import` when `GITHUB_TOKEN` is unset (the variable `gh` uses). | unset |
 
-`POLYPKG_PROFILE`, `POLYPKG_SYSTEM_PREFIX`, and `POLYPKG_REPO_KEY_PASSWORD` are read directly. The rest are the environment layer over the config file (`config.yaml` in the scope's config directory — `~/.config/polypkg` for user scope, `<prefix>/etc/polypkg` for system scope): a config key `a.b` maps to `POLYPKG_A_B`, and the environment wins over the file.
+`POLYPKG_PROFILE`, `POLYPKG_SYSTEM_PREFIX`, `POLYPKG_REPO_KEY_PASSWORD`, `GITHUB_TOKEN`, and `GH_TOKEN` are read directly. The rest are the environment layer over the config file (`config.yaml` in the scope's config directory — `~/.config/polypkg` for user scope, `<prefix>/etc/polypkg` for system scope): a config key `a.b` maps to `POLYPKG_A_B`, and the environment wins over the file.
 
 That config file is small. polypkg reads five keys from it and no others:
 `revocation.near_expiry_threshold`, plus the integrator toggles
@@ -645,12 +684,15 @@ task test             # run unit + in-process integration tests with race detect
 task test:fips        # same suite under GODEBUG=fips140=on (Go FIPS 140-3 module)
 task test:integration # container-based E2E across centos/ubuntu/alpine (needs podman)
 task test:vm          # opt-in VM-based LSM-enforcement tier (boots guests under QEMU; needs qemu)
+task test:live        # opt-in network test: pkg import the latest cli/cli release
 task lint             # run golangci-lint
 task fmt              # gofmt all packages
 ```
 
-The last two are opt-in, excluded from `task check`, and need host setup of
-their own. `test:integration` drives the real binary through the full lifecycle
+`test:integration`, `test:vm`, and `test:live` are opt-in and excluded from
+`task check`. `test:live` needs only network access (set `GITHUB_TOKEN` to
+avoid GitHub's anonymous rate limit); the other two need host setup of their
+own. `test:integration` drives the real binary through the full lifecycle
 in throwaway containers across a distro matrix; `test:vm` boots a guest with its
 own kernel so an LSM can run enforcing regardless of the host, and asserts zero
 denials. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup;

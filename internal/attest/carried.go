@@ -43,11 +43,13 @@ var recognizedGenericPredicates = map[string]struct{}{
 	"https://slsa.dev/verification_summary/v1":          {},
 }
 
-// classifyFormat maps an in-toto predicateType to the polypkg carriage format.
+// ClassifyFormat maps an in-toto predicateType to the polypkg carriage format.
 // SLSA provenance (any version), SPDX, and CycloneDX map to their own formats; a
 // predicateType on the generic allow-list maps to in-toto-generic; anything else
 // is in-toto-unclassified (recognized as in-toto, but carrying no policy weight).
-func classifyFormat(predicateType string) string {
+// It is the one definition of these families: the release importer uses it to
+// pick which upstream attestations to carry.
+func ClassifyFormat(predicateType string) string {
 	switch {
 	case strings.HasPrefix(predicateType, "https://slsa.dev/provenance/"):
 		return schema.FormatSLSAProvenance
@@ -148,7 +150,7 @@ func InspectCarried(data []byte) (CarriedInfo, error) {
 	}
 	info := CarriedInfo{
 		PredicateType: st.PredicateType,
-		Format:        classifyFormat(st.PredicateType),
+		Format:        ClassifyFormat(st.PredicateType),
 		Subjects:      st.Subject,
 	}
 	if info.Format == schema.FormatSLSAProvenance {

@@ -74,8 +74,14 @@ Heavier, opt-in tiers (not part of `task check`):
 ```
 task test:integration # container-based E2E across centos/ubuntu/alpine
 task test:vm          # VM-based LSM-enforcement tier under QEMU
+task test:live        # pkg import the latest cli/cli release from the real GitHub
 task fuzz             # mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
 ```
+
+`test:live` is the only test that reaches the network. It skips unless
+`POLYPKG_TEST_LIVE=1`, which the task sets; run it after changing
+`internal/ghrelease` or `internal/importer`, with `GITHUB_TOKEN` set if you
+run it often.
 
 One spec in `task test` is heavier than the rest by design:
 `tests/integration/e2e_search_picker_test.go` drives `polypkg search`'s

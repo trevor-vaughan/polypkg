@@ -122,6 +122,52 @@ Each `require` predicate type must be carried, digest-bound to the installed byt
 
 A `key` allow-list defends against a compromised publisher unconditionally — it pins the actual public-key bytes, and a publisher cannot forge a signature under a key it does not hold. A `sigstore` allow-list is weaker on its own: it pins only issuer/SAN strings, whose authenticity otherwise rests on the source-mirrored Fulcio root, so a fully-compromised source could mint a certificate bearing any SAN. Close that gap by also pinning the source's `sigstore_root` ([§ "Pinning a source's sigstore root"](#pinning-a-sources-sigstore-root)): a consumer-side pin is authoritative, and the source-mirrored root is then never consulted. Prefer `key` entries where you can — they need no second pin.
 
+### Pinning a GitHub Actions identity
+
+Packages made with [`polypkg pkg import`](authoring.md#import-a-github-release-polypkg-pkg-import)
+carry GitHub's artifact attestations: sigstore bundles whose Fulcio
+certificate names the GitHub Actions workflow run that built the asset. Its
+issuer is always `https://token.actions.githubusercontent.com`, and its SAN is
+the workflow file and the ref it ran from:
+
+```
+https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>
+```
+
+To accept the GitHub CLI only when GitHub's own release workflow built it:
+
+```yaml
+sources:
+  order: [myrepo]
+  myrepo:
+    # type, url, and trust_root as `polypkg init` wrote them
+    attestation:
+      require:
+        - https://slsa.dev/provenance/v1
+      builders:
+        allow:
+          - sigstore:
+              issuer: https://token.actions.githubusercontent.com
+              san: https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk
+```
+
+Read the exact SAN from an installed package rather than guessing it:
+`polypkg --format json info gh` reports it as `certificate_identity`. To
+accept any ref of that workflow, end the SAN with `@*`; a `*` is a wildcard only
+as the last character (anywhere else it matches literally), and a bare `*` is
+refused. The allow-list applies to every package from the
+source, so a source holding several imported tools needs one entry per
+project's workflow.
+
+A project that builds through a reusable workflow in another repository
+carries *that* workflow's path in the SAN, so the entry must name it. The
+import has already required the certificate's source-repository extension to
+name the project itself, but the allow-list here matches only issuer and SAN.
+On its own a `sigstore` entry also rests on the Fulcio root the source
+publishes; pin the root as well
+([Pinning a source's sigstore root](#pinning-a-sources-sigstore-root)) to
+take that trust off the source.
+
 ## Pinning a source's sigstore root
 
 **`sigstore_root`** (optional). A consumer-pinned sigstore trust root for this source: `valid_from` (RFC3339), optional `valid_until` (RFC3339, open-ended if absent), `fulcio_ca` (base64 DER Fulcio CA cert chain), `rekor_keys` (base64 Rekor public keys), optional `ctlog_keys`. When set, it is **authoritative** for verifying this source's sigstore-format carried attestations — the root mirrored in the source's trust bundle is **not** consulted.

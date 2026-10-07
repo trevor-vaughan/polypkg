@@ -498,27 +498,36 @@ func setupHelloBuilds(t *testing.T, builds ...helloBuild) (mPath, keyDir string,
 		t.Fatalf("init: %v", err)
 	}
 	for _, b := range builds {
-		dir := filepath.Join(repoDir, "pkgs", b.sub)
-		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		recipe := "schema: polypkg.package/v1\nname: hello\nversion: " + b.version + "\n"
-		if b.platform != "" {
-			recipe += "platform: " + b.platform + "\n"
-		}
-		recipe += "actions: []\n"
-		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(recipe), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hello"),
-			[]byte("#!/bin/sh\necho "+b.sub+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		dir := writeHelloBuild(t, repoDir, b)
 		if out, err := runRepo(t, env, "repo", "add", dir, "--manifest", mPath, "--key-dir", keyDir); err != nil {
 			t.Fatalf("repo add %s: %v (out=%s)", b.sub, err, out)
 		}
 	}
 	return mPath, keyDir, env
+}
+
+// writeHelloBuild writes the hello package source b describes under
+// <repoDir>/pkgs/<b.sub> and returns that directory. Its content names b.sub,
+// so every build packs to a distinct artifact.
+func writeHelloBuild(t *testing.T, repoDir string, b helloBuild) string {
+	t.Helper()
+	dir := filepath.Join(repoDir, "pkgs", b.sub)
+	if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipe := "schema: polypkg.package/v1\nname: hello\nversion: " + b.version + "\n"
+	if b.platform != "" {
+		recipe += "platform: " + b.platform + "\n"
+	}
+	recipe += "actions: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(recipe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hello"),
+		[]byte("#!/bin/sh\necho "+b.sub+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // manifestHelloSources returns the source of every hello entry in the

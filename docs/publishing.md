@@ -104,6 +104,19 @@ packages:
 `repo add ./pkgs/jot-1.4.2-darwin-arm64` appends the second entry like any
 other. A client downloads only the artifact for its own platform.
 
+`repo add` takes several directories at once and adds them in one rebuild,
+which is how the per-platform sources `polypkg pkg import` writes are
+published:
+
+```
+polypkg repo add ./imports/jot/1.4.2/linux-amd64 ./imports/jot/1.4.2/darwin-arm64
+polypkg repo add ./imports/jot/1.4.2/*        # the same, by glob
+```
+
+The batch is all-or-nothing: if any directory cannot be read or added, or the
+rebuild fails, `polypkg-repo.yaml` is left byte-identical and nothing is
+published.
+
 `repo build` reads each entry's platform from the package itself, so the
 manifest has no platform field. For a `source:` entry it reads the source's
 `polypkg.yaml`. For a `prebuilt:` entry it reads the `polypkg.yaml` inside
@@ -341,9 +354,35 @@ the build) and sigstore roots across every such entry and re-publishes one
 repository-level `trust-bundle.json` (+ `.minisig`), signed under the local
 key at the repository's own serial/expiry. A leaf consumer can then still
 verify the original upstream builder identity against the carried-forward
-keys, layered underneath the local repo's own signature. A repository with no
-`prebuilt` entries — or none that stage a `trust_bundle` — emits no
-`trust-bundle.json` at all.
+keys, layered underneath the local repo's own signature.
+
+**Sigstore roots (`sigstore_roots:`).** A package carrying sigstore bundles in
+its `attestations/` — every package `polypkg pkg import` writes from a release
+with GitHub provenance attestations — verifies at the `verified-offline` tier only if the
+consumer has a sigstore root to check it against. List the root files in the
+manifest:
+
+```yaml
+sigstore_roots:
+  - ../imports/sigstore-trusted-root.json   # relative to polypkg-repo.yaml
+```
+
+Each file is a standard sigstore `trusted_root.json`, the format sigstore's
+TUF repository distributes; `pkg import` writes the one it verified against to
+`<out-dir>/sigstore-trusted-root.json`. `repo build` turns each Fulcio
+certificate authority in it into a sigstore root of the trust bundle, with the
+authority's validity window and the Rekor and CT log keys whose validity
+overlaps it, merges those with the roots `prebuilt` entries carry in (duplicates collapse),
+and signs the result into `trust-bundle.json`. A file that is missing or is
+not a valid trusted root fails the build, naming the file.
+
+Consumers trust these roots because your key signs the trust bundle, so list
+only roots you mean to vouch for. Sigstore rotates its keys from time to
+time; when a newer release's attestations stop verifying, re-run
+`pkg import`, which fetches the current root, and rebuild.
+
+A repository with no `sigstore_roots` and no `prebuilt` entry staging a
+`trust_bundle` emits no `trust-bundle.json` at all.
 
 **Native attestation for a prebuilt (`native_attestation:`).** A carried
 attestation under `attestations` keeps the upstream's provenance, but a prebuilt

@@ -29,7 +29,7 @@ import (
 // half-added.
 //
 // Nothing writes the manifest until everything that could fail has run.
-// Preconditions are settled first — the package source directory
+// Preconditions are settled first — every package source directory
 // (repo.ReadPackageSource), --manifest, --key-dir, --valid-for, the key
 // password, and the unlocking of the signing key itself (newBuildPreflight) —
 // and then the edit is computed in memory (repo.PlanAddPackage /
@@ -39,16 +39,19 @@ import (
 
 func newRepoAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add <package-source-dir>",
-		Short: "Register a package source in the manifest and build",
-		Long:  "Reads the package's polypkg.yaml for its name, registers packages.<name>.source in the manifest, then reconciles the repository.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "add <package-source-dir>...",
+		Short: "Register package sources in the manifest and build",
+		Long: "Reads each package's polypkg.yaml for its name, registers packages.<name>.source in the manifest, " +
+			"then reconciles the repository once. Several directories (for example one per platform of a release) " +
+			"are added together: if any of them cannot be read or built, none is added and polypkg-repo.yaml is " +
+			"left unchanged.",
+		Args: needsArgs(1, -1, "at least one <package-source-dir>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
 				return ferr
 			}
-			return WrapError(cmd, format, "repo add", runRepoAdd(cmd, args[0], format))
+			return WrapError(cmd, format, "repo add", runRepoAdd(cmd, args, format))
 		},
 	}
 	addRepoCommonFlags(cmd)
@@ -57,25 +60,59 @@ func newRepoAddCmd() *cobra.Command {
 	return cmd
 }
 
-func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
-	pkg, err := repo.ReadPackageSource(srcDir)
-	if err != nil {
-		return &CLIError{
-			Msg:  fmt.Sprintf("cannot read package source %q", srcDir),
-			Hint: "the directory must contain a polypkg.yaml (schema polypkg.package/v1) and a content/ tree",
-			Err:  err,
+func runRepoAdd(cmd *cobra.Command, srcDirs []string, format Format) error {
+	// A directory given twice is refused before anything else, so the operator
+	// is not asked to unlock the signing key for a batch that cannot run.
+	seen := make(map[string]string, len(srcDirs))
+	for _, srcDir := range srcDirs {
+		abs, err := filepath.Abs(filepath.Clean(srcDir))
+		if err != nil {
+			abs = filepath.Clean(srcDir)
 		}
+		if prev, dup := seen[abs]; dup {
+			return &CLIError{
+				Msg:  fmt.Sprintf("package source %q is given more than once (also as %q)", srcDir, prev),
+				Hint: "pass each package source directory once",
+			}
+		}
+		seen[abs] = srcDir
+	}
+	pkgs := make([]*schema.Package, len(srcDirs))
+	for i, srcDir := range srcDirs {
+		pkg, err := repo.ReadPackageSource(srcDir)
+		if err != nil {
+			return &CLIError{
+				Msg:  fmt.Sprintf("cannot read package source %q", srcDir),
+				Hint: "the directory must contain a polypkg.yaml (schema polypkg.package/v1) and a content/ tree",
+				Err:  err,
+			}
+		}
+		pkgs[i] = pkg
 	}
 	pf, err := newBuildPreflight(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Normalize srcDir to be manifest-relative so Build resolves it correctly
-	// regardless of the cwd that `repo add` was run from.
-	storedSrc := normalizeSrcPath(pf.manifest, srcDir)
+	// Normalize each srcDir to be manifest-relative so Build resolves it
+	// correctly regardless of the cwd that `repo add` was run from. Two
+	// arguments naming the same directory would otherwise collapse into one
+	// entry while the result reported both.
+	adds := make([]repo.PackageAdd, len(srcDirs))
+	given := make(map[string]string, len(srcDirs))
+	for i, srcDir := range srcDirs {
+		storedSrc := normalizeSrcPath(pf.manifest, srcDir)
+		if prev, dup := given[storedSrc]; dup {
+			return &CLIError{
+				Msg:  fmt.Sprintf("package source %q is given more than once (also as %q)", srcDir, prev),
+				Hint: "pass each package source directory once",
+			}
+		}
+		given[storedSrc] = srcDir
+		adds[i] = repo.PackageAdd{Name: pkgs[i].Name, Source: storedSrc}
+	}
 
-	edit, err := repo.PlanAddPackage(pf.manifest, pkg.Name, storedSrc)
+	edit, err := repo.PlanAddPackage(pf.manifest, adds...)
 	if err != nil {
 		return mapPublishError(err)
 	}
@@ -83,10 +120,29 @@ func runRepoAdd(cmd *cobra.Command, srcDir string, format Format) error {
 	if err != nil {
 		return err
 	}
+	added := make([]map[string]string, len(adds))
+	for i, a := range adds {
+		added[i] = map[string]string{
+			"package":  a.Name,
+			"version":  pkgs[i].Version,
+			"platform": platform.Display(pkgs[i].Platform),
+			"source":   a.Source,
+		}
+	}
+	// package and version name the first source, as they did when `repo add`
+	// took exactly one directory; added lists every source.
 	EmitResult(cmd, format, "repo add",
-		map[string]any{"package": pkg.Name, "version": pkg.Version, "serial": res.SerialAfter},
+		map[string]any{"package": pkgs[0].Name, "version": pkgs[0].Version, "serial": res.SerialAfter, "added": added},
 		func(w *bytes.Buffer, d map[string]any) {
-			fmt.Fprintf(w, "Added %s@%s and rebuilt the repository (serial %d)\n", d["package"], d["version"], d["serial"])
+			entries, _ := d["added"].([]map[string]string)
+			if len(entries) == 1 {
+				fmt.Fprintf(w, "Added %s@%s and rebuilt the repository (serial %d)\n", d["package"], d["version"], d["serial"])
+				return
+			}
+			fmt.Fprintf(w, "Added %d package sources and rebuilt the repository (serial %d)\n", len(entries), d["serial"])
+			for _, e := range entries {
+				fmt.Fprintf(w, "  %s@%s (%s)\n", e["package"], e["version"], e["platform"])
+			}
 		})
 	return nil
 }

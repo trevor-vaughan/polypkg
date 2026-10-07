@@ -1,0 +1,82 @@
+{
+  "note": "Representative fixture: asset names reconstructed from the release naming of jq 1.7.1 (jqlang/jq), not recorded from the GitHub API.",
+  "assets": [
+    "jq-1.7.1.tar.gz",
+    "jq-1.7.1.zip",
+    "jq-linux-amd64",
+    "jq-linux-arm64",
+    "jq-linux-armel",
+    "jq-linux-armhf",
+    "jq-linux-i386",
+    "jq-linux-mips",
+    "jq-linux-mips64",
+    "jq-linux-mips64el",
+    "jq-linux-mips64r6",
+    "jq-linux-mips64r6el",
+    "jq-linux-mipsel",
+    "jq-linux-mipsr6",
+    "jq-linux-mipsr6el",
+    "jq-linux-powerpc",
+    "jq-linux-ppc64el",
+    "jq-linux-riscv64",
+    "jq-linux-s390x",
+    "jq-linux64",
+    "jq-macos-amd64",
+    "jq-macos-arm64",
+    "jq-osx-amd64",
+    "jq-win64.exe",
+    "jq-windows-amd64.exe",
+    "jq-windows-i386.exe",
+    "sha256sum.txt"
+  ],
+  "cases": [
+    {
+      "name": "heuristics only",
+      "ambiguity": {
+        "platform": "darwin/amd64",
+        "candidates": [
+          "jq-macos-amd64",
+          "jq-osx-amd64"
+        ]
+      }
+    },
+    {
+      "name": "legacy alias resolved; an unrecognised arch added",
+      "overrides": {
+        "darwin/amd64": "jq-macos-amd64",
+        "linux/ppc64le": "jq-linux-ppc64el"
+      },
+      "chosen": {
+        "darwin/amd64": "jq-macos-amd64",
+        "darwin/arm64": "jq-macos-arm64",
+        "linux/386": "jq-linux-i386",
+        "linux/amd64": "jq-linux-amd64",
+        "linux/arm64": "jq-linux-arm64",
+        "linux/mips": "jq-linux-mips",
+        "linux/mips64": "jq-linux-mips64",
+        "linux/ppc64le": "jq-linux-ppc64el",
+        "linux/riscv64": "jq-linux-riscv64",
+        "linux/s390x": "jq-linux-s390x"
+      },
+      "skipped": {
+        "jq-1.7.1.tar.gz": "no OS or architecture token",
+        "jq-1.7.1.zip": "no OS or architecture token",
+        "jq-linux-armel": "unrecognised architecture variant \"armel\"",
+        "jq-linux-armhf": "32-bit ARM (platform variants are not supported)",
+        "jq-linux-mips64el": "unrecognised architecture variant \"mips64el\"",
+        "jq-linux-mips64r6": "unrecognised architecture variant \"mips64r6\"",
+        "jq-linux-mips64r6el": "unrecognised architecture variant \"mips64r6el\"",
+        "jq-linux-mipsel": "unrecognised architecture variant \"mipsel\"",
+        "jq-linux-mipsr6": "unrecognised architecture variant \"mipsr6\"",
+        "jq-linux-mipsr6el": "unrecognised architecture variant \"mipsr6el\"",
+        "jq-linux-powerpc": "unrecognised architecture variant \"powerpc\"",
+        "jq-linux64": "no OS or architecture token",
+        "jq-osx-amd64": "jq-macos-amd64 preferred for darwin/amd64",
+        "jq-win64.exe": "Windows asset",
+        "jq-windows-amd64.exe": "Windows asset",
+        "jq-windows-i386.exe": "Windows asset",
+        "sha256sum.txt": "signature, checksum or metadata file"
+      }
+    }
+  ]
+}

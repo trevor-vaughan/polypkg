@@ -1,0 +1,164 @@
+name: pkg import — a GitHub release imported, published, installed, verified offline
+# Drives `polypkg pkg import` against the github-fake service
+# (tests/e2e/ghfake): acme/hello v1.2.0 with attested linux/amd64 and
+# linux/arm64 .tar.gz assets and a Windows .zip the importer skips. The fake
+# mints genuine sigstore bundles at start, under its own throwaway Fulcio CA
+# and Rekor log, and writes the trusted root that verifies them to
+# /ghfake/trusted_root.json; --trusted-root hands that root to the import in
+# place of the Sigstore public-good one. Beside each provenance bundle it
+# serves a GitHub-shaped release attestation under an unrelated CA, which the
+# import notes and skips.
+#
+# The repository is private to this suite (its own key, manifest, and
+# file:// output under /tmp), so the sigstore_roots it publishes cannot
+# change what the shared repository serves the other suites.
+vars:
+  api: 'http://github-fake:8080'
+  ghroot: '/ghfake/trusted_root.json'
+  work: '/tmp/u59'
+  imports: '/tmp/u59/imports'
+  repo: '/tmp/u59/repo'
+  keys: '/tmp/u59/keys'
+  px: 'env HOME=/tmp/u59 XDG_DATA_HOME=/tmp/u59/data XDG_CONFIG_HOME=/tmp/u59/cfg XDG_STATE_HOME=/tmp/u59/state XDG_CACHE_HOME=/tmp/u59/cache /usr/local/bin/polypkg'
+  pin_home: '/tmp/u59-pin'
+  pin_px: 'env HOME=/tmp/u59-pin XDG_DATA_HOME=/tmp/u59-pin/data XDG_CONFIG_HOME=/tmp/u59-pin/cfg XDG_STATE_HOME=/tmp/u59-pin/state XDG_CACHE_HOME=/tmp/u59-pin/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: pkg import writes one lint-clean package source per platform
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.work}}
+          mkdir -p {{.work}}
+          {{.px}} pkg import github:acme/hello@v1.2.0 {{.imports}} --api-url {{.api}} --trusted-root {{.ghroot}} --require-attestation
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "Imported hello 1.2.0 from github:acme/hello@v1.2.0"'
+          - result.systemout ShouldContainSubstring hello_1.2.0_linux_amd64.tar.gz
+          - result.systemout ShouldContainSubstring hello_1.2.0_linux_arm64.tar.gz
+          - result.systemout ShouldContainSubstring github-digest
+          - 'result.systemout ShouldContainSubstring "note: linux/amd64: skipped an attestation with predicate type"'
+          - result.systemout ShouldContainSubstring https://in-toto.io/attestation/release/v0.2
+          - result.systemout ShouldContainSubstring hello_1.2.0_windows_amd64.zip
+          - 'result.systemout ShouldContainSubstring "polypkg repo add"'
+      - type: exec
+        script: |
+          set -e
+          for p in linux-amd64 linux-arm64; do
+            /usr/local/bin/polypkg pkg lint {{.imports}}/hello/1.2.0/$p
+            ls {{.imports}}/hello/1.2.0/$p/attestations/*.json
+          done
+          test -s {{.imports}}/sigstore-trusted-root.json && echo ROOT_WRITTEN
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring ROOT_WRITTEN
+
+  - name: a second import into the same directory is refused and changes nothing
+    steps:
+      - type: exec
+        script: |
+          before=$(find {{.imports}} -type f | sort | xargs sha256sum | sha256sum)
+          {{.px}} pkg import github:acme/hello@v1.2.0 {{.imports}} --api-url {{.api}} --trusted-root {{.ghroot}} 2>&1
+          echo "exit=$?"
+          after=$(find {{.imports}} -type f | sort | xargs sha256sum | sha256sum)
+          if [ "$before" = "$after" ]; then echo UNCHANGED; fi
+        assertions:
+          - result.systemout ShouldNotContainSubstring "exit=0"
+          - result.systemout ShouldContainSubstring "already exists"
+          - result.systemout ShouldContainSubstring UNCHANGED
+
+  - name: one repo add publishes both platforms, and the build publishes the sigstore root
+    steps:
+      - type: exec
+        script: |
+          set -e
+          {{.px}} repo init {{.repo}} --source ghimport --key-dir {{.keys}}
+          printf 'sigstore_roots:\n  - %s\n' {{.imports}}/sigstore-trusted-root.json >> {{.repo}}/polypkg-repo.yaml
+          {{.px}} repo add --manifest {{.repo}}/polypkg-repo.yaml {{.imports}}/hello/1.2.0/linux-amd64 {{.imports}}/hello/1.2.0/linux-arm64
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring hello
+      - type: exec
+        script: |
+          set -e
+          {{.px}} repo build --manifest {{.repo}}/polypkg-repo.yaml
+          grep -q linux-amd64 {{.repo}}/polypkg-repo.yaml && grep -q linux-arm64 {{.repo}}/polypkg-repo.yaml && echo BOTH_REGISTERED
+          test -s {{.repo}}/public/trust-bundle.json && echo TRUST_BUNDLE
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring BOTH_REGISTERED
+          - result.systemout ShouldContainSubstring TRUST_BUNDLE
+
+  - name: install runs the imported binary and records it verified-offline
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url file://{{.repo}}/public --trust-root-file {{.repo}}/public/trust_root.pub --source-name ghimport --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} install hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.work}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "hello from a GitHub release"'
+      - type: exec
+        script: '{{.px}} status -vv'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "[carried: verified-offline]"'
+      - type: exec
+        script: '{{.px}} --format json info hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "https://github.com/acme/hello/.github/workflows/release.yml@refs/tags/v1.2.0"'
+
+  # The trust-policy guide's GitHub Actions allow-list example, end to end:
+  # a sigstore entry naming the workflow that built the asset installs under
+  # require, and one naming another repository's workflow is refused.
+  - name: a builders.allow sigstore entry for the GitHub Actions identity gates the install
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.pin_home}}
+          mkdir -p {{.pin_home}}
+          for san in acme/hello acme/other; do
+            cat > {{.pin_home}}/$(echo $san | tr / -).yaml <<EOF
+          schema: polypkg.spec/v1
+          name: ghpin
+          scopes:
+            user:
+              substrate: store
+          sources:
+            order: [ghimport]
+            ghimport:
+              type: polypkg-native
+              url: file://{{.repo}}/public
+              trust_root: {{.repo}}/public/trust_root.pub
+              attestation:
+                require: [https://slsa.dev/provenance/v1]
+                builders:
+                  allow:
+                    - sigstore:
+                        issuer: https://token.actions.githubusercontent.com
+                        san: https://github.com/$san/.github/workflows/release.yml@*
+          packages:
+            user:
+              hello:
+                version: ">=1.0.0"
+          EOF
+          done
+      - type: exec
+        script: '{{.pin_px}} apply --scope user {{.pin_home}}/acme-other.yaml'
+        assertions:
+          - result.code ShouldNotEqual 0
+      - type: exec
+        script: '{{.pin_px}} apply --scope user {{.pin_home}}/acme-hello.yaml'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation 1"

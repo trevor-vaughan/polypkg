@@ -59,14 +59,15 @@ tasks:
     cmd: 'go run {{.ROOT_DIR}}/tests/e2e/provenancegen -o {{.OUT_DIR}}/provenance-fixtures && chmod -R a+rX {{.OUT_DIR}}/provenance-fixtures'
 
   up:
-    desc: 'Start the repo-server and wait until it serves the trust root'
+    desc: 'Start the repo-server and the fake GitHub, and wait until both serve'
     env:
       RUNNER_IMAGE: 'polypkg-e2e:{{.DISTRO}}'
       DISTRO: '{{.DISTRO}}'
     cmds:
       - task: provenance:fixtures
-      - '{{.COMPOSE}} up -d repo-server'
+      - '{{.COMPOSE}} up -d repo-server github-fake'
       - '{{.COMPOSE}} exec -T repo-server sh -s -- http://localhost:8080/trust_root.pub < {{.ROOT_DIR}}/tests/e2e/scripts/wait-http.sh'
+      - '{{.COMPOSE}} exec -T github-fake sh -s -- /ghfake/trusted_root.json < {{.ROOT_DIR}}/tests/e2e/scripts/wait-file.sh'
 
   user:
     desc: 'Run the user-scope (non-root) venom suites'

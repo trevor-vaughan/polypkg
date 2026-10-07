@@ -1,10 +1,11 @@
 package action
 
-// namePattern is the ASCII-slug charset shared by command/alternative names.
+// NamePattern is the ASCII-slug charset shared by command/alternative names.
 // It is the single source of the grammar: the ParamSpec tables below reference
 // it declaratively (pkglint), and the handlers' runtime regexps (altNameRe,
-// pathNameRe, completionNameRe) compile it directly.
-const namePattern = `^[a-zA-Z0-9_-]+$`
+// pathNameRe, completionNameRe) compile it directly, as does pkg import's
+// --bin check (importer.CheckBins).
+const NamePattern = `^[a-zA-Z0-9_-]+$`
 
 // ParamKind classifies an action parameter's expected literal value. Params whose
 // value is a computed !starlark expression are not type-checked (see Phase B).
@@ -131,7 +132,7 @@ var Registry = map[string]Spec{
 	"path": {
 		Name: "path", FilePlacing: true, Handler: Path,
 		Params: []ParamSpec{
-			{Name: "name", Required: true, Kind: KindString, Pattern: namePattern},
+			{Name: "name", Required: true, Kind: KindString, Pattern: NamePattern},
 			{Name: "source", Required: true, Kind: KindPath},
 		},
 	},
@@ -139,9 +140,9 @@ var Registry = map[string]Spec{
 		Name: "alternatives", FilePlacing: true, Handler: Alternatives,
 		Params: []ParamSpec{
 			{Name: "source", Required: true, Kind: KindPath},
-			{Name: "name", Kind: KindString, Pattern: namePattern},
+			{Name: "name", Kind: KindString, Pattern: NamePattern},
 			{Name: "priority", Kind: KindInt},
-			{Name: "master", Kind: KindString, Pattern: namePattern},
+			{Name: "master", Kind: KindString, Pattern: NamePattern},
 			{Name: "link", Kind: KindString},
 		},
 		Constraints: []Constraint{
@@ -154,7 +155,7 @@ var Registry = map[string]Spec{
 		Name: "completion", FilePlacing: true, Handler: Completion,
 		Params: []ParamSpec{
 			{Name: "shell", Required: true, Kind: KindEnum, Enum: []string{"bash", "zsh", "fish"}},
-			{Name: "name", Required: true, Kind: KindString, Pattern: namePattern},
+			{Name: "name", Required: true, Kind: KindString, Pattern: NamePattern},
 			{Name: "source", Required: true, Kind: KindPath},
 		},
 	},

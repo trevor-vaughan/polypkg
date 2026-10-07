@@ -75,3 +75,9 @@ func ValidateProducer(p string) error {
 	}
 	return nil
 }
+
+// Ports returns every <os>/<arch> pair ValidateProducer accepts, sorted. The
+// slice is a copy; callers may modify it.
+func Ports() []string {
+	return slices.Clone(knownPorts)
+}

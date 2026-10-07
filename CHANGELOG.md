@@ -173,9 +173,38 @@ and on-disk formats may change in breaking ways.
     would have truncated (PKG010).
   - New dependency: `github.com/ulikunitz/xz` v0.5.17 (BSD-3-Clause, no
     transitive dependencies) reads `.tar.xz`.
+- `polypkg pkg import github:OWNER/REPO[@TAG] <out-dir>` turns a GitHub
+  release into publish-ready package sources, one per platform, each shipping
+  the upstream asset byte for byte. Assets are matched to platforms by name
+  (Windows, OS packages, metadata, and 32-bit ARM are skipped and listed), an
+  ambiguity is resolved by `--platform OS/ARCH=GLOB` or refused, and each
+  asset's sha256 must match GitHub's digest or the release's checksums file
+  (`--insecure-skip-digest` imports one with neither, marked `UNVERIFIED`).
+  GitHub artifact attestations are verified offline against the Sigstore
+  public-good root (or `--trusted-root`), kept only when issued to GitHub
+  Actions for the release's own repository, and carried so installs record
+  them as `verified-offline`; other attestation kinds, such as GitHub's
+  release attestation, are skipped with a note. `--require-attestation`
+  refuses a platform without one. `GITHUB_TOKEN`/`GH_TOKEN` raise the rate
+  limit and are sent to the API host only. A failed import leaves the output
+  directory as it was.
+  See [docs/authoring.md](docs/authoring.md#import-a-github-release-polypkg-pkg-import).
+- `polypkg-repo.yaml` accepts `sigstore_roots:`, a list of sigstore
+  `trusted_root.json` files (relative to the manifest unless absolute) that
+  `repo build` publishes in the signed trust bundle, so carried sigstore
+  bundles verify offline without a `prebuilt` entry. A missing or malformed
+  file fails the build. See
+  [docs/publishing.md](docs/publishing.md).
+- `task test:live`, an opt-in test that imports the latest GitHub CLI release
+  from the real GitHub and requires a verified attestation for the host
+  platform.
 
 ### Changed
 
+- `repo add` takes one or more package source directories and adds them in a
+  single rebuild; any failure leaves `polypkg-repo.yaml` byte-identical.
+- The README Quickstart now starts from nothing: create a repository, import a
+  tool from GitHub, publish it, and install it.
 - `gc` now also prunes the download cache (`cache/<source>/` in the state
   dir), which used to keep every package ever downloaded. Cached packages and
   attestations that no retained or pinned generation records are removed

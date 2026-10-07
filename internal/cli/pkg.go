@@ -2,20 +2,22 @@ package cli
 
 import "github.com/spf13/cobra"
 
-// newPkgCmd is the package-author command group: init → lint → build. It mirrors
-// newRepoCmd's subgroup registration (AddGroup + per-command GroupID), so the
-// group table below is the single source of truth for both display order and
-// group membership.
+// newPkgCmd is the package-author command group: init or import → lint →
+// build. It mirrors newRepoCmd's subgroup registration (AddGroup +
+// per-command GroupID), so the group table below is the single source of
+// truth for both display order and group membership.
 //
-// `pkg init` (getting-started), `pkg lint` + `pkg build` (author loop), and
-// `pkg explain` (reference) are registered here via the group table below.
+// `pkg init` and `pkg import` (getting-started), `pkg lint` + `pkg build`
+// (author loop), and `pkg explain` (reference) are registered here via the
+// group table below.
 func newPkgCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pkg",
-		Short: "Author, validate, and build a polypkg package source",
-		Long: `Scaffold a package source, lint it against structure, action, parameter, and
-identity rules, and build an unsigned artifact plus an unsigned attestation
-preview. No signing key or repository is required.`,
+		Short: "Author, import, validate, and build a polypkg package source",
+		Long: `Scaffold a package source, or generate one per platform from a GitHub release;
+lint it against structure, action, parameter, and identity rules; and build an
+unsigned artifact plus an unsigned attestation preview. No signing key or
+repository is required.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: requireSubcommand(""),
 	}
@@ -26,6 +28,7 @@ preview. No signing key or repository is required.`,
 	}{
 		{"getting-started", "Getting started:", []*cobra.Command{
 			newPkgInitCmd(),
+			newPkgImportCmd(),
 		}},
 		{"authoring", "Author loop:", []*cobra.Command{
 			newPkgLintCmd(),

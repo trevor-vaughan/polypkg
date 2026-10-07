@@ -18,11 +18,14 @@ RUN go mod download
 COPY . .
 # CGO-free so the binary runs on glibc (CentOS/Ubuntu) AND musl (Alpine).
 RUN CGO_ENABLED=0 go build -trimpath -o /out/polypkg ./cmd/polypkg
+# The fake GitHub the `pkg import` suite runs as the github-fake service.
+RUN CGO_ENABLED=0 go build -trimpath -o /out/ghfake ./tests/e2e/ghfake
 
 # --- runtime: matrix base ------------------------------------------------
 FROM ${BASE_IMAGE}
 COPY --from=builder /out/polypkg /usr/local/bin/polypkg
 COPY --from=builder /out/venom   /usr/local/bin/venom
+COPY --from=builder /out/ghfake  /usr/local/bin/ghfake
 WORKDIR /e2e
 # Smoke the static binaries at build time so a broken (e.g. CGO) build fails the
 # image build, not a test 10 minutes later. The venom suites and fixtures are

@@ -250,6 +250,21 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 		}
 	}
 
+	// The trust bundle changes without any package changing when a
+	// sigstore_roots file or a carried trust_bundle is added, edited, or
+	// dropped; Build publishes (or withdraws) it at a new serial, so status must
+	// say so.
+	tb, err := collectTrustBundle(i.layout)
+	if err != nil {
+		return false, "", err
+	}
+	switch changed, orphaned := tb.publishedChange(i.layout.outputDir); {
+	case changed:
+		return true, "trust bundle is new or changed", nil
+	case orphaned:
+		return true, "published trust bundle is no longer backed by the manifest and will be withdrawn", nil
+	}
+
 	// No content change — but Build restamps expires (and bumps the serial)
 	// when the published expiry is absent, unparseable, or below its half-life
 	// (D13/D-C1 renewal), so status must report that as pending too. The window
@@ -392,6 +407,16 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	// carries no usable entry (see the revision derivation in the loop below).
 	pubIdx := publishedIndex(lay.outputDir)
 
+	// The repo-level trust bundle: roots converted from sigstore_roots plus the
+	// builder keys and roots every prebuilt entry carries in, re-emitted under
+	// the local key. Collected before anything is written, so a bad
+	// sigstore_roots file or carried bundle fails the build with the output
+	// directory untouched.
+	tb, err := collectTrustBundle(lay)
+	if err != nil {
+		return Result{}, err
+	}
+
 	// Pool blobs are content-addressed under <output>/pool (D10).
 	if err := os.MkdirAll(filepath.Join(lay.outputDir, "pool"), 0o755); err != nil { //nolint:gosec // G301: output dir is served over HTTP; 0755 is intentional
 		return Result{}, &PublishError{
@@ -417,13 +442,6 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	newEntries := make(map[string]CacheEntry, len(names))
 	changed := false
 
-	// Trust-bundle carry-forward (D-2e3-2): merge the builder keys + sigstore
-	// roots every prebuilt entry stages, then re-emit one repo-level bundle under
-	// the local key. Stays empty unless a prebuilt entry carries an upstream bundle.
-	bundleKeys := map[string]schema.BuilderKey{}
-	var bundleOrder []string
-	var bundleRoots []schema.SigstoreRoot
-
 	for _, name := range names {
 		// Every entry under one name is checked against the per-name build
 		// rules (see entryRules) on all four paths below — prebuilt and source,
@@ -432,11 +450,6 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 
 		for _, pkg := range lay.manifest.Packages[name] {
 			if pkg.Prebuilt != nil {
-				if pkg.Prebuilt.TrustBundle != "" {
-					if err := mergeCarriedBundle(resolveRel(lay.manifestDir, pkg.Prebuilt.TrustBundle), bundleKeys, &bundleOrder, &bundleRoots); err != nil {
-						return Result{}, err
-					}
-				}
 				w, hit, err := b.ingestPackage(lay, name, pkg.Prebuilt, cache)
 				if err != nil {
 					return Result{}, err
@@ -556,14 +569,10 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	// bump the serial. The trust_root.pub comparison catches the key-rotation
 	// case: if the on-disk pub file doesn't match the currently loaded key, the
 	// trust root is stale and must be re-emitted with a new serial.
-	bundleChanged := (len(bundleOrder) > 0 || len(bundleRoots) > 0) &&
-		!publishedBundleMatches(lay.outputDir, bundleKeys, bundleRoots)
-	// A prior build may have published trust-bundle.json from carried builder
-	// keys. If the current build carries none, that bundle is orphaned and would
-	// keep vouching for dropped upstream keys — treat its removal as a change so
-	// the trust set is re-signed at a new serial, then prune it after publish.
-	bundleOrphaned := len(bundleOrder) == 0 && len(bundleRoots) == 0 &&
-		publishedTrustBundleExists(lay.outputDir)
+	// An orphaned trust-bundle.json (published earlier, nothing to publish now)
+	// counts as a change so the trust set is re-signed at a new serial; it is
+	// pruned after publish.
+	bundleChanged, bundleOrphaned := tb.publishedChange(lay.outputDir)
 	serial := before
 	idxPath := filepath.Join(lay.outputDir, "index.json")
 	trustRootPubPath := filepath.Join(lay.outputDir, "trust_root.pub")
@@ -574,10 +583,7 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	}
 
 	// Assemble the merged repo-level trust bundle with the FINAL serial + expires.
-	var mergedBundle *schema.TrustBundle
-	if len(bundleOrder) > 0 || len(bundleRoots) > 0 {
-		mergedBundle = buildCarriedBundle(lay.manifest.Source, serial, expires, bundleKeys, bundleOrder, bundleRoots)
-	}
+	mergedBundle := buildCarriedBundle(lay.manifest.Source, serial, expires, tb.keys, tb.order, tb.roots)
 
 	// Build the trust document with the new serial.
 	trust := schema.TrustDoc{

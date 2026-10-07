@@ -83,6 +83,17 @@ tasks:
       - task: vm:run
         vars: {DISTRO: '{{.DISTRO | default "all"}}'}
 
+  # test:live reaches the real network (api.github.com, GitHub's release and
+  # attestation storage, and the Sigstore TUF CDN), so it is opt-in and in no
+  # default chain. GITHUB_TOKEN or GH_TOKEN, when set, raises GitHub's rate
+  # limit; the import makes two API requests plus one per page of
+  # attestations for each matched asset.
+  test:live:
+    desc: 'Opt-in network test: pkg import the latest cli/cli release and check its attestation'
+    env:
+      POLYPKG_TEST_LIVE: '1'
+    cmd: "{{.GO}} test -count=1 -timeout 15m -run '^TestLiveGitHubImport$' -v ./tests/live/"
+
   clean:
     desc: Remove build artifacts and test output
     cmd: rm -rf {{.BUILD_DIR}} {{.TEST_DIR}}

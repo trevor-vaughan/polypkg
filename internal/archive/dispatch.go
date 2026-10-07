@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 
@@ -46,6 +47,45 @@ func Extract(ra io.ReaderAt, size int64, root *os.Root, opts Options) ([]Placed,
 	if err != nil {
 		return nil, err
 	}
+	return walkArchive(ra, size, root, opts)
+}
+
+// Member is one filesystem object List reports: what Extract would place at
+// Path under the same Options.
+type Member struct {
+	Path string      // slash-separated, relative to the extraction root
+	Kind string      // KindFile, KindDir or KindSymlink
+	Mode fs.FileMode // the mode Extract would set; zero for a symlink
+}
+
+// List reports what Extract would place for the archive held in ra (size
+// bytes long) under opts — the same members, in the same order, with the same
+// refusals — without writing anything. opts.Policy must be PolicyStrict. Every
+// member is decompressed and read, so the per-file, total and entry limits
+// apply exactly as they do to Extract, and paths are reported after
+// StripComponents and Include. Implicitly created parent directories are
+// reported as Extract reports them.
+func List(ra io.ReaderAt, size int64, opts Options) ([]Member, error) {
+	if opts.Policy != PolicyStrict {
+		return nil, errors.New("archive: List supports only PolicyStrict")
+	}
+	if err := checkStrictOptions(opts); err != nil {
+		return nil, err
+	}
+	placed, err := walkArchive(ra, size, nil, opts)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]Member, len(placed))
+	for i, p := range placed {
+		members[i] = Member{Path: p.Path, Kind: p.Kind, Mode: p.Mode}
+	}
+	return members, nil
+}
+
+// walkArchive extracts the archive in ra by opts.Format or, when root is nil,
+// lists it; the caller has validated opts. Only PolicyStrict can list.
+func walkArchive(ra io.ReaderAt, size int64, root *os.Root, opts Options) ([]Placed, error) {
 	switch opts.Format {
 	case FormatZip:
 		if opts.Policy != PolicyStrict {
@@ -69,7 +109,8 @@ func Extract(ra io.ReaderAt, size int64, root *os.Root, opts Options) ([]Placed,
 }
 
 // extractTarFormat decompresses r as opts.Format, checks that the payload is a
-// tar stream, and hands it to ExtractTar.
+// tar stream, and walks it: with the strict extractor under PolicyStrict
+// (which lists instead of extracting when root is nil), else with ExtractTar.
 func extractTarFormat(r io.Reader, root *os.Root, opts Options) ([]Placed, error) {
 	stream, compression := r, ""
 	switch opts.Format {
@@ -109,6 +150,9 @@ func extractTarFormat(r io.Reader, root *os.Root, opts Options) ([]Placed, error
 			return nil, errors.New("archive is not a tar archive")
 		}
 		return nil, fmt.Errorf("archive is %s-compressed but does not contain a tar archive", compression)
+	}
+	if opts.Policy == PolicyStrict {
+		return extractStrict(tarMembers(payload), root, opts)
 	}
 	return ExtractTar(payload, root, opts)
 }

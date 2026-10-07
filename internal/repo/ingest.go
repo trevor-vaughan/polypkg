@@ -174,8 +174,8 @@ func buildCarriedBundle(localSource string, serial uint64, expires string, keys 
 
 // publishedBundleMatches reports whether the currently published trust-bundle.json
 // already carries exactly the merged builder keys (by full material — id, key,
-// algo, validity) and sigstore roots (serial and expires excluded — derived, like
-// the index compare). Folds carry-forward into the changed-decision so a no-op
+// algo, validity; in any order) and sigstore roots (in the same order), serial
+// and expires excluded — derived, like the index compare. Folds carry-forward into the changed-decision so a no-op
 // rebuild stays serial-stable but any change in carried material bumps the serial.
 func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey, roots []schema.SigstoreRoot) bool {
 	raw, err := os.ReadFile(filepath.Join(outputDir, "trust-bundle.json")) //nolint:gosec // G304: our own prior published doc
@@ -195,15 +195,9 @@ func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey,
 			return false
 		}
 	}
-	if len(tb.SigstoreRoots) != len(roots) {
-		return false
-	}
-	for i := range roots {
-		if !containsRoot(tb.SigstoreRoots, roots[i]) {
-			return false
-		}
-	}
-	return true
+	// Roots compare in order: consumers select the first root whose window
+	// holds a bundle's time, so a reordering changes what verifies.
+	return slices.EqualFunc(tb.SigstoreRoots, roots, sigstoreRootEqual)
 }
 
 // nativeAttestationRef reads a publisher-supplied native SARIF attestation preview,

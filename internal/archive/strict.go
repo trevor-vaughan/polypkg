@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Member-name bounds. A name is refused beyond them, which also bounds the
@@ -36,15 +37,18 @@ type strictMember struct {
 // and stops at the first error.
 type memberWalker func(visit func(strictMember) error) error
 
-// strictExtractor holds the state of one PolicyStrict extraction.
+// strictExtractor holds the state of one PolicyStrict extraction. A nil root
+// lists instead: every check runs and every member is read, but nothing is
+// written (List).
 type strictExtractor struct {
 	root    *os.Root
 	opts    Options
 	entries int
 	total   int64
-	seen    map[string]bool // stripped member paths already extracted
-	dirs    map[string]bool // directories this extraction created
-	matched []bool          // matched[i]: opts.Include[i] selected some member
+	seen    map[string]bool   // stripped member paths already extracted
+	dirs    map[string]bool   // directories this extraction created
+	nonDirs map[string]string // KindFile or KindSymlink of every other path placed
+	matched []bool            // matched[i]: opts.Include[i] selected some member
 	placed  []Placed
 	kept    bool // some member kept a path after StripComponents
 	// shallowest is the fewest path segments of any member StripComponents
@@ -56,7 +60,8 @@ type strictExtractor struct {
 // PolicyStrict. root must be empty: a refusal leaves whatever was written so
 // far in place, and the caller discards the whole tree. A member that needs a
 // directory this extraction did not create is refused, so a non-empty root is
-// never trusted.
+// never trusted. A nil root lists: the walk is identical, but nothing is
+// written.
 func extractStrict(walk memberWalker, root *os.Root, opts Options) ([]Placed, error) {
 	if err := checkStrictOptions(opts); err != nil {
 		return nil, err
@@ -66,6 +71,7 @@ func extractStrict(walk memberWalker, root *os.Root, opts Options) ([]Placed, er
 		opts:    opts,
 		seen:    map[string]bool{},
 		dirs:    map[string]bool{},
+		nonDirs: map[string]string{},
 		matched: make([]bool, len(opts.Include)),
 	}
 	if err := walk(x.place); err != nil {
@@ -149,6 +155,9 @@ func (x *strictExtractor) place(m strictMember) error {
 	if x.seen[rel] {
 		return fmt.Errorf("extraction rejected: duplicate archive member %q", rel)
 	}
+	if m.kind != KindDir && x.dirs[rel] {
+		return fmt.Errorf("extraction rejected: %q is a %s, but an earlier member needs %q to be a directory", m.name, m.kind, rel)
+	}
 	x.seen[rel] = true
 	if err := x.mkParents(rel); err != nil {
 		return err
@@ -180,7 +189,8 @@ func (x *strictExtractor) countEntry() error {
 // --strip-components does. Segments are counted before cleaning, so
 // "./pkg/bin" has three, matching GNU tar. A ".." segment is refused wherever
 // it appears, even in a part that strip would remove. Names are also refused
-// when they are too long or deep, hold a NUL byte, or carry a ':' in the
+// when they are too long or deep, hold a NUL byte or another control or
+// format character (checkNameRunes), or carry a ':' in the
 // first segment of the path placed, which Windows reads as a drive
 // ("C:evil"); that check runs after strip and cleaning, so neither a
 // leading "./" nor a stripped prefix hides it.
@@ -192,6 +202,11 @@ func memberPath(name string, strip int) (rel string, ok bool, err error) {
 		return "", false, fmt.Errorf("extraction rejected: member name %q... is longer than %d bytes", name[:64], maxMemberName)
 	case strings.ContainsRune(name, 0):
 		return "", false, fmt.Errorf("extraction rejected: member name %q contains a NUL byte", name)
+	}
+	if err := checkNameRunes(name); err != nil {
+		return "", false, err
+	}
+	switch {
 	case strings.HasPrefix(name, "/"):
 		return "", false, fmt.Errorf("extraction rejected: absolute member name %q", name)
 	case strings.Contains(name, `\`):
@@ -214,6 +229,23 @@ func memberPath(name string, strip int) (rel string, ok bool, err error) {
 		return "", false, fmt.Errorf("extraction rejected: member name %q has a ':' in its first segment, which Windows reads as a drive", name)
 	}
 	return rel, true, nil
+}
+
+// checkNameRunes refuses a member name holding a C0 or C1 control character,
+// DEL, or a Unicode format character (bidi overrides, zero-width joiners).
+// Such names display as something other than what they are, and printed raw
+// they can drive a terminal; polypkg never places one. The whole name is
+// checked, including any part StripComponents would remove.
+func checkNameRunes(name string) error {
+	for _, r := range name {
+		switch {
+		case unicode.IsControl(r):
+			return fmt.Errorf("extraction rejected: member name %q contains the control character %U", name, r)
+		case unicode.Is(unicode.Cf, r):
+			return fmt.Errorf("extraction rejected: member name %q contains the format character %U", name, r)
+		}
+	}
+	return nil
 }
 
 // memberSegments splits a member name into its non-empty path segments, the
@@ -262,19 +294,26 @@ func (x *strictExtractor) mkParents(rel string) error {
 	return nil
 }
 
-// mkdir creates dir, needed by the member at rel, with exactly opts.DirPerm,
-// and records it. Something already at dir was not created by this
-// extraction as a directory (x.dirs says so), so it is refused.
+// mkdir records dir, needed by the member at rel, as a directory with exactly
+// opts.DirPerm, creating it unless the walk only lists. Something already at
+// dir was not created by this extraction as a directory (x.dirs says so), so
+// it is refused.
 func (x *strictExtractor) mkdir(rel, dir string) error {
-	if err := x.root.Mkdir(dir, x.opts.DirPerm); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return x.refuseExisting(rel, dir)
+	if x.root == nil {
+		if kind, ok := x.nonDirs[dir]; ok {
+			return refuseNonDir(rel, dir, kind)
 		}
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	// Mkdir is filtered by the umask; Chmod sets the scope's mode exactly.
-	if err := x.root.Chmod(dir, x.opts.DirPerm); err != nil {
-		return fmt.Errorf("chmod %s: %w", dir, err)
+	} else {
+		if err := x.root.Mkdir(dir, x.opts.DirPerm); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return x.refuseExisting(rel, dir)
+			}
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+		// Mkdir is filtered by the umask; Chmod sets the scope's mode exactly.
+		if err := x.root.Chmod(dir, x.opts.DirPerm); err != nil {
+			return fmt.Errorf("chmod %s: %w", dir, err)
+		}
 	}
 	x.dirs[dir] = true
 	x.placed = append(x.placed, Placed{Path: dir, Kind: KindDir, Mode: x.opts.DirPerm})
@@ -290,12 +329,21 @@ func (x *strictExtractor) refuseExisting(rel, dir string) error {
 	case err != nil:
 		return fmt.Errorf("inspect %s: %w", dir, err)
 	case info.Mode()&fs.ModeSymlink != 0:
-		return fmt.Errorf("extraction rejected: %q passes through the symlink %q", rel, dir)
+		return refuseNonDir(rel, dir, KindSymlink)
 	case info.IsDir():
 		return fmt.Errorf("extraction rejected: %q needs the directory %q, which existed before extraction; extract into an empty directory", rel, dir)
 	default:
-		return fmt.Errorf("extraction rejected: %q needs %q to be a directory, but the archive placed a file there", rel, dir)
+		return refuseNonDir(rel, dir, KindFile)
 	}
+}
+
+// refuseNonDir explains why the member at rel cannot have the directory dir:
+// the archive placed a kind (KindSymlink or KindFile) there.
+func refuseNonDir(rel, dir, kind string) error {
+	if kind == KindSymlink {
+		return fmt.Errorf("extraction rejected: %q passes through the symlink %q", rel, dir)
+	}
+	return fmt.Errorf("extraction rejected: %q needs %q to be a directory, but the archive placed a file there", rel, dir)
 }
 
 // placeDir extracts a directory member. A directory already created as the
@@ -309,26 +357,34 @@ func (x *strictExtractor) placeDir(rel string) error {
 
 // placeFile extracts a regular file with its mode normalised: 0o755 when the
 // archive grants any execute bit, else 0o644. setuid, setgid, sticky and
-// group/other write never survive.
+// group/other write never survive. A listing reads the content without
+// writing it, so the size limits apply all the same.
 func (x *strictExtractor) placeFile(rel string, m strictMember) error {
 	mode := fs.FileMode(0o644)
 	if m.exec {
 		mode = 0o755
 	}
-	f, err := x.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", rel, err)
+	if x.root == nil {
+		if err := x.copyLimited(io.Discard, m.name, m.body); err != nil {
+			return err
+		}
+	} else {
+		f, err := x.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return fmt.Errorf("create %s: %w", rel, err)
+		}
+		err = x.copyLimited(f, m.name, m.body)
+		if cerr := f.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("close %s: %w", rel, cerr)
+		}
+		if err != nil {
+			return err
+		}
+		if err := x.root.Chmod(rel, mode); err != nil {
+			return fmt.Errorf("chmod %s: %w", rel, err)
+		}
 	}
-	err = x.copyLimited(f, m.name, m.body)
-	if cerr := f.Close(); err == nil && cerr != nil {
-		err = fmt.Errorf("close %s: %w", rel, cerr)
-	}
-	if err != nil {
-		return err
-	}
-	if err := x.root.Chmod(rel, mode); err != nil {
-		return fmt.Errorf("chmod %s: %w", rel, err)
-	}
+	x.nonDirs[rel] = KindFile
 	x.placed = append(x.placed, Placed{Path: rel, Kind: KindFile, Mode: mode})
 	return nil
 }
@@ -361,14 +417,17 @@ func (x *strictExtractor) copyLimited(w io.Writer, name string, body io.Reader) 
 }
 
 // placeSymlink creates a symlink after checking that its target stays inside
-// the root.
+// the root. A listing checks the target and creates nothing.
 func (x *strictExtractor) placeSymlink(rel, target string) error {
 	if err := checkLinkTarget(rel, target); err != nil {
 		return err
 	}
-	if err := x.root.Symlink(target, rel); err != nil {
-		return fmt.Errorf("symlink %s: %w", rel, err)
+	if x.root != nil {
+		if err := x.root.Symlink(target, rel); err != nil {
+			return fmt.Errorf("symlink %s: %w", rel, err)
+		}
 	}
+	x.nonDirs[rel] = KindSymlink
 	x.placed = append(x.placed, Placed{Path: rel, Kind: KindSymlink, Target: target})
 	return nil
 }

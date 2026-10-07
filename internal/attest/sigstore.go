@@ -28,8 +28,18 @@ type SigstoreVerdict struct {
 	Verified            bool
 	CertificateIdentity string // Fulcio SAN
 	CertificateIssuer   string // OIDC issuer
+	// SourceRepositoryURI is the Fulcio Source Repository URI extension (OID
+	// 1.3.6.1.4.1.57264.1.12): the repository whose code the signing workflow
+	// built. A build that signs through a reusable workflow carries that
+	// workflow's repository in the SAN, but this always names the built
+	// repository. "" when the certificate does not carry it.
+	SourceRepositoryURI string
 	Subjects            []Subject
 	IntegratedTime      time.Time
+	// FailureReason is sigstore-go's explanation when Verified is false
+	// because verification failed; "" otherwise. It can echo bundle
+	// contents, so quote it when displaying it.
+	FailureReason string
 }
 
 // SigstoreTrustedMaterial adapts polypkg's mirrored SigstoreRoot (base64-DER
@@ -164,7 +174,7 @@ func VerifySignedEntity(entity verify.SignedEntity, tm root.TrustedMaterial) (Si
 		verify.WithoutIdentitiesUnsafe(),
 	))
 	if verr != nil {
-		return SigstoreVerdict{Verified: false}, nil // fail closed: unverifiable ⇒ transport-only
+		return SigstoreVerdict{Verified: false, FailureReason: verr.Error()}, nil // fail closed: unverifiable ⇒ transport-only
 	}
 	verdict := SigstoreVerdict{Verified: true}
 	if result.Signature != nil && result.Signature.Certificate != nil {
@@ -174,6 +184,7 @@ func VerifySignedEntity(entity verify.SignedEntity, tm root.TrustedMaterial) (Si
 		// issuer DN (e.g. "CN=sigstore-intermediate,O=sigstore.dev"), not the OIDC
 		// issuer — do not use it here.
 		verdict.CertificateIssuer = result.Signature.Certificate.Issuer
+		verdict.SourceRepositoryURI = result.Signature.Certificate.SourceRepositoryURI
 	}
 	if result.Statement != nil {
 		for _, s := range result.Statement.Subject {
