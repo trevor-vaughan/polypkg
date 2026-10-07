@@ -1,0 +1,26 @@
+docs/json-output.md
+  s_976d6ae9a5c17c::t_96f621a920afe6 1-305,307-341,343-351,353,355-367,369-456
+  s_976d6ae9a5c17c::t_7e6bafd5a218ae 306,342,352,354,368
+AGENTS.md
+  s_976d6ae9a5c17c::t_53e106a36c6051 118-122
+CHANGELOG.md
+  s_976d6ae9a5c17c::t_3c1d7fafe05dcc 90-95
+README.md
+  s_976d6ae9a5c17c::t_b20fa9cd23fca5 67,336,338,340-342,354,372-373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42955581f9915bb526b56c3a01ebe4480c5c1933",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
