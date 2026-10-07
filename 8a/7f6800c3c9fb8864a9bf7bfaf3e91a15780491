@@ -1,0 +1,27 @@
+internal/ghrelease/ghreleasetest/mint.go
+  s_976d6ae9a5c17c::t_b1bf36f167cf7c 217
+.devskim.json
+  s_976d6ae9a5c17c::t_b1bf36f167cf7c 1-27
+internal/ghrelease/match.go
+  s_976d6ae9a5c17c::t_b1bf36f167cf7c 61
+internal/attest/binding.go
+  s_976d6ae9a5c17c::t_b1bf36f167cf7c 29
+.mega-linter.local.yml
+  s_976d6ae9a5c17c::t_af08ffb6570355 23-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a7f6800c3c9fb8864a9bf7bfaf3e91a15780491",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
