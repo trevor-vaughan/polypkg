@@ -1,0 +1,19 @@
+tests/e2e/provenancegen/gen/gen.go
+  s_96cc67e7484105::t_4f97c3fbab0a77 22,1111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ec9d2fc269b38dad1861709e26d548e6687c180",
+  "prompts": {},
+  "sessions": {
+    "s_96cc67e7484105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af3f8cd0-4a49-43e5-931f-c65a8426e8b8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
