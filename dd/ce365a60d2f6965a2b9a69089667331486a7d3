@@ -1,0 +1,21 @@
+internal/cli/initcmd_test.go
+  s_976d6ae9a5c17c::t_5475d7e1d48a9a 605-606
+internal/cli/inittemplate.go
+  s_976d6ae9a5c17c::t_24c8315e089ea9 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddce365a60d2f6965a2b9a69089667331486a7d3",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
