@@ -1,0 +1,22 @@
+.github/workflows/release.yml
+  s_976d6ae9a5c17c::t_150980b8b1b08d 99
+docs/verifying.md
+  s_976d6ae9a5c17c::t_150980b8b1b08d 100
+  s_976d6ae9a5c17c::t_58b5bb7c886988 93-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ecbf84a3df007642d611276356c689a4bf7f1809",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
