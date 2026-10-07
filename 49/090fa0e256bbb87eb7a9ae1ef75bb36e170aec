@@ -1,0 +1,32 @@
+internal/cli/flagsx_test.go
+  s_976d6ae9a5c17c::t_6f7974f6ad4dc3 1-95
+internal/cli/mirror.go
+  s_976d6ae9a5c17c::t_c351af909a6eb0 160
+internal/cli/repoexport.go
+  s_976d6ae9a5c17c::t_c351af909a6eb0 42
+internal/cli/repo.go
+  s_976d6ae9a5c17c::t_c351af909a6eb0 119
+internal/cli/flagsx.go
+  s_976d6ae9a5c17c::t_1e40f20f01d6ea 150-153
+  s_976d6ae9a5c17c::t_c351af909a6eb0 154-203
+internal/cli/source.go
+  s_976d6ae9a5c17c::t_c351af909a6eb0 259
+AGENTS.md
+  s_976d6ae9a5c17c::t_caa3353a2a77a0 135-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49090fa0e256bbb87eb7a9ae1ef75bb36e170aec",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
