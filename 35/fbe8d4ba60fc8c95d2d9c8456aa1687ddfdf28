@@ -1,0 +1,23 @@
+README.md
+  s_976d6ae9a5c17c::t_7edec139ba55eb 375
+docs/mirroring.md
+  s_976d6ae9a5c17c::t_7edec139ba55eb 60-62,65
+docs/publishing.md
+  s_976d6ae9a5c17c::t_7edec139ba55eb 14-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35fbe8d4ba60fc8c95d2d9c8456aa1687ddfdf28",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
