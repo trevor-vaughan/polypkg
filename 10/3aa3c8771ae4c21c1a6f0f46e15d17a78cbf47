@@ -1,0 +1,23 @@
+.taskfiles/scripts/check-release-tags.sh
+  s_976d6ae9a5c17c::t_78cf9f6d3a19f5 1-26
+Taskfile.yml
+  s_976d6ae9a5c17c::t_2af49f07623599 161-168
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_d4a9109a007aac 201-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "103aa3c8771ae4c21c1a6f0f46e15d17a78cbf47",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
