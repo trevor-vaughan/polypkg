@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1107,10 +1108,7 @@ func dupKeyEnvelope(genuineEnv []byte) ([]byte, error) {
 		return nil, fmt.Errorf("dupKeyEnvelope: genuine envelope %s has no opening brace", genuineEnv)
 	}
 
-	dup := make([]byte, 0, len(genuineEnv)+len(duplicatedPayloadTypeKey))
-	dup = append(dup, genuineEnv[:idx+1]...)
-	dup = append(dup, duplicatedPayloadTypeKey...)
-	dup = append(dup, genuineEnv[idx+1:]...)
+	dup := slices.Concat(genuineEnv[:idx+1], []byte(duplicatedPayloadTypeKey), genuineEnv[idx+1:])
 
 	if n := bytes.Count(dup, []byte(`"payloadType"`)); n != 2 {
 		return nil, fmt.Errorf("dupKeyEnvelope: splice produced %d %q occurrences, want 2", n, "payloadType")
