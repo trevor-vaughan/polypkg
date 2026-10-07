@@ -1,0 +1,24 @@
+SECURITY.md
+  s_976d6ae9a5c17c::t_11a5a4edcb0080 23-40
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_11a5a4edcb0080 110-117
+README.md
+  s_976d6ae9a5c17c::t_d71e0c86451cfe 9,65
+  s_976d6ae9a5c17c::t_4e79b00a24618c 133-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0c2e1101697e882dde98eb520c1191675d3e7cb",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
