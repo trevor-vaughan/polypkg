@@ -20,3 +20,9 @@
 # exist only while a test runs: the e2e repository server in task and compose
 # files, and the unreachable endpoints of the credential-redaction tests.
 ^https?://([^/@]+@)?(localhost|127\.0\.0\.1)([:/]|$)
+
+# release.yml passes cosign an OIDC issuer (an identifier whose root path is
+# 404) and a certificate-identity regex; lychee cuts the regex's `github\.com`
+# at the backslash and requests `https://github/`.
+^https://token\.actions\.githubusercontent\.com/?$
+^https://github/?$
