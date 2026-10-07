@@ -1,0 +1,25 @@
+internal/cli/pkglint_test.go
+  s_976d6ae9a5c17c::t_10cea8061cf5b0 137
+internal/cli/pkg_test.go
+  s_976d6ae9a5c17c::t_10cea8061cf5b0 112
+internal/cli/pkgbuild.go
+  s_976d6ae9a5c17c::t_1dbde2ecb900d4 58
+internal/cli/pkglint.go
+  s_976d6ae9a5c17c::t_5d6a346dfdf53a 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddbfeae2da09d3b50e14a54e8e32b05ea0f1efb5",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
