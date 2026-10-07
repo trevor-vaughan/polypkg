@@ -1,0 +1,21 @@
+internal/cli/pkginit_test.go
+  s_976d6ae9a5c17c::t_c01d24020265aa 202-215
+internal/cli/pkginit.go
+  s_976d6ae9a5c17c::t_d12d7bafd1a221 93-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ea2ba03758c14468a3bebcf03d80598d704a641",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
