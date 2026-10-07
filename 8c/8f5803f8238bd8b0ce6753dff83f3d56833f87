@@ -1,0 +1,21 @@
+docs/publishing.md
+  s_976d6ae9a5c17c::t_040e920daf82a4 37-38
+README.md
+  s_976d6ae9a5c17c::t_040e920daf82a4 342,364
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c8f5803f8238bd8b0ce6753dff83f3d56833f87",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
