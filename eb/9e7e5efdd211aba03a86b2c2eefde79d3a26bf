@@ -1,0 +1,103 @@
+.devskim.json
+  s_638c762a3f0594::t_5a1419d0da033e 1-27
+.github/workflows/fuzz.yml
+  s_638c762a3f0594::t_154a841339e60a 5-6,18,20,23,27,31-43
+.github/workflows/integration.yml
+  s_638c762a3f0594::t_fd9916dccfcffb 1-75
+.github/workflows/lint.yml
+  s_638c762a3f0594::t_814c416f80274b 8-14,22,24,27,31
+.github/workflows/megalinter.yml
+  s_638c762a3f0594::t_2c3aebc396c0c0 16,18,24,27-31,34,37
+.github/workflows/release-snapshot.yml
+  s_638c762a3f0594::t_a72350c74a4a96 1-48
+.github/workflows/release.yml
+  s_638c762a3f0594::t_a2c8f3d3f254eb 7-12,14,17-46,49,51-58,60,64-72,74,81,83,85,87,91-101,103
+.github/workflows/security.yml
+  s_638c762a3f0594::t_7681dd43a4d30b 15,17,20,24,36,42,45,50,58
+.github/workflows/test.yml
+  s_638c762a3f0594::t_0b4afe4657c69b 8-14,26-28,30,33,37,42-43,46-91
+.goreleaser.yaml
+  s_638c762a3f0594::t_6885aedc50ee5d 15-21,33,40-57
+.jscpd.json
+  s_638c762a3f0594::t_24ed9bd91d2cfe 2
+.lycheeignore
+  s_638c762a3f0594::t_23e8b8e1bbeef9 1-22
+.mega-linter.local.yml
+  s_638c762a3f0594::t_650eee94c39dca 1-60
+.secretlintrc.json
+  s_638c762a3f0594::t_69d3cedf8d30e2 1-19
+.taskfiles/scripts/check-release-tags.sh
+  s_638c762a3f0594::t_3f70aab049ac9c 1-36
+.tool-versions
+  s_638c762a3f0594::t_543e401c072464 1-4
+.trivyignore
+  s_638c762a3f0594::t_93ca39b87c06a8 13-21
+CHANGELOG.md
+  s_638c762a3f0594::t_8e6995332ec4e2 123-128,639-646
+CONTRIBUTING.md
+  s_638c762a3f0594::t_28bd4530b6d153 64,69,87-88,91-95,110-117,178-187,201-224
+README.md
+  s_638c762a3f0594::t_b67076fb89e624 9,65,133-146
+SECURITY.md
+  s_638c762a3f0594::t_85ce9682ae26d2 23-40
+Taskfile.yml
+  s_638c762a3f0594::t_d1f25ef8fd4d9e 27,39-49,51,54-65,73,86-89,91-122,161-168
+docs/authoring.md
+  s_638c762a3f0594::t_9422bd0d25647b 62-63,605-606
+docs/dev/README.md
+  s_638c762a3f0594::t_f9ea7f996196c0 40-146
+docs/verifying.md
+  s_638c762a3f0594::t_e47560b0c3ebb8 93-95,100,120-121
+go.mod
+  s_638c762a3f0594::t_8c3d5e7d1e575c 12,14-18,20,27-29,61,63,65-68,70-71,73-75,77-85,116,135-140,143
+go.sum
+  s_638c762a3f0594::t_b28f47913e462d 169-170,173-174,177-184,187-190,193-198,201-220,223-224,259-260,301-302,339-342,345-346,372-373,392-393,402-403,419-420,439-440,443-444,494-497,500-503,506-507,509-514,517-518,529-530
+internal/archive/strict.go
+  s_638c762a3f0594::t_f7c3d474a19a93 14,26-35,41-43,218-219
+internal/archive/strict_test.go
+  s_638c762a3f0594::t_2fbabacf072e84 168-183
+internal/archive/tar_test.go
+  s_638c762a3f0594::t_54d5fdefe57e2f 309-310
+internal/archive/testdata/fuzz/FuzzExtractArchive/a1f006e6b57184c1
+  s_638c762a3f0594::t_9e6ba6cf0a0cb3 1-2
+internal/attest/binding.go
+  s_638c762a3f0594::t_45c45f2f5346e1 29
+internal/cli/root.go
+  s_638c762a3f0594::t_d13b7b1a5f9b44 11-12
+internal/ghrelease/ghreleasetest/mint.go
+  s_638c762a3f0594::t_d7c6249918bdeb 217
+internal/ghrelease/match.go
+  s_638c762a3f0594::t_ab6dc295d0e078 61
+internal/repo/pack.go
+  s_638c762a3f0594::t_6eb6b7c699a066 6,83-85,87
+internal/repo/pack_test.go
+  s_638c762a3f0594::t_90793e5911fb00 5-6,190-212
+internal/schema/index_fuzz_test.go
+  s_638c762a3f0594::t_3352b1752fcd54 4-6,11-24,29,35-73
+internal/schema/profile_attestation_test.go
+  s_638c762a3f0594::t_924285da09fb67 69
+internal/trust/comment_fuzz_test.go
+  s_638c762a3f0594::t_cec69c8877d14d 3-8,10-15,22,24-58
+tests/e2e/Containerfile
+  s_638c762a3f0594::t_8d9b72a63c491c 19-23
+tests/e2e/venom/user/98-provenance-genuine.venom.yml
+  s_638c762a3f0594::t_e0035655d7b4cf 17
+tests/e2e/venom/user/99-provenance-adversarial.venom.yml
+  s_638c762a3f0594::t_29809c6bf5745e 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb9e7e5efdd211aba03a86b2c2eefde79d3a26bf",
+  "prompts": {},
+  "sessions": {
+    "s_638c762a3f0594": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bc3ea93a-438a-4c8a-a957-c5e2ca81defa",
+        "model": "unknown"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
