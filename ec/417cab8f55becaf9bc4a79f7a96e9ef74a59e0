@@ -1,0 +1,25 @@
+internal/schema/yamlerror.go
+  s_976d6ae9a5c17c::t_6df5ff000ebab4 1-29
+internal/schema/yamlerror_test.go
+  s_976d6ae9a5c17c::t_6df5ff000ebab4 1-52
+internal/schema/package.go
+  s_976d6ae9a5c17c::t_92274d993ccdc4 164
+internal/schema/repomanifest.go
+  s_976d6ae9a5c17c::t_92274d993ccdc4 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec417cab8f55becaf9bc4a79f7a96e9ef74a59e0",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
