@@ -1,0 +1,33 @@
+internal/cli/pkg_test.go
+  s_976d6ae9a5c17c::t_8f176aab032612 62
+  s_976d6ae9a5c17c::t_8e5b552578c16f 1-61,63-115
+docs/json-output.md
+  s_976d6ae9a5c17c::t_60dca5a22a7a82 27,107
+  s_976d6ae9a5c17c::t_33dc0933ff648e 109-117
+  s_976d6ae9a5c17c::t_a2e59d033bf13c 108
+README.md
+  s_976d6ae9a5c17c::t_60dca5a22a7a82 354
+internal/cli/pkgbuild.go
+  s_976d6ae9a5c17c::t_d8b0ac5cbed794 28-32,39,51
+internal/cli/pkginit.go
+  s_976d6ae9a5c17c::t_d8b0ac5cbed794 34-38
+internal/cli/pkglint.go
+  s_976d6ae9a5c17c::t_d8b0ac5cbed794 4,6,31-41,53,77,84-91
+  s_976d6ae9a5c17c::t_695b7023d377e4 92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "adc73952f1f66ef382abfc87073324d19edc72a4",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
