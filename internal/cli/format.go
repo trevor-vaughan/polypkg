@@ -138,6 +138,18 @@ func withRecoveryHint(err error) error {
 	if errors.As(err, &ne) {
 		return newerStateError(err, ne)
 	}
+	var oe *schema.OlderIndexError
+	if errors.As(err, &oe) {
+		// The whole chain is kept, as for a fetched newer document: its
+		// context ("source \"x\": …") says which repository it was. The same
+		// message reaches the repository's operator (repo export, mirror) and
+		// its consumers (plan, install), so the hint addresses both.
+		return &CLIError{
+			Msg:  err.Error(),
+			Hint: "the repository must be rebuilt by a current polypkg: its operator runs `polypkg repo build`; if that is not you, ask them to rebuild it",
+			Err:  err,
+		}
+	}
 	return err
 }
 

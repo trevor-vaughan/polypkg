@@ -65,7 +65,7 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactA})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", artifactA)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactA)
 		trustRoot = writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -100,7 +100,7 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 2,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactB})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", artifactB)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactB)
 
 		out, err := runCmd("remove", "widget") // auto-applies generation 2
 		Expect(err).NotTo(HaveOccurred(), "remove widget: %s", out)
@@ -170,7 +170,7 @@ var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		full := filepath.Join(repoDir, "gizmo-1.0.0.att.json")
 		Expect(os.WriteFile(full, attBytes, 0o644)).To(Succeed())
-		Expect(os.WriteFile(full+".minisig", []byte(signer.signArtifact("gizmo", "1.0.0", attBytes)), 0o644)).To(Succeed())
+		Expect(os.WriteFile(full+".minisig", []byte(signer.signWithComment(attBytes, "name=gizmo version=1.0.0 hash="+blakeHash(attBytes))), 0o644)).To(Succeed())
 		return attBytes, schema.AttestationRef{
 			PredicateType: attest.PredicateTypeSARIF,
 			Artifact:      "gizmo-1.0.0.att.json",
@@ -197,7 +197,7 @@ var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 		attA, refA = publishAttestation(artifactA)
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "gizmo", version: "1.0.0", artifact: artifactA, attestations: []schema.AttestationRef{refA}})
-		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", artifactA)
+		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", "", artifactA)
 		trustRoot = writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -230,7 +230,7 @@ var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 		attB, refB = publishAttestation(artifactB)
 		publishIndex(t, repoDir, signer, 2,
 			indexPkg{name: "gizmo", version: "1.0.0", artifact: artifactB, attestations: []schema.AttestationRef{refB}})
-		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", artifactB)
+		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", "", artifactB)
 
 		out, err := runCmd("remove", "gizmo") // auto-applies the next generation
 		Expect(err).NotTo(HaveOccurred(), "remove gizmo: %s", out)

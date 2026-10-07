@@ -3,6 +3,9 @@ package integration
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/trevor-vaughan/polypkg/internal/cli"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 )
 
 // maliciousPackage builds a signed-quality tar.zst whose manifest is valid but
@@ -92,4 +96,69 @@ var _ = Describe("adversarial packages", func() {
 		)
 		applyMaliciousAndAssertRejected(t, pkg)
 	})
+})
+
+var _ = Describe("artifact identity cross-check", func() {
+	// applyAsHello publishes artifact as the platform-agnostic entry hello 1.0.0,
+	// signed for exactly that entry, and runs `apply` against it under an
+	// isolated HOME and XDG tree. It returns the apply error.
+	applyAsHello := func(t testing.TB, artifact []byte) error {
+		t.Helper()
+		root := IsolatedEnv(t)
+		t.Setenv("HOME", root)
+
+		repoDir := t.TempDir()
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: artifact})
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		DeferCleanup(srv.Close)
+
+		profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+		Expect(os.WriteFile(profilePath, []byte(installHelloProfile(t, srv.URL, trustRoot)), 0o644)).To(Succeed())
+
+		cmd := cli.NewRootCmd()
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"apply", profilePath})
+		return cmd.Execute()
+	}
+
+	recipe := func(t testing.TB, name, version, platformLine string) []byte {
+		t.Helper()
+		return buildTarZst(t, map[string]string{
+			"polypkg.yaml": "schema: polypkg.package/v1\nname: " + name + "\nversion: " + version + "\n" +
+				platformLine + "actions: []\n",
+		})
+	}
+
+	It("installs an artifact whose recipe matches its entry", func() {
+		t := GinkgoTB()
+		Expect(applyAsHello(t, recipe(t, "hello", "1.0.0", ""))).To(Succeed())
+
+		_, statErr := os.Lstat(filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active"))
+		Expect(statErr).NotTo(HaveOccurred(), "a matching artifact must activate a generation")
+	})
+
+	DescribeTable("refuses an artifact whose recipe does not describe its entry",
+		func(name, version, platformLine, wantMsg string) {
+			t := GinkgoTB()
+			err := applyAsHello(t, recipe(t, name, version, platformLine))
+
+			var ce *cli.CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "want *cli.CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(Equal(wantMsg))
+			Expect(ce.Hint).To(ContainSubstring("contact the repository operator"))
+
+			_, statErr := os.Lstat(filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active"))
+			Expect(errors.Is(statErr, fs.ErrNotExist)).To(BeTrue(),
+				"no generation may be activated for a refused artifact, got %v", statErr)
+		},
+		Entry("another package's name", "other", "1.0.0", "",
+			`artifact for hello 1.0.0 from source "native" declares name "other", but the index lists "hello"`),
+		Entry("another version", "hello", "1.0.1", "",
+			`artifact for hello 1.0.0 from source "native" declares version "1.0.1", but the index lists "1.0.0"`),
+		Entry("a platform the agnostic entry does not list", "hello", "1.0.0", "platform: "+platform.Host()+"\n",
+			fmt.Sprintf(`artifact for hello 1.0.0 from source "native" declares platform %q, but the index lists "any"`, platform.Host())),
+	)
 })

@@ -33,26 +33,35 @@ var lifecyclePhases = []phaseDoc{
 	{action.PhasePostDeactivate, "after the prior active generation is retired"},
 }
 
-// starlarkExample is the portability hint shown to authors. polypkg ships a
-// single artifact by default; a computed !starlark param value can read host
+// platformExample is the recipe key that makes an artifact per-platform: each
+// host downloads only the artifact published for its own <os>/<arch>. A test
+// validates the value with the producer grammar, so the reference never shows
+// a platform pkg lint would refuse.
+const platformExample = "platform: linux/amd64"
+
+// starlarkExample is the fat-artifact portability hint: one artifact carries
+// every platform's files, and a computed !starlark param value reads host
 // facts (the predeclared `host` struct exposes `os` and `arch`; `package.name`
-// is also available) to select an OS/arch-specific file at apply time.
+// is also available) to select the OS/arch-specific file at apply time.
 const starlarkExample = `src: !starlark "return '$PKG/content/bin/' + host.os + '/' + host.arch + '/hello'"`
 
 // newPkgExplainCmd prints an orientation reference for package authors: the
 // build-outside model, the apply lifecycle phases, the discovered action
 // catalogue with each action's parameters, the $PKG/$ACTIVE path vars, and the
-// !starlark host-facts portability mechanism. The action list is discovered
-// from action.Registry so it cannot drift from the code.
+// two portability mechanisms (per-platform artifacts and !starlark fat
+// artifacts). The action list is discovered from action.Registry so it cannot
+// drift from the code.
 func newPkgExplainCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "explain",
 		Short: "Print a reference for phases, actions, and path vars",
 		Long: `Print an orientation reference for authoring a polypkg package: the
 build-outside model, the apply lifecycle phases, every registered action with
-its parameters, the $PKG and $ACTIVE path vars, and the !starlark host-facts
-mechanism for OS/arch-aware packages. The action catalogue is discovered from
-the runtime registry, so it always matches the installed polypkg.`,
+its parameters, the $PKG and $ACTIVE path vars, and the two ways to ship an
+OS/arch-aware package: one artifact per platform (the platform: key) or one fat
+artifact that selects files with !starlark host facts. The action catalogue is
+discovered from the runtime registry, so it always matches the installed
+polypkg.`,
 		Example: "  polypkg pkg explain\n  polypkg pkg explain --format json",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -121,7 +130,9 @@ func explainData() map[string]any {
 			"polypkg does not build software: you build your program externally and drop the result into the package's content/ directory; polypkg packs and installs it.",
 			"actions run at lifecycle phases during `polypkg apply`.",
 			"a param value may be computed with !starlark, which can read host facts (host.os, host.arch) and package.name to select OS/arch-specific files.",
+			"a package may instead publish one artifact per platform: set platform: <os>/<arch> (Go GOOS/GOARCH names) in polypkg.yaml and publish one repository entry per platform; each host downloads only its own artifact. Omitting platform: publishes a platform-agnostic (any) artifact.",
 		},
+		"platform_example": platformExample,
 		"starlark_example": starlarkExample,
 	}
 }
@@ -184,10 +195,16 @@ func renderExplainText(w *bytes.Buffer, _ map[string]any) {
 	fmt.Fprintln(w, "           (e.g. ~/.local/share/polypkg/active/...)")
 	fmt.Fprintln(w)
 
-	fmt.Fprintln(w, "Portability: polypkg ships a single artifact by default. To make a package")
-	fmt.Fprintln(w, "OS/arch-aware, compute a param value with !starlark, which can read host facts")
-	fmt.Fprintln(w, "(host.os, host.arch) and package.name. Example:")
-	fmt.Fprintf(w, "  %s\n", starlarkExample)
+	fmt.Fprintln(w, "Portability: a package whose files differ per OS/arch ships one of two ways.")
+	fmt.Fprintln(w, "  Per-platform artifacts: set a top-level platform: key in polypkg.yaml to the")
+	fmt.Fprintln(w, "  <os>/<arch> the artifact is for (Go GOOS/GOARCH names) and publish one")
+	fmt.Fprintln(w, "  artifact per platform; each host downloads only its own. Omit the key for a")
+	fmt.Fprintln(w, `  platform-agnostic ("any") artifact. Example:`)
+	fmt.Fprintf(w, "    %s\n", platformExample)
+	fmt.Fprintln(w, "  Fat artifact: ship every platform's files in one artifact and compute a param")
+	fmt.Fprintln(w, "  value with !starlark, which can read host facts (host.os, host.arch) and")
+	fmt.Fprintln(w, "  package.name. Every host downloads every platform's files. Example:")
+	fmt.Fprintf(w, "    %s\n", starlarkExample)
 }
 
 // formatParams renders an action's parameters as a single readable line:

@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -115,9 +118,9 @@ func newRepoRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <name>[@<version>]",
 		Short: "Remove a package, or one of its versions, from the manifest and rebuild",
-		Long: "Removes packages.<name> from the manifest, or with @<version>, just the entry that " +
-			"publishes that version, then reconciles the repository so the removed package or " +
-			"version drops out of the signed index.",
+		Long: "Removes packages.<name> from the manifest, or with @<version>, every entry that " +
+			"publishes that version (one per platform for a per-platform release), then reconciles " +
+			"the repository so the removed package or version drops out of the signed index.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -142,17 +145,22 @@ func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 	name, version, hasVersion := strings.Cut(arg, "@")
 
 	var edit *repo.ManifestEdit
+	var removed []removedEntry
 	if !hasVersion {
 		edit, err = repo.PlanRemovePackage(pf.manifest, name)
 		if err != nil {
 			return mapPublishError(err)
 		}
 	} else {
-		identifier, rerr := resolveVersionIdentifier(pf.manifest, name, version)
-		if rerr != nil {
-			return rerr
+		removed, err = resolveVersionEntries(pf.manifest, name, version)
+		if err != nil {
+			return err
 		}
-		edit, err = repo.PlanRemovePackageSource(pf.manifest, name, identifier)
+		identifiers := make([]string, len(removed))
+		for i, r := range removed {
+			identifiers[i] = r.identifier
+		}
+		edit, err = repo.PlanRemovePackageSource(pf.manifest, name, identifiers...)
 		if err != nil {
 			return mapPublishError(err)
 		}
@@ -165,11 +173,25 @@ func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 	data := map[string]any{"package": name, "serial": res.SerialAfter}
 	if hasVersion {
 		data["version"] = version
+		entries := make([]map[string]string, len(removed))
+		for i, r := range removed {
+			entries[i] = map[string]string{"entry": r.identifier, "platform": r.platform}
+		}
+		data["removed"] = entries
 	}
 	EmitResult(cmd, format, "repo remove", data,
 		func(w *bytes.Buffer, d map[string]any) {
 			if v, ok := d["version"]; ok {
 				fmt.Fprintf(w, "Removed %s@%s and rebuilt the repository (serial %d)\n", d["package"], v, d["serial"])
+				// Render from d, the same data the JSON result carries. A version
+				// published as one platform-agnostic entry keeps the single line
+				// this command has always printed.
+				entries, _ := d["removed"].([]map[string]string)
+				if len(entries) > 1 || (len(entries) == 1 && entries[0]["platform"] != platform.Any) {
+					for _, e := range entries {
+						fmt.Fprintf(w, "  %s (%s)\n", e["entry"], e["platform"])
+					}
+				}
 			} else {
 				fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
 			}
@@ -177,53 +199,81 @@ func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 	return nil
 }
 
-// resolveVersionIdentifier finds which entry registered under name in the
-// manifest at manifestPath declares version, and returns that entry's
-// manifest identifier (repo.EntryIdentifier: a source path or prebuilt
-// artifact path) for repo.PlanRemovePackageSource.
+// removedEntry is one manifest entry `repo remove <name>@<version>` withdraws.
+type removedEntry struct {
+	identifier string // repo.EntryIdentifier: a source path or prebuilt artifact path
+	platform   string // the entry's platform, or platform.Any when platform-agnostic
+}
+
+// resolveVersionEntries finds every entry registered under name in the manifest
+// at manifestPath that builds version, in manifest order: one per platform for a
+// per-platform release, otherwise exactly one. Each carries the entry's
+// manifest identifier (repo.EntryIdentifier) for repo.PlanRemovePackageSource
+// and its platform for the command's result.
 //
-// The manifest deliberately does not record versions (see
+// The manifest deliberately does not record versions or platforms (see
 // internal/repo/version_resolve.go), so resolving "@<version>" costs reading
-// every entry via repo.EntryVersion until one matches - a YAML read for a
-// source entry, a full extraction for a prebuilt one. That cost is accepted
-// rather than routed through the build cache: the cache lives at a path
-// (keyDir + source-derived filename, internal/repo/build.go) that only
+// every entry via repo.EntryVersion - a YAML read for a source entry, a full
+// extraction for a prebuilt one. Every entry is read, not just up to the first
+// match, because a version's platform builds need not be adjacent. That cost
+// is accepted rather than routed through the build cache: the cache lives at a
+// path (keyDir + source-derived filename, internal/repo/build.go) that only
 // layoutFor computes, and duplicating that formula here would silently drift
 // if the convention ever changed. `repo remove` is a rare interactive
 // command, so the extraction cost is not worth that coupling.
-func resolveVersionIdentifier(manifestPath, name, version string) (string, error) {
+func resolveVersionEntries(manifestPath, name, version string) ([]removedEntry, error) {
 	f, err := os.Open(manifestPath) //nolint:gosec // G304: path is user-supplied manifest location from --manifest flag
 	if err != nil {
-		return "", &CLIError{Msg: "cannot open repo manifest", Hint: "run `polypkg repo init <dir>` first", Err: err}
+		return nil, &CLIError{Msg: "cannot open repo manifest", Hint: "run `polypkg repo init <dir>` first", Err: err}
 	}
 	defer func() { _ = f.Close() }()
 	m, err := schema.ParseRepoManifest(f)
 	if err != nil {
-		return "", mapPublishError(err)
+		return nil, mapPublishError(err)
 	}
 
 	entries, ok := m.Packages[name]
 	if !ok || len(entries) == 0 {
-		return "", &CLIError{
+		return nil, &CLIError{
 			Msg:  "package " + name + " is not in the repo manifest",
 			Hint: "run `polypkg repo status` to list registered packages",
 		}
 	}
 
 	manifestDir := filepath.Dir(manifestPath)
+	matched := make([]removedEntry, 0, len(entries))
 	available := make([]string, 0, len(entries))
 	for _, e := range entries {
-		v, verr := repo.EntryVersion(manifestDir, e)
+		v, plat, verr := repo.EntryVersion(manifestDir, e)
 		if verr != nil {
-			return "", mapPublishError(verr)
+			// One unreadable entry could be another build of this version, so
+			// resolving stops rather than withdrawing a partial set.
+			id := repo.EntryIdentifier(e)
+			reason := "entry " + id + " cannot be read"
+			var pe *repo.PublishError
+			if errors.As(verr, &pe) {
+				reason = pe.Msg
+			}
+			return nil, &CLIError{
+				Msg: fmt.Sprintf("cannot resolve %s@%s: %s, and every entry of %s must be readable to find "+
+					"all builds of a version", name, version, reason, name),
+				Hint: fmt.Sprintf("fix the entry %s under packages.%s in polypkg-repo.yaml, or delete it", id, name),
+				Err:  verr,
+			}
 		}
 		if v == version {
-			return repo.EntryIdentifier(e), nil
+			matched = append(matched, removedEntry{identifier: repo.EntryIdentifier(e), platform: platform.Display(plat)})
+			continue
 		}
-		available = append(available, v)
+		if !slices.Contains(available, v) {
+			available = append(available, v)
+		}
 	}
-	return "", &CLIError{
-		Msg:  fmt.Sprintf("package %s has no published version %s", name, version),
-		Hint: fmt.Sprintf("published versions of %s: %s", name, strings.Join(available, ", ")),
+	if len(matched) == 0 {
+		return nil, &CLIError{
+			Msg:  fmt.Sprintf("package %s has no published version %s", name, version),
+			Hint: fmt.Sprintf("published versions of %s: %s", name, strings.Join(available, ", ")),
+		}
 	}
+	return matched, nil
 }

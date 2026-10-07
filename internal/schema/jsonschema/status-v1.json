@@ -64,9 +64,10 @@
         "required": ["package", "version", "key_id"],
         "additionalProperties": false,
         "properties": {
-          "package": { "type": "string" },
-          "version": { "type": "string" },
-          "key_id":  { "type": "string" }
+          "package":  { "type": "string" },
+          "version":  { "type": "string" },
+          "platform": { "type": "string", "pattern": "^(any|[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?)$" },
+          "key_id":   { "type": "string" }
         }
       }
     },
@@ -77,8 +78,9 @@
         "additionalProperties": false,
         "required": ["package", "version", "attestation_hash"],
         "properties": {
-          "package": { "type": "string" },
-          "version": { "type": "string" },
+          "package":  { "type": "string" },
+          "version":  { "type": "string" },
+          "platform": { "type": "string", "pattern": "^(any|[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?)$" },
           "attestation_hash": { "type": "string" }
         }
       }

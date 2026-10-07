@@ -35,7 +35,7 @@ func makeListGen1State(storeRoot string) {
   "scope": "user",
   "produced_by": {"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
   "entries": [
-    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc"},
+    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc","platform":"linux/amd64"},
     {"name":"world","version":"2.0.0","content_hash":"blake3:ddeeff"}
   ]
 }`), 0o600)).To(Succeed())
@@ -44,8 +44,13 @@ func makeListGen1State(storeRoot string) {
 var _ = Describe("list command", func() {
 	setup := func() (dir, storeRoot string) {
 		dir = GinkgoT().TempDir()
+		GinkgoT().Setenv("HOME", dir)
 		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
 		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
+		GinkgoT().Setenv("POLYPKG_PROFILE", "")
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -166,6 +171,52 @@ packages:
 		Expect(json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result)).To(Succeed())
 		Expect(result.Status).To(Equal("ok"))
 		Expect(result.Data.Packages).To(BeEmpty())
+	})
+
+	It("keeps the default text output byte-identical: no platform column", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(Equal("hello  1.0.0\nworld  2.0.0\n"))
+	})
+
+	It("adds a platform column under -v, showing any for an agnostic artifact", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list", "-v"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(Equal("hello  1.0.0  linux/amd64\nworld  2.0.0  any\n"))
+	})
+
+	It("includes platform on every JSON package object", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list", "--format", "json"})
+		Expect(root.Execute()).To(Succeed())
+		var result struct {
+			Data struct {
+				Packages []struct {
+					Name     string `json:"name"`
+					Platform string `json:"platform"`
+				} `json:"packages"`
+			} `json:"data"`
+		}
+		Expect(json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result)).To(Succeed())
+		got := map[string]string{}
+		for _, p := range result.Data.Packages {
+			got[p.Name] = p.Platform
+		}
+		Expect(got).To(Equal(map[string]string{"hello": "linux/amd64", "world": "any"}))
 	})
 })
 
@@ -530,8 +581,11 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 
 		recommends := []string{"extras"}
 		suggests := []string{"docs"}
-		err := emitInfoResult(root, FormatText, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, recommends, suggests, nil)
+		err := emitInfoResult(root, FormatText, infoView{
+			name: "hello", scope: "user",
+			installed:  infoInstalled{version: "1.0.0", gen: 1},
+			recommends: recommends, suggests: suggests,
+		})
 		Expect(err).NotTo(HaveOccurred())
 		output := out.String()
 		Expect(output).To(ContainSubstring("recommends:"),
@@ -550,8 +604,10 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 		var out bytes.Buffer
 		root.SetOut(&out)
 
-		err := emitInfoResult(root, FormatText, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, nil, nil, nil)
+		err := emitInfoResult(root, FormatText, infoView{
+			name: "hello", scope: "user",
+			installed: infoInstalled{version: "1.0.0", gen: 1},
+		})
 		Expect(err).NotTo(HaveOccurred())
 		output := out.String()
 		Expect(output).NotTo(ContainSubstring("recommends:"))
@@ -566,8 +622,11 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 
 		recommends := []string{"extras"}
 		suggests := []string{"docs"}
-		err := emitInfoResult(root, FormatJSON, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, recommends, suggests, nil)
+		err := emitInfoResult(root, FormatJSON, infoView{
+			name: "hello", scope: "user",
+			installed:  infoInstalled{version: "1.0.0", gen: 1},
+			recommends: recommends, suggests: suggests,
+		})
 		Expect(err).NotTo(HaveOccurred())
 		var result struct {
 			Status string `json:"status"`

@@ -9,7 +9,7 @@ import (
 
 var _ = Describe("recurse contract (relied on by Phase 2)", func() {
 	buildContract := func() *Catalog {
-		idx := &schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
+		idx := &schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
 			"lib": {
 				{Version: "2.0.0", ContentHash: "blake3:b2", Artifact: "lib2"},
 				{Version: "1.0.0", ContentHash: "blake3:b1", Artifact: "lib1"},
@@ -17,7 +17,7 @@ var _ = Describe("recurse contract (relied on by Phase 2)", func() {
 			"needs-lib2": {{Version: "1.0.0", ContentHash: "blake3:n", Artifact: "n",
 				Depends: []schema.Relation{{Name: "lib", Version: "=2.0.0"}}}},
 		}}
-		cat, err := BuildCatalog(idx, "native")
+		cat, err := BuildCatalog(idx, "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 		return cat
 	}
@@ -52,7 +52,7 @@ var _ = Describe("recurse contract (relied on by Phase 2)", func() {
 	// conflict/no-version cases above never commit a key first; this one does, so
 	// it locks that a budget abort leaks no partial keys.
 	It("rolls chosen back exactly when the budget trips mid-descent (KindTooComplex)", func() {
-		idx := &schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
+		idx := &schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
 			"top": {{Version: "1.0.0", ContentHash: "blake3:t", Artifact: "top",
 				Depends: []schema.Relation{{Name: "a"}}}},
 			"a": {{Version: "1.0.0", ContentHash: "blake3:a", Artifact: "a",
@@ -61,7 +61,7 @@ var _ = Describe("recurse contract (relied on by Phase 2)", func() {
 				Depends: []schema.Relation{{Name: "c"}}}},
 			"c": {{Version: "1.0.0", ContentHash: "blake3:c", Artifact: "c"}},
 		}}
-		cat, err := BuildCatalog(idx, "native")
+		cat, err := BuildCatalog(idx, "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Budget of 2 admits a couple of selections (top, a) before the chain

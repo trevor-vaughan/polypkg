@@ -1033,7 +1033,7 @@ func repackArtifact(dir, publicDir string, newContent []byte) error {
 	if err := os.WriteFile(newPath, artifact, 0o644); err != nil {
 		return fmt.Errorf("write substituted artifact %s: %w", newArt, err)
 	}
-	sig := anchor.SignArtifact(genuinePackageName, genuinePackageVersion, artifact)
+	sig := anchor.SignArtifact(genuinePackageName, genuinePackageVersion, entries[0].Platform, artifact)
 	//nolint:gosec // G306: pool artifact signatures are served over HTTP alongside the rest of publicDir; 0644 matches internal/repo/build.go's published-artifact convention
 	if err := os.WriteFile(newPath+".minisig", []byte(sig), 0o644); err != nil {
 		return fmt.Errorf("write substituted artifact signature %s.minisig: %w", newArt, err)

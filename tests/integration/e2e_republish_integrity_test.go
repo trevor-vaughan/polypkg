@@ -62,7 +62,7 @@ var _ = Describe("same-version republish integrity", Ordered, func() {
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactA})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", artifactA)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactA)
 		trustRoot = writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -99,7 +99,7 @@ var _ = Describe("same-version republish integrity", Ordered, func() {
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 2,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactB, artifactName: poolB})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", poolB, artifactB)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", poolB, artifactB)
 
 		out, err := runCmd("remove", "widget") // auto-applies generation 2
 		Expect(err).NotTo(HaveOccurred(), "remove widget: %s", out)

@@ -93,7 +93,8 @@ flowchart LR
 ```
 
 1. **Load and resolve** — `planner.Plan` (`internal/planner/planner.go`) fetches
-   each configured source's signed catalog, runs the `resolver` to pick versions
+   each configured source's signed catalog, keeps only the entries this host
+   can install (see "Platform-aware catalogs" below), runs the `resolver` to pick versions
    and pull in transitive dependencies, verifies every artifact via `trust`, and
    extracts it into the content-addressed extract store (`extractstore`, below),
    returning the `(manifest, run entries, projected ownership)` tuple.
@@ -191,8 +192,9 @@ because generation ids are never reused.
 |---|---|
 | `cli` | The cobra command tree, flag parsing, and the `polypkg.cli-result/v2` output envelope. |
 | `schema` | Wire formats: the profile spec (`polypkg.spec/v1`) and the `polypkg.yaml` inside a package tarball. |
+| `platform` | The platform identifier: `Host()` (`GOOS/GOARCH` of the running binary), the consumer grammar (`ValidateConsumer`), and the producer check against an allow-list generated from `go tool dist list` (`ValidateProducer`). Imports nothing from `internal/`. |
 | `source` | Source-backend interface and the native fetcher for a source's signed catalog and artifacts. |
-| `resolver` | Two-phase deterministic solver: hard backtracking (depends, `Provides`/virtuals, `Conflicts`, `Obsoletes`) followed by weak augmentation (Recommends). |
+| `resolver` | `BuildCatalog` turns a signed index into this host's candidate set (name validation, platform filtering; see "Platform-aware catalogs" below). Then a two-phase deterministic solver: hard backtracking (depends, `Provides`/virtuals, `Conflicts`, `Obsoletes`) followed by weak augmentation (Recommends). |
 | `trust` | minisign signature verification for indexes, artifacts, and attestations (per-role keyring) plus the metadata freshness check (`CheckExpiry`). Also owns the two extra anchor-signed documents: the trust bundle (`LoadBundle`, then the temporal lookups `BuilderKeyAt`/`BuilderKey`/`SigstoreRootAt`/`SelectSigstoreRoot`) and the revocation list (`LoadRevocationList`, `IsBuilderKeyRevoked`, `IsAttestationRevoked`). |
 | `planner` | The load-and-resolve pipeline (`Plan`): fetch, verify (signatures, attestations, policy gate, downgrade guard), extract → manifest + run entries + ownership. |
 | `extractstore` | The content-addressed extracted-package store under `<stateHome>/pkg-extract`: dir naming (`Root`, `Dir`, `DirName`, `LegacyDirName`) and the manifest-driven `Sweep` (see "The extract store" below). |
@@ -259,6 +261,12 @@ invariants:
   rewrite the tree a retained or pinned generation was installed from (and,
   under `policy: symlink`, still resolves through) — the integrity bug the
   previous `RemoveAll`+extract-in-place layout had.
+- **Index names cannot steer the path.** `<name>` comes from the signed
+  index, so it is checked before it reaches the store. The index schema
+  limits package keys to the slug `^[a-zA-Z0-9_-]+$`, and `BuildCatalog`
+  checks every key and relation name again. After extraction, before any
+  action runs, the artifact's own `polypkg.yaml` must name the same name,
+  version, and platform as the entry.
 - **Atomic extraction, verified reuse.** The planner's `ensureExtracted`
   extracts into an
   `.extract-*` temp sibling and lands it via atomic rename: a dir either exists
@@ -324,7 +332,7 @@ invariants:
 
 ## The supply chain
 
-Everything between a publisher's signed index and a file on disk — the v2 wire
+Everything between a publisher's signed index and a file on disk — the signed wire
 formats, the per-package verification chain, carried external provenance,
 freshness, anti-rollback, prebuilt ingest, and the mirror hop — has its own
 document: [supply-chain.md](supply-chain.md). It is the largest subsystem in the
@@ -333,8 +341,8 @@ do exists to serve it.
 
 The shape of it, for orientation:
 
-- **Three v2 wire formats.** `polypkg.index/v2` (expiry, pool paths,
-  attestation refs), `polypkg.trust/v2` (expiry, monotonic serial, key roles),
+- **Three wire formats.** `polypkg.index/v3` (expiry, pool paths, per-entry
+  platform, attestation refs), `polypkg.trust/v2` (expiry, monotonic serial, key roles),
   and `polypkg.manifest/v2` (the install-time attestation record). Attestation
   refs live inside the signed index, so stripping one invalidates the
   signature.
@@ -356,6 +364,64 @@ The shape of it, for orientation:
 
 Read that document before touching `internal/trust`, `internal/attest`,
 `internal/planner`, or `internal/mirror`.
+
+## Platform-aware catalogs
+
+An index can list several entries for one version, one per platform. The
+resolver never sees the entries this host cannot install.
+`resolver.BuildCatalog` (`internal/resolver/catalog.go`) builds the candidate
+set from a signed index in three steps:
+
+1. **Validate names.** Every package key and every relation name (`depends`,
+   `recommends`, `suggests`, `provides`, `conflicts`, `obsoletes`) must pass
+   `schema.ValidatePackageName`. One bad name fails the whole catalog. The
+   index is signed, so a malformed one is a publisher fault, not an entry to
+   skip. The same applies to `repo build`'s publishing rules: a name may list
+   each `(version, platform)` pair once, and a version is either one
+   platform-agnostic entry or one entry per platform, never both. Either
+   violation would give a host two candidates for one version.
+2. **Filter by platform.** An entry is kept when its `platform` is empty
+   (platform-agnostic) or equals the host passed in. Production callers pass
+   `platform.Host()`, which is `runtime.GOOS + "/" + runtime.GOARCH` with no
+   normalisation and no fallback between architectures.
+3. **Record what was dropped.** For each `(name, version)` the catalog keeps
+   the platforms it dropped. `Catalog.OtherPlatforms` returns them sorted.
+   `Catalog.NewestUnavailable` supports the error for a name that has
+   entries but none for this host:
+
+   ```
+   rg 14.1.1 is published for darwin/arm64, linux/amd64; this host is freebsd/amd64
+   ```
+
+   It names the newest version published for any platform. A name with no
+   entries at all keeps the ordinary not-found error. The same error covers a
+   version constraint that no host build satisfies but another platform's
+   does (`rg@=14.1.1` when this host has only 14.0.0): it names the newest
+   such version. Only when no platform publishes a satisfying version is it
+   reported as a version mismatch.
+
+Everything downstream works on the filtered set, including the planner's
+downgrade high-water map. A version published only for another platform
+therefore cannot trigger a false "refusing to downgrade". The marks are also
+stored per host platform in the source's seen-state file (`trust.Seen`), so
+machines of different platforms sharing one state home keep separate marks.
+
+**Ownership across sources.** `resolver.MergeCatalogs` overlays the
+per-source catalogs in `sources.order`. The first source that publishes a
+name for **any** platform owns it, whether or not it has a build for this
+host. When the owner publishes the name only for other platforms, the
+merged catalog has no candidate for it and carries the owner's record of
+those platforms, so resolution fails with the message above. A
+lower-priority source's host build is never substituted unless the profile
+pins the package to that source. Ownership therefore does not depend on the
+host: otherwise a public source lower in `order` could stand in for a
+private package on every host the private source does not build for
+(dependency confusion).
+
+Consumers accept any well-formed platform (two or three `[a-z0-9]+`
+segments) and skip entries that do not match. An index that adds
+architecture variants later therefore stays readable. Producers are
+stricter; see [repo-publisher.md](repo-publisher.md#per-platform-entries).
 
 ## Two-phase resolution
 

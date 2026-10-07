@@ -16,11 +16,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/planner"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
+	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/substrate"
 )
 
 func newListCmd() *cobra.Command {
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -29,9 +32,15 @@ func newListCmd() *cobra.Command {
 version and whether it is exact-pinned in the profile. Exits with a friendly
 message when no generation has been applied yet.
 
+-v adds each package's platform: the <os>/<arch> its artifact was published
+for, or "any" for a platform-agnostic artifact. --format json always includes
+it.
+
 Pass --scope system to inspect the system-scope store.`,
 		Example: "  # List all installed packages\n" +
 			"  polypkg list\n\n" +
+			"  # Include each package's platform\n" +
+			"  polypkg list -v\n\n" +
 			"  # List as JSON (for scripting)\n" +
 			"  polypkg list -f json",
 		Args: cobra.NoArgs,
@@ -40,10 +49,11 @@ Pass --scope system to inspect the system-scope store.`,
 			if ferr != nil {
 				return ferr
 			}
-			return WrapError(cmd, format, "list", runList(cmd, format))
+			return WrapError(cmd, format, "list", runList(cmd, format, verbose))
 		},
 	}
 	addScopeFlags(cmd)
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Also show each package's platform")
 	return cmd
 }
 
@@ -54,8 +64,11 @@ func newInfoCmd() *cobra.Command {
 		Short:   "Show installed and available versions for a package",
 		Long: `Fetches the catalog and displays the installed version (if any), all available
 versions from the configured source, and which artifact would be downloaded for
-the newest. Degrades gracefully when offline: if the package is installed,
-the installed information is shown with a note that available versions are unknown.`,
+the newest, with its platform (or "any") and the other platforms that version is
+published for. A package published only for other platforms is reported with
+where it is published. Degrades gracefully when offline: if the package is
+installed, the installed information is shown with a note that available
+versions are unknown.`,
 		Example: "  polypkg info hello",
 		Args:    needsArgs(1, 1, "<package>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,7 +84,7 @@ the installed information is shown with a note that available versions are unkno
 }
 
 // runList implements the list command. It is read-only: no lock is acquired.
-func runList(cmd *cobra.Command, format Format) error {
+func runList(cmd *cobra.Command, format Format, verbose bool) error {
 	p := bestEffortProfile(cmd)
 	scope, dataHome, _, err := resolveListScope(cmd, p)
 	if err != nil {
@@ -99,7 +112,7 @@ func runList(cmd *cobra.Command, format Format) error {
 	// Load pins from the already-parsed profile.
 	pins := profilePins(p, scope)
 
-	return emitListResult(cmd, format, scope, gen, manifest, pins)
+	return emitListResult(cmd, format, scope, gen, manifest, pins, verbose)
 }
 
 // withCatalog resolves the profile, takes the apply lock, fetches the
@@ -175,20 +188,23 @@ func runInfo(cmd *cobra.Command, pkgName string, format Format) error {
 	}
 
 	// Read installed version (read-only, no lock needed).
-	installedVersion := ""
-	installedGen := 0
-	var installedAtt *schema.AttestationState
+	var inst infoInstalled
 	_, gen, _, oerr := sub.CurrentOwnership()
 	if oerr == nil {
 		manifest, merr := readGenManifest(dataHome, gen)
 		if merr == nil {
 			for i := range manifest.Entries {
-				if manifest.Entries[i].Name == pkgName {
-					installedVersion = manifest.Entries[i].Version
-					installedGen = gen
-					installedAtt = manifest.Entries[i].Attestation
-					break
+				e := &manifest.Entries[i]
+				if e.Name != pkgName {
+					continue
 				}
+				inst = infoInstalled{
+					version:  e.Version,
+					platform: e.Platform,
+					gen:      gen,
+					att:      e.Attestation,
+				}
+				break
 			}
 		}
 	}
@@ -199,28 +215,31 @@ func runInfo(cmd *cobra.Command, pkgName string, format Format) error {
 	// tolerance before calling it.
 	profilePath, perr := resolveProfilePath(cmd, nil)
 	if perr != nil {
-		if installedVersion != "" {
+		if inst.version != "" {
 			// Offline tolerance: no profile → show installed info only.
-			return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-				nil, "", "no profile found", nil, nil, nil, installedAtt)
+			return emitInfoResult(cmd, format, infoView{
+				name: pkgName, scope: scope, installed: inst, note: "no profile found",
+			})
 		}
 		return perr
 	}
 
 	f, ferr := openProfileFile(cmd, profilePath)
 	if ferr != nil {
-		if installedVersion != "" {
-			return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-				nil, "", "profile unreadable", nil, nil, nil, installedAtt)
+		if inst.version != "" {
+			return emitInfoResult(cmd, format, infoView{
+				name: pkgName, scope: scope, installed: inst, note: "profile unreadable",
+			})
 		}
 		return ferr
 	}
 	p, perr2 := schema.ParseProfile(f, profilePath)
 	_ = f.Close()
 	if perr2 != nil {
-		if installedVersion != "" {
-			return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-				nil, "", "profile parse error", nil, nil, nil, installedAtt)
+		if inst.version != "" {
+			return emitInfoResult(cmd, format, infoView{
+				name: pkgName, scope: scope, installed: inst, note: "profile parse error",
+			})
 		}
 		return perr2
 	}
@@ -249,11 +268,12 @@ func runInfo(cmd *cobra.Command, pkgName string, format Format) error {
 	})
 
 	if fetchErr != nil {
-		if installedVersion != "" {
+		if inst.version != "" {
 			// Offline tolerance: show what we know, note unreachable source.
 			note := "source unreachable — available versions unknown"
-			return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-				nil, "", note, nil, nil, nil, installedAtt)
+			return emitInfoResult(cmd, format, infoView{
+				name: pkgName, scope: scope, installed: inst, note: note,
+			})
 		}
 		return planExecError(fetchErr)
 	}
@@ -267,29 +287,49 @@ func runInfo(cmd *cobra.Command, pkgName string, format Format) error {
 	if fr.Catalog != nil {
 		available = fr.Catalog.Versions(pkgName)
 		if len(available) == 0 {
-			// Unknown name in catalog — use Newest to produce a typed ResolveError
-			// that planerr translation can frame with the right hint.
+			// No version for this host. Newest classifies why with a typed
+			// ResolveError: KindWrongPlatform when the name is published only
+			// for other platforms, otherwise an unknown name that planerr
+			// translation frames with the right hint.
 			_, err := fr.Catalog.Newest(pkgName, "")
+			// Published, but with no artifact for this host: say where it is
+			// published, in the resolver's own words, rather than failing as an
+			// unknown package or blaming an unreachable source.
+			var re *resolver.ResolveError
+			if errors.As(err, &re) && re.Kind == resolver.KindWrongPlatform {
+				return emitInfoResult(cmd, format, infoView{
+					name: pkgName, scope: scope, installed: inst,
+					note: re.Error(), newest: &infoNewest{otherPlatforms: re.Platforms},
+				})
+			}
 			if err != nil {
-				if installedVersion == "" {
+				if inst.version == "" {
 					return planExecError(err)
 				}
 				// installed but not in catalog — treat same as offline
 				note := "source unreachable — available versions unknown"
-				return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-					nil, "", note, nil, nil, nil, installedAtt)
+				return emitInfoResult(cmd, format, infoView{
+					name: pkgName, scope: scope, installed: inst, note: note,
+				})
 			}
 		}
 		if cand, err := fr.Catalog.Newest(pkgName, ""); err == nil {
-			newestCand = &infoNewest{artifact: cand.Artifact}
+			newestCand = &infoNewest{
+				artifact:       cand.Artifact,
+				platform:       platform.Display(cand.Platform),
+				otherPlatforms: fr.Catalog.OtherPlatforms(cand.Name, cand.Version),
+			}
 			sourceName = cand.Source
 			recommends = relNames(cand.Recommends)
 			suggests = relNames(cand.Suggests)
 		}
 	}
 
-	return emitInfoResult(cmd, format, pkgName, scope, installedVersion, installedGen,
-		available, sourceName, "", newestCand, recommends, suggests, installedAtt)
+	return emitInfoResult(cmd, format, infoView{
+		name: pkgName, scope: scope, installed: inst,
+		available: available, source: sourceName, newest: newestCand,
+		recommends: recommends, suggests: suggests,
+	})
 }
 
 // emitListEmpty writes the no-packages-installed output and returns nil.
@@ -303,7 +343,8 @@ func emitListEmpty(cmd *cobra.Command, format Format) error {
 	return nil
 }
 
-// emitListResult writes the list of installed packages.
+// emitListResult writes the list of installed packages. verbose adds the
+// platform column to text output; JSON always carries platform.
 func emitListResult(
 	cmd *cobra.Command,
 	format Format,
@@ -311,6 +352,7 @@ func emitListResult(
 	gen int,
 	manifest *schema.Manifest,
 	pins map[string]string, // name → version constraint (e.g. "=1.0.0") or ""
+	verbose bool,
 ) error {
 	entries := manifest.Entries
 	sorted := make([]schema.ManifestEntry, len(entries))
@@ -318,10 +360,11 @@ func emitListResult(
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 
 	type pkgRow struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-		Scope   string `json:"scope"`
-		Pinned  string `json:"pinned"`
+		Name     string `json:"name"`
+		Version  string `json:"version"`
+		Scope    string `json:"scope"`
+		Pinned   string `json:"pinned"`
+		Platform string `json:"platform"`
 	}
 	rows := make([]pkgRow, 0, len(sorted))
 	for i := range sorted {
@@ -330,17 +373,21 @@ func emitListResult(
 		if c, ok := pins[e.Name]; ok && strings.HasPrefix(c, "=") {
 			pin = c
 		}
-		rows = append(rows, pkgRow{Name: e.Name, Version: e.Version, Scope: scope, Pinned: pin})
+		rows = append(rows, pkgRow{
+			Name: e.Name, Version: e.Version, Scope: scope, Pinned: pin,
+			Platform: platform.Display(e.Platform),
+		})
 	}
 
 	// Build JSON-compatible data map.
 	pkgList := make([]any, len(rows))
 	for i, r := range rows {
 		pkgList[i] = map[string]any{
-			"name":    r.Name,
-			"version": r.Version,
-			"scope":   r.Scope,
-			"pinned":  r.Pinned,
+			"name":     r.Name,
+			"version":  r.Version,
+			"scope":    r.Scope,
+			"pinned":   r.Pinned,
+			"platform": r.Platform,
 		}
 	}
 
@@ -351,88 +398,124 @@ func emitListResult(
 	}, func(w *bytes.Buffer, _ map[string]any) {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, r := range rows {
-			if r.Pinned != "" {
-				fmt.Fprintf(tw, "%s\t%s\t(pinned: %s)\n", r.Name, r.Version, r.Pinned)
-			} else {
-				fmt.Fprintf(tw, "%s\t%s\n", r.Name, r.Version)
+			line := r.Name + "\t" + r.Version
+			if verbose {
+				line += "\t" + r.Platform
 			}
+			if r.Pinned != "" {
+				line += "\t(pinned: " + r.Pinned + ")"
+			}
+			fmt.Fprintln(tw, line)
 		}
 		_ = tw.Flush()
 	})
 	return nil
 }
 
-// infoNewest carries the newest candidate's artifact name for text display.
+// infoNewest describes the candidate info would install: its artifact, its
+// platform as displayed ("any" for an agnostic artifact; "" when this host has
+// no candidate), and the other platforms published for its version, sorted.
 type infoNewest struct {
-	artifact string
+	artifact       string
+	platform       string
+	otherPlatforms []string
+}
+
+// infoInstalled is the current generation's entry for the package info
+// reports. The zero value means the package is not installed.
+type infoInstalled struct {
+	version string
+	// platform is the installed entry's stored platform ("" for an agnostic
+	// artifact, as in the manifest).
+	platform string
+	gen      int
+	// att is the installed entry's install-time attestation record (D11); nil
+	// when the package is not installed or its generation predates the v2
+	// chain (the JSON field then serializes as null, like the other optional
+	// fields).
+	att *schema.AttestationState
+}
+
+// infoView is everything the info command reports for one package.
+type infoView struct {
+	name, scope string
+	installed   infoInstalled
+	// available lists the versions installable on this host, newest first.
+	available []string
+	source    string
+	// note is non-empty when available versions are unknown due to an offline
+	// source, or when this host has no artifact for the package; it is printed
+	// as an inline note in text mode.
+	note string
+	// newest is optional metadata about the newest available candidate.
+	newest *infoNewest
+	// recommends and suggests are the weak relation lists from the newest
+	// catalog candidate; both may be nil when the catalog is unavailable.
+	recommends, suggests []string
 }
 
 // emitInfoResult writes the info output for a package and always returns nil.
-// offlineNote is non-empty when available versions are unknown due to an offline
-// source; it is printed as an inline note in text mode.
-// newest is optional metadata about the newest available candidate.
-// recommends and suggests are the weak relation lists from the newest catalog
-// candidate; both may be nil when the catalog is unavailable.
-// att is the installed entry's install-time attestation record (D11); nil when
-// the package is not installed or its generation predates the v2 chain (the
-// JSON field then serializes as null, like the other optional fields).
-func emitInfoResult(
-	cmd *cobra.Command,
-	format Format,
-	pkgName, scope string,
-	installedVersion string,
-	installedGen int,
-	available []string,
-	sourceName string,
-	offlineNote string,
-	newest *infoNewest,
-	recommends []string,
-	suggests []string,
-	att *schema.AttestationState,
-) error { //nolint:unparam // always nil; matches the error-propagation convention of runInfo's callers
-	artifactStr := ""
-	if newest != nil {
-		artifactStr = newest.artifact
+func emitInfoResult(cmd *cobra.Command, format Format, v infoView) error { //nolint:unparam // always nil; matches the error-propagation convention of runInfo's callers
+	inst := v.installed
+	installedPlatform := ""
+	if inst.version != "" {
+		installedPlatform = platform.Display(inst.platform)
+	}
+	var newest infoNewest
+	if v.newest != nil {
+		newest = *v.newest
 	}
 	data := map[string]any{
-		"name":        pkgName,
-		"installed":   installedVersion,
-		"generation":  installedGen,
-		"available":   available,
-		"source":      sourceName,
-		"scope":       scope,
-		"note":        offlineNote,
-		"artifact":    artifactStr,
-		"recommends":  recommends,
-		"suggests":    suggests,
-		"attestation": att,
+		"name":               v.name,
+		"installed":          inst.version,
+		"installed_platform": installedPlatform,
+		"generation":         inst.gen,
+		"available":          v.available,
+		"source":             v.source,
+		"scope":              v.scope,
+		"note":               v.note,
+		"artifact":           newest.artifact,
+		"platform":           newest.platform,
+		"other_platforms":    newest.otherPlatforms,
+		"recommends":         v.recommends,
+		"suggests":           v.suggests,
+		"attestation":        inst.att,
 	}
 	EmitResult(cmd, format, "info", data, func(w *bytes.Buffer, _ map[string]any) {
-		fmt.Fprintf(w, "%s\n", pkgName)
-		if installedVersion != "" {
-			fmt.Fprintf(w, "  installed: %s (generation %d)\n", installedVersion, installedGen)
-		} else {
+		fmt.Fprintf(w, "%s\n", v.name)
+		switch {
+		case inst.version == "":
 			fmt.Fprintf(w, "  installed: none\n")
+		case installedPlatform != platform.Any:
+			fmt.Fprintf(w, "  installed: %s (generation %d, %s)\n", inst.version, inst.gen, installedPlatform)
+		default:
+			fmt.Fprintf(w, "  installed: %s (generation %d)\n", inst.version, inst.gen)
 		}
-		if line := attestationLine(att); line != "" {
+		if line := attestationLine(inst.att); line != "" {
 			fmt.Fprintf(w, "  attestation: %s\n", line)
 		}
-		if offlineNote != "" {
-			fmt.Fprintf(w, "  note: %s\n", offlineNote)
-		} else if len(available) > 0 {
-			fmt.Fprintf(w, "  available: %s\n", strings.Join(available, ", "))
+		if v.note != "" {
+			fmt.Fprintf(w, "  note: %s\n", v.note)
+		} else if len(v.available) > 0 {
+			fmt.Fprintf(w, "  available: %s\n", strings.Join(v.available, ", "))
 		}
-		if artifactStr != "" && len(available) > 0 {
-			fmt.Fprintf(w, "  artifact:  %s (newest)\n", artifactStr)
+		if newest.artifact != "" && len(v.available) > 0 {
+			fmt.Fprintf(w, "  artifact:  %s (newest)\n", newest.artifact)
 		}
-		if sourceName != "" {
-			fmt.Fprintf(w, "  source:    %s\n", sourceName)
+		if newest.platform != "" {
+			fmt.Fprintf(w, "  platform:  %s (newest)\n", newest.platform)
+			if len(newest.otherPlatforms) > 0 {
+				fmt.Fprintf(w, "  other platforms: %s\n", strings.Join(newest.otherPlatforms, ", "))
+			}
 		}
-		if len(recommends) > 0 {
-			fmt.Fprintf(w, "  recommends: %s\n", strings.Join(recommends, ", "))
+		if v.source != "" {
+			fmt.Fprintf(w, "  source:    %s\n", v.source)
 		}
-		if len(suggests) > 0 {
-			fmt.Fprintf(w, "  suggests:  %s\n", strings.Join(suggests, ", "))
+		if len(v.recommends) > 0 {
+			fmt.Fprintf(w, "  recommends: %s\n", strings.Join(v.recommends, ", "))
+		}
+		if len(v.suggests) > 0 {
+			fmt.Fprintf(w, "  suggests:  %s\n", strings.Join(v.suggests, ", "))
 		}
 	})
 	return nil

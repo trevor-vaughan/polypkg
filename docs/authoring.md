@@ -194,6 +194,79 @@ actions:
       source: $ACTIVE/jot/share/bash-completion/completions/jot
 ```
 
+### Platforms: per-platform or fat artifacts
+
+A package that is the same on every machine, such as a shell script or data
+files, needs nothing more. An artifact with no `platform:` key is
+platform-agnostic and installs on any host. A package whose content differs
+per OS or CPU architecture, such as a compiled binary, can ship in one of two
+ways.
+
+**Per-platform artifacts (`platform:`).** Keep one package source per
+platform. Each source has the same `name` and `version` and declares the
+platform its `content/` was built for:
+
+```yaml
+schema: polypkg.package/v1
+name: jot
+version: 1.4.2
+platform: linux/amd64
+actions:
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/jot
+      dest: $ACTIVE/jot/bin/jot
+  - phase: post-place
+    action: path
+    params:
+      name: jot
+      source: $ACTIVE/jot/bin/jot
+```
+
+To publish the macOS build of the same version, add a second source that
+differs only in `platform: darwin/arm64` and the binary in `content/bin/jot`.
+The publisher lists both sources (see
+[Publishing a repository](publishing.md)). Each client downloads only the
+artifact for its own host.
+
+The value is `<os>/<arch>` in Go's `GOOS`/`GOARCH` names: one of the pairs
+`go tool dist list` prints, such as `linux/amd64`, `linux/arm64`, or
+`darwin/arm64`. `pkg lint` refuses a pair Go does not know, so a typo such
+as `linux/amd46` fails before it is published. Matching is exact. A
+`linux/arm64` host does not install a `linux/amd64` artifact, and there is no
+fallback to a nearby platform. A third segment for an architecture variant
+(`linux/arm/v7`) is not accepted.
+
+**Fat artifacts (`!starlark`).** Leave `platform:` out, put every platform's
+files in one `content/` tree, and pick the right file at install time with a
+computed parameter. The parameter reads `host.os` and `host.arch`, which use
+the same `GOOS` and `GOARCH` names:
+
+```yaml
+  - phase: post-place
+    action: install
+    params:
+      src: !starlark "return '$PKG/content/bin/' + host.os + '/' + host.arch + '/jot'"
+      dest: $ACTIVE/jot/bin/jot
+```
+
+**Which to choose.** Prefer per-platform artifacts for compiled binaries:
+
+- Each download carries one platform's files.
+- `install` on a host the package was not built for is refused before
+  anything is downloaded, with a message that names the platforms it is
+  published for.
+
+A fat artifact makes every client download every platform's files. In
+exchange it is one source, one artifact, and one signature, so it suits
+packages where the per-platform part is small. On a host it has no files
+for, a fat artifact fails at install time, when the computed path does not
+exist.
+
+A version is one or the other. The publisher refuses a version that has
+both an entry without a platform and entries with one.
+
 ### Actions
 
 Every entry under `actions:` requires `phase`, `action`, and `params`, and may
@@ -261,8 +334,10 @@ adds permission bits, every `apply` re-extracts the cache.
 ## Reference: `polypkg pkg explain`
 
 Prints an authoring reference — the lifecycle phases, every available action
-with its parameters, the `$PKG`/`$ACTIVE` path variables, and how to make a
-package OS/arch-aware with a computed `!starlark` parameter. Honors
+with its parameters, the `$PKG`/`$ACTIVE` path variables, and the two ways to
+ship OS/arch-specific content: one artifact per platform with the `platform:`
+key, or one fat artifact that selects its files with a computed `!starlark`
+parameter (see [Platforms](#platforms-per-platform-or-fat-artifacts)). Honors
 `--format text|json`.
 
 The action catalogue and its parameters are discovered from the action
@@ -280,8 +355,11 @@ each finding with a `PKGxxx` rule ID and a source location:
 - **action** — the phase and action names are real and legal together.
 - **parameter** — required params are present, typed, and within their enums,
   and every `mode` stays within `0755` (`PKG010`; see [File modes](#file-modes)).
-- **identity** — every relation name is an ASCII slug (`PKG007`), and no two
-  identifiers in the recipe collide when case-folded (`PKG008`).
+- **identity** — every relation name is an ASCII slug (`PKG007`), no two
+  identifiers in the recipe collide when case-folded (`PKG008`), and a
+  declared `platform:` is an `<os>/<arch>` pair the toolchain that built
+  polypkg can publish, as listed by `go tool dist list` (`PKG011`; see
+  [Platforms](#platforms-per-platform-or-fat-artifacts)).
 - **content-reference** — every literal `$PKG/...` param resolves to a file
   that actually exists in the source (`PKG006`).
 

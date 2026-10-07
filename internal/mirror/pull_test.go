@@ -308,12 +308,12 @@ func TestStagedPkgDirRejectsTraversal(t *testing.T) {
 		{"..", "1.0.0"}, {"", "1.0.0"}, {"ok", ""}, {"a\\b", "1.0.0"},
 	}
 	for _, tc := range bad {
-		if _, err := stagedPkgDir(root, tc.name, tc.version); err == nil {
+		if _, err := stagedPkgDir(root, tc.name, tc.version, ""); err == nil {
 			t.Fatalf("expected rejection for name=%q version=%q", tc.name, tc.version)
 		}
 	}
-	dir, err := stagedPkgDir(root, "hello", "1.0.0")
-	if err != nil || dir != filepath.Join(root, "hello", "1.0.0") {
+	dir, err := stagedPkgDir(root, "hello", "1.0.0", "")
+	if err != nil || dir != filepath.Join(root, "hello", "1.0.0", "any") {
 		t.Fatalf("normal pkg: dir=%q err=%v", dir, err)
 	}
 }
@@ -321,16 +321,16 @@ func TestStagedPkgDirRejectsTraversal(t *testing.T) {
 func TestStagedPkgDirRejectsUnsafeName(t *testing.T) {
 	root := t.TempDir()
 	for _, bad := range []string{"hello\noutput: /tmp/x", "a:b", "foo bar", "eviL!", "na/me"} {
-		if _, err := stagedPkgDir(root, bad, "1.0.0"); err == nil {
+		if _, err := stagedPkgDir(root, bad, "1.0.0", ""); err == nil {
 			t.Errorf("stagedPkgDir accepted unsafe name %q", bad)
 		}
 	}
 	// A legitimate name still works.
-	if _, err := stagedPkgDir(root, "hello_world-1", "1.0.0"); err != nil {
+	if _, err := stagedPkgDir(root, "hello_world-1", "1.0.0", ""); err != nil {
 		t.Errorf("stagedPkgDir rejected a valid name: %v", err)
 	}
 	// An unsafe version is rejected.
-	if _, err := stagedPkgDir(root, "hello", "1.0.0\nx: y"); err == nil {
+	if _, err := stagedPkgDir(root, "hello", "1.0.0\nx: y", ""); err == nil {
 		t.Error("stagedPkgDir accepted unsafe version")
 	}
 }
@@ -818,6 +818,9 @@ func TestPullRefusesRevokedAttestation(t *testing.T) {
 	if !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("error should name the revocation, got: %v", err)
 	}
+	if want := `refusing to pull "hello" "1.0.0" (any)`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error should name the refused build as %q, got: %v", want, err)
+	}
 }
 
 func TestPullRefusesRevokedBuilderKey(t *testing.T) {
@@ -1191,11 +1194,11 @@ func TestWritePrebuiltManifestMultiKeepsAllVersionsFromOneSource(t *testing.T) {
 
 func TestStagedPkgDirNoDelimiterCollision(t *testing.T) {
 	root := t.TempDir()
-	a, err := stagedPkgDir(root, "a", "b-1.0.0")
+	a, err := stagedPkgDir(root, "a", "b-1.0.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := stagedPkgDir(root, "a-b", "1.0.0")
+	b, err := stagedPkgDir(root, "a-b", "1.0.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1219,7 +1222,7 @@ func writeIndexJSON(t *testing.T, dir, body string) {
 
 func TestWriteManagementManifestUsesAbsolutePublishedPaths(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "mirror")
-	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v3","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
 	if err := os.WriteFile(filepath.Join(out, "trust-bundle.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1265,7 +1268,7 @@ func TestWriteManagementManifestUsesAbsolutePublishedPaths(t *testing.T) {
 // one that does not exist (repo build would refuse to open it).
 func TestWriteManagementManifestOmitsAbsentTrustBundle(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "mirror")
-	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v3","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1}]}}`)
 
 	if err := WriteManagementManifest(PrebuiltManifestParams{
 		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
@@ -1299,7 +1302,7 @@ func TestWriteManagementManifestRefusesWithoutPublishedIndex(t *testing.T) {
 // must emit two "- prebuilt:" list items under one "hello:" key, not an error.
 func TestWriteManagementManifestEmitsOnePrebuiltPerPublishedVersion(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "mirror")
-	writeIndexJSON(t, out, `{"schema":"polypkg.index/v2","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},{"version":"1.1.0","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v3","expires":"2030-01-01T00:00:00Z","packages":{"hello":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},{"version":"1.1.0","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
 	if err := os.WriteFile(filepath.Join(out, "trust-bundle.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1772,5 +1775,670 @@ func TestPullErrorsNameTheUpstreamWithARedactedURL(t *testing.T) {
 	}
 	if ue.FloorRecord != "" {
 		t.Fatalf("FloorRecord = %q for a fetch failure, want empty", ue.FloorRecord)
+	}
+}
+
+// TestStagedPkgDirUsesSchemaNameRule pins the mirror's name check to the
+// shared schema rule, so the staging boundary cannot drift from the slug the
+// index schema and the catalog enforce.
+func TestStagedPkgDirUsesSchemaNameRule(t *testing.T) {
+	_, err := stagedPkgDir(t.TempDir(), "py3.11", "1.0.0", "")
+	if err == nil {
+		t.Fatal("stagedPkgDir accepted a name outside the package-name slug")
+	}
+	if !strings.Contains(err.Error(), schema.PackageNamePattern) {
+		t.Errorf("error %q does not cite schema.PackageNamePattern %s", err, schema.PackageNamePattern)
+	}
+}
+
+// TestStagedPkgDirSeparatesPlatforms proves that each platform build of one
+// version, and the platform-agnostic build, gets its own staging dir. Before
+// this, two platform builds of hello 1.0.0 staged into one dir and the second
+// overwrote the first.
+func TestStagedPkgDirSeparatesPlatforms(t *testing.T) {
+	root := t.TempDir()
+	cases := []struct{ platform, wantLeaf string }{
+		{"linux/amd64", "linux-amd64"},
+		{"darwin/arm64", "darwin-arm64"},
+		{"linux/arm/v7", "linux-arm-v7"},
+		{"", "any"},
+	}
+	seen := map[string]string{}
+	for _, tc := range cases {
+		dir, err := stagedPkgDir(root, "hello", "1.0.0", tc.platform)
+		if err != nil {
+			t.Fatalf("platform %q: %v", tc.platform, err)
+		}
+		if want := filepath.Join(root, "hello", "1.0.0", tc.wantLeaf); dir != want {
+			t.Errorf("platform %q: dir = %q, want %q", tc.platform, dir, want)
+		}
+		if prev, dup := seen[dir]; dup {
+			t.Fatalf("platforms %q and %q collide on staging dir %q", prev, tc.platform, dir)
+		}
+		seen[dir] = tc.platform
+	}
+}
+
+// TestStagedPkgDirRejectsUnsafePlatform proves that the platform segment is
+// held to the consumer grammar before it reaches the filesystem: no traversal,
+// no separators, no case or shape the grammar cannot produce, and not the
+// reserved "any" (which would alias the platform-agnostic dir).
+func TestStagedPkgDirRejectsUnsafePlatform(t *testing.T) {
+	root := t.TempDir()
+	for _, bad := range []string{
+		"any",
+		"linux-amd64",
+		"linux",
+		"../../evil",
+		"linux/../../evil",
+		"linux/amd64/../..",
+		`linux\amd64`,
+		"Linux/amd64",
+		"linux/amd64/v7/x",
+		"linux//amd64",
+		"/linux/amd64",
+		"linux/amd64\nx: y",
+	} {
+		_, err := stagedPkgDir(root, "hello", "1.0.0", bad)
+		if err == nil {
+			t.Errorf("stagedPkgDir accepted unsafe platform %q", bad)
+			continue
+		}
+		if want := fmt.Sprintf(`refusing package "hello" "1.0.0": unsafe platform %q`, bad); !strings.Contains(err.Error(), want) {
+			t.Errorf("platform %q: error = %v, want it to contain %q", bad, err, want)
+		}
+	}
+}
+
+// twoPlatformIndex is hello published at 1.0.0 and 1.1.0, each for
+// linux/amd64 and darwin/arm64. Entries are deliberately listed linux-first
+// so the tests prove the platform ordering is imposed, not inherited.
+func twoPlatformIndex() *schema.Index {
+	return &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.0.0", Platform: "linux/amd64", ContentHash: "blake3:a1"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:a2"},
+			{Version: "1.1.0", Platform: "linux/amd64", ContentHash: "blake3:b1"},
+			{Version: "1.1.0", Platform: "darwin/arm64", ContentHash: "blake3:b2"},
+		},
+	}}
+}
+
+// selectedHashes returns the content hashes of sels in order.
+func selectedHashes(sels []pullSelection) []string {
+	out := make([]string, len(sels))
+	for i := range sels {
+		out[i] = sels[i].entry.ContentHash
+	}
+	return out
+}
+
+// TestResolvePullSelectionLatestIsNewestPerPlatform is the headline case:
+// "latest" is the newest version per (name, platform). When linux has 1.1.0
+// and darwin only 1.0.0, both builds are mirrored, so a client on either host
+// finds its own newest build. Neither build is reported as skipped.
+func TestResolvePullSelectionLatestIsNewestPerPlatform(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.1.0", Platform: "linux/amd64", ContentHash: "blake3:linux110"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:darwin100"},
+		},
+	}}
+	for _, selectors := range [][]string{nil, {"hello"}} {
+		got, notes, err := resolvePullSelection(idx, selectors, false)
+		if err != nil {
+			t.Fatalf("selectors %v: %v", selectors, err)
+		}
+		if want := []string{"blake3:darwin100", "blake3:linux110"}; !reflect.DeepEqual(selectedHashes(got), want) {
+			t.Fatalf("selectors %v: selected %v, want %v (each platform's newest build)", selectors, selectedHashes(got), want)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("selectors %v: notes = %v, want none (each platform's newest build was mirrored)", selectors, notes)
+		}
+	}
+}
+
+// TestResolvePullSelectionLatestNotesPerPlatform proves that when both
+// platforms published 1.0.0 and 1.1.0, "latest" mirrors 1.1.0 for each, and
+// each platform reports its own superseded 1.0.0 once.
+func TestResolvePullSelectionLatestNotesPerPlatform(t *testing.T) {
+	for _, selectors := range [][]string{nil, {"hello"}} {
+		got, notes, err := resolvePullSelection(twoPlatformIndex(), selectors, false)
+		if err != nil {
+			t.Fatalf("selectors %v: %v", selectors, err)
+		}
+		if want := []string{"blake3:b2", "blake3:b1"}; !reflect.DeepEqual(selectedHashes(got), want) {
+			t.Fatalf("selectors %v: selected %v, want %v (1.1.0 darwin then linux)", selectors, selectedHashes(got), want)
+		}
+		want := []string{
+			"hello (darwin/arm64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)",
+			"hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)",
+		}
+		if !reflect.DeepEqual(notes, want) {
+			t.Fatalf("selectors %v: notes = %q, want %q", selectors, notes, want)
+		}
+	}
+}
+
+// TestResolvePullSelectionSupersededOnOnePlatformOnly proves that a version
+// published on two platforms but superseded on only one is mirrored where it
+// is still newest (darwin) and reported as skipped only where it was
+// superseded (linux).
+func TestResolvePullSelectionSupersededOnOnePlatformOnly(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.0.0", Platform: "linux/amd64", ContentHash: "blake3:linux100"},
+			{Version: "1.1.0", Platform: "linux/amd64", ContentHash: "blake3:linux110"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:darwin100"},
+		},
+	}}
+	got, notes, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if want := []string{"blake3:darwin100", "blake3:linux110"}; !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v", selectedHashes(got), want)
+	}
+	want := []string{"hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Fatalf("notes = %q, want %q (darwin's newest 1.0.0 is not skipped)", notes, want)
+	}
+}
+
+// TestResolvePullSelectionLatestAgnosticAlongsidePlatforms proves that
+// platform-agnostic entries form their own "latest" group. This holds for an
+// agnostic package next to a per-platform one, and for one package whose
+// older version was agnostic and whose newer version is per-platform. The
+// agnostic group's note keeps the unqualified wording.
+func TestResolvePullSelectionLatestAgnosticAlongsidePlatforms(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"greet": {
+			{Version: "1.0.0", ContentHash: "blake3:greet100"},
+			{Version: "1.1.0", ContentHash: "blake3:greet110"},
+		},
+		"hello": {
+			{Version: "1.0.0", Platform: "linux/amd64", ContentHash: "blake3:hello-linux"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:hello-darwin"},
+		},
+		"tool": {
+			{Version: "1.0.0", ContentHash: "blake3:tool-any"},
+			{Version: "2.0.0", Platform: "linux/amd64", ContentHash: "blake3:tool-linux"},
+		},
+	}}
+	got, notes, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	// Names sorted; within a name the agnostic group ("") sorts first.
+	want := []string{"blake3:greet110", "blake3:hello-darwin", "blake3:hello-linux", "blake3:tool-any", "blake3:tool-linux"}
+	if !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v", selectedHashes(got), want)
+	}
+	wantNotes := []string{"greet: mirrored 1.1.0, did not mirror 1.0.0 (select it with --package greet@1.0.0)"}
+	if !reflect.DeepEqual(notes, wantNotes) {
+		t.Fatalf("notes = %q, want %q", notes, wantNotes)
+	}
+}
+
+// TestResolvePullSelectionPinnedVersionSelectsEveryPlatform proves that
+// "name@version" selects every platform build of that version, not just the
+// first matching entry.
+func TestResolvePullSelectionPinnedVersionSelectsEveryPlatform(t *testing.T) {
+	got, notes, err := resolvePullSelection(twoPlatformIndex(), []string{"hello@1.0.0"}, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if want := []string{"blake3:a2", "blake3:a1"}; !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v (1.0.0 darwin then linux)", selectedHashes(got), want)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (explicit pin)", notes)
+	}
+}
+
+// TestResolvePullSelectionAllVersionsOrdersByVersionThenPlatform proves that
+// --all-versions keeps a byte-stable order once versions repeat across
+// platforms: newest version first, then platform.
+func TestResolvePullSelectionAllVersionsOrdersByVersionThenPlatform(t *testing.T) {
+	got, _, err := resolvePullSelection(twoPlatformIndex(), nil, true)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if want := []string{"blake3:b2", "blake3:b1", "blake3:a2", "blake3:a1"}; !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v", selectedHashes(got), want)
+	}
+}
+
+// TestResolvePullSelectionOneVersionManyPlatformsNoNote proves that one version
+// published for several platforms is not "narrowing": nothing was left behind.
+// Before this fix it produced a note naming an empty list of skipped versions.
+func TestResolvePullSelectionOneVersionManyPlatformsNoNote(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.0.0", Platform: "linux/amd64", ContentHash: "blake3:a1"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:a2"},
+		},
+	}}
+	got, notes, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("selected %d builds, want 2: %+v", len(got), got)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none (the only version was mirrored for every platform)", notes)
+	}
+}
+
+// TestResolvePullSelectionRefusesDuplicatePlatformBuild proves that an upstream
+// index listing one (name, version, platform) twice is refused on every
+// selection path, including one that does not select the malformed package.
+// repo build never publishes such an index; per-platform "latest" would drop
+// the duplicate silently, and a pin would stage both copies to one directory.
+func TestResolvePullSelectionRefusesDuplicatePlatformBuild(t *testing.T) {
+	for _, tc := range []struct {
+		platform, wantInErr string
+	}{
+		{"linux/amd64", `upstream index lists "hello" "1.0.0" for platform "linux/amd64" more than once`},
+		{"", `upstream index lists "hello" "1.0.0" for platform "any" more than once`},
+	} {
+		idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+			"hello": {
+				{Version: "1.0.0", Platform: tc.platform, ContentHash: "blake3:a1"},
+				{Version: "1.0.0", Platform: tc.platform, ContentHash: "blake3:a2"},
+			},
+			"greet": {{Version: "1.0.0", ContentHash: "blake3:g1"}},
+		}}
+		for _, sel := range []struct {
+			selectors   []string
+			allVersions bool
+		}{
+			{nil, false}, {nil, true}, {[]string{"hello"}, false}, {[]string{"hello"}, true},
+			{[]string{"hello@1.0.0"}, false}, {[]string{"greet"}, false},
+		} {
+			_, _, err := resolvePullSelection(idx, sel.selectors, sel.allVersions)
+			if err == nil {
+				t.Fatalf("platform %q, selectors %v, all=%v: expected refusal of a duplicate build", tc.platform, sel.selectors, sel.allVersions)
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Fatalf("platform %q, selectors %v, all=%v: error = %v, want it to contain %q", tc.platform, sel.selectors, sel.allVersions, err, tc.wantInErr)
+			}
+		}
+	}
+}
+
+// buildLocalRepoMultiPlatform builds an upstream publishing hello 1.0.0 for
+// linux/amd64 and darwin/arm64, plus a platform-agnostic greet 1.0.0, and
+// returns its public dir and trust root. Mirrors buildLocalRepoTwoVersions.
+func buildLocalRepoMultiPlatform(t *testing.T) (outDir, trustRoot string) {
+	t.Helper()
+	root := t.TempDir()
+	keyDir := t.TempDir()
+
+	for _, s := range []struct{ dir, name, platformLine string }{
+		{"hello-linux", "hello", "platform: linux/amd64\n"},
+		{"hello-darwin", "hello", "platform: darwin/arm64\n"},
+		{"greet", "greet", ""},
+	} {
+		dir := filepath.Join(root, "pkgs", s.dir)
+		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pm := "schema: polypkg.package/v1\nname: " + s.name + "\nversion: 1.0.0\n" + s.platformLine + "actions: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(pm), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "content", "bin", s.name),
+			[]byte("#!/bin/sh\necho "+s.dir+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "example.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema: polypkg.repo/v1\nsource: upstream\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n" +
+		"  hello:\n    - source: ./pkgs/hello-linux\n    - source: ./pkgs/hello-darwin\n" +
+		"  greet:\n    - source: ./pkgs/greet\n"
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Build(repo.BuildOptions{}); err != nil {
+		t.Fatalf("build fixture repo: %v", err)
+	}
+	outDir = filepath.Join(root, "public")
+	trustRoot = filepath.Join(outDir, "trust_root.pub")
+	return outDir, trustRoot
+}
+
+// TestPullStagesEachPlatformBuildSeparately is the end-to-end proof against a
+// real signed upstream: both platform builds of hello 1.0.0 and the agnostic
+// greet are fetched, verified, and staged at distinct paths, each byte-for-byte
+// the artifact its index entry names, with its attestations beside it.
+func TestPullStagesEachPlatformBuildSeparately(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoMultiPlatform(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	stagingRoot := filepath.Join(stage, "staging")
+	want := map[string]bool{
+		filepath.Join(stagingRoot, "hello", "1.0.0", "darwin-arm64", "hello.tar.zst"): true,
+		filepath.Join(stagingRoot, "hello", "1.0.0", "linux-amd64", "hello.tar.zst"):  true,
+		filepath.Join(stagingRoot, "greet", "1.0.0", "any", "greet.tar.zst"):          true,
+	}
+	if len(res.Packages) != len(want) {
+		t.Fatalf("pulled %d builds, want %d: %+v", len(res.Packages), len(want), res.Packages)
+	}
+	hashes := map[string]bool{}
+	for _, p := range res.Packages {
+		if !want[p.ArtifactPath] {
+			t.Errorf("unexpected staged artifact %q", p.ArtifactPath)
+		}
+		got, err := os.ReadFile(p.ArtifactPath)
+		if err != nil {
+			t.Fatalf("staged artifact %q: %v", p.ArtifactPath, err)
+		}
+		if contentHash(got) != p.ContentHash {
+			t.Errorf("staged %q hashes to %s, index says %s (overwritten by another build?)", p.ArtifactPath, contentHash(got), p.ContentHash)
+		}
+		if filepath.Dir(p.AttDir) != filepath.Dir(p.ArtifactPath) {
+			t.Errorf("attestations %q are not beside their artifact %q", p.AttDir, p.ArtifactPath)
+		}
+		hashes[p.ContentHash] = true
+	}
+	if len(hashes) != len(want) {
+		t.Fatalf("pulled builds share content hashes %v; want %d distinct builds", hashes, len(want))
+	}
+	if len(res.Narrowed) != 0 {
+		t.Fatalf("Narrowed = %v, want none (one version, every platform mirrored)", res.Narrowed)
+	}
+}
+
+// TestWriteManagementManifestEmitsOnePrebuiltPerPlatformBuild proves that a
+// published index listing two platform builds of one version emits two
+// "- prebuilt:" items under one "hello:" key, each at its own pool blob.
+func TestWriteManagementManifestEmitsOnePrebuiltPerPlatformBuild(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "mirror")
+	writeIndexJSON(t, out, `{"schema":"polypkg.index/v3","expires":"2030-01-01T00:00:00Z","packages":{"hello":[`+
+		`{"version":"1.0.0","platform":"darwin/arm64","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","revision":1},`+
+		`{"version":"1.0.0","platform":"linux/amd64","content_hash":"blake3:bb","artifact":"pool/bb.tar.zst","revision":1}]}}`)
+
+	if err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "mymirror", Output: out, KeyPath: filepath.Join(t.TempDir(), "local.key"), KeyKDF: "scrypt",
+	}); err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, ManagementManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, perr := schema.ParseRepoManifest(bytesReader(raw))
+	if perr != nil {
+		t.Fatalf("emitted manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, raw)
+	}
+	pkg := m.Packages["hello"]
+	if len(pkg) != 2 {
+		t.Fatalf("want 2 prebuilt entries for hello (one per platform build), got %+v", pkg)
+	}
+	for i, want := range []string{filepath.Join(out, "pool", "aa.tar.zst"), filepath.Join(out, "pool", "bb.tar.zst")} {
+		if pkg[i].Prebuilt == nil || pkg[i].Prebuilt.Artifact != want {
+			t.Errorf("entry %d = %+v, want artifact %q", i, pkg[i].Prebuilt, want)
+		}
+	}
+}
+
+// TestPullMultiPlatformSurvivesMirrorRepublish follows two platform builds of
+// one version, plus an agnostic package, through every mirror hop: the
+// prebuilt manifest, repo build's ingest, and the management manifest
+// regenerated from the published index. Every hop must keep both builds.
+func TestPullMultiPlatformSurvivesMirrorRepublish(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoMultiPlatform(t)
+	stage := t.TempDir()
+	res, err := Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: stage, StateHome: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+
+	keyDir := t.TempDir()
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "local.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	localOut := filepath.Join(stage, "republished")
+	mPath := filepath.Join(stage, "polypkg-repo.yaml")
+	if err := WritePrebuiltManifestMulti(mPath, PrebuiltManifestParams{
+		Source: "local", Output: localOut, KeyPath: keyPath, KeyKDF: "scrypt",
+	}, []*PullResult{res}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hop 1: the prebuilt manifest carries both hello builds and greet.
+	mRaw, err := os.ReadFile(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, perr := schema.ParseRepoManifest(bytesReader(mRaw))
+	if perr != nil {
+		t.Fatalf("prebuilt manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, mRaw)
+	}
+	hello := built.Packages["hello"]
+	if len(hello) != 2 || hello[0].Prebuilt == nil || hello[1].Prebuilt == nil {
+		t.Fatalf("prebuilt manifest carries %+v for hello, want two prebuilt entries", hello)
+	}
+	if hello[0].Prebuilt.Artifact == hello[1].Prebuilt.Artifact {
+		t.Fatalf("both hello builds point at one staged artifact %q", hello[0].Prebuilt.Artifact)
+	}
+	if g := built.Packages["greet"]; len(g) != 1 || g[0].Prebuilt == nil {
+		t.Fatalf("prebuilt manifest carries %+v for greet, want one prebuilt entry", g)
+	}
+
+	// Hop 2: repo build re-publishes each build under its own platform.
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatalf("new builder on the pulled manifest: %v", err)
+	}
+	if _, err := b.Build(repo.BuildOptions{}); err != nil {
+		t.Fatalf("repo build (ingest) on the pulled manifest failed: %v", err)
+	}
+	idxRaw, err := os.ReadFile(filepath.Join(localOut, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := schema.ParseIndex(bytesReader(idxRaw))
+	if err != nil {
+		t.Fatalf("published index invalid: %v", err)
+	}
+	platforms := map[string]bool{}
+	for _, e := range idx.Packages["hello"] {
+		platforms[e.Platform] = true
+	}
+	if len(idx.Packages["hello"]) != 2 || !platforms["linux/amd64"] || !platforms["darwin/arm64"] {
+		t.Fatalf("published hello entries = %+v, want one linux/amd64 and one darwin/arm64", idx.Packages["hello"])
+	}
+	if g := idx.Packages["greet"]; len(g) != 1 || g[0].Platform != "" {
+		t.Fatalf("published greet entries = %+v, want one platform-agnostic entry", g)
+	}
+
+	// Hop 3: the management manifest regenerated from the published index
+	// points each build at its own, existing pool blob.
+	if err := WriteManagementManifest(PrebuiltManifestParams{
+		Source: "local", Output: localOut, KeyPath: keyPath, KeyKDF: "scrypt",
+	}); err != nil {
+		t.Fatalf("WriteManagementManifest: %v", err)
+	}
+	mgmtRaw, err := os.ReadFile(filepath.Join(localOut, ManagementManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgmt, perr := schema.ParseRepoManifest(bytesReader(mgmtRaw))
+	if perr != nil {
+		t.Fatalf("management manifest fails schema parse (duplicate YAML key?): %v\n%s", perr, mgmtRaw)
+	}
+	pk := mgmt.Packages["hello"]
+	if len(pk) != 2 {
+		t.Fatalf("management manifest carries %d prebuilt(s) for hello, want 2: %+v", len(pk), pk)
+	}
+	for i := range pk {
+		if pk[i].Prebuilt == nil {
+			t.Fatalf("hello entry %d is not prebuilt: %+v", i, pk[i])
+		}
+		if _, err := os.Stat(pk[i].Prebuilt.Artifact); err != nil {
+			t.Fatalf("hello entry %d names a pool blob that does not exist: %v", i, err)
+		}
+	}
+	if pk[0].Prebuilt.Artifact == pk[1].Prebuilt.Artifact {
+		t.Fatalf("both hello builds point at one pool blob %q", pk[0].Prebuilt.Artifact)
+	}
+	if g := mgmt.Packages["greet"]; len(g) != 1 || g[0].Prebuilt == nil {
+		t.Fatalf("management manifest carries %+v for greet, want one prebuilt entry", g)
+	}
+}
+
+// TestPullErrorNamesPlatformBuild proves that a failure while staging one
+// platform build names that build, quoted name and version plus platform, so
+// an operator can tell which of several builds of one version failed.
+func TestPullErrorNamesPlatformBuild(t *testing.T) {
+	outDir, trustRoot := buildLocalRepoMultiPlatform(t)
+	raw, err := os.ReadFile(filepath.Join(outDir, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := schema.ParseIndex(bytesReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var art string
+	for i := range idx.Packages["hello"] {
+		if idx.Packages["hello"][i].Platform == "darwin/arm64" {
+			art = idx.Packages["hello"][i].Artifact
+		}
+	}
+	if art == "" {
+		t.Fatal("fixture: no darwin/arm64 build of hello")
+	}
+	if err := os.Remove(filepath.Join(outDir, filepath.FromSlash(art))); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Pull(context.Background(), PullOptions{
+		URL: outDir, TrustRoot: trustRoot, SourceName: "upstream", StageDir: t.TempDir(), StateHome: t.TempDir(),
+	})
+	if want := `fetch artifact "hello" "1.0.0" (darwin/arm64)`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want it to contain %q", err, want)
+	}
+}
+
+// TestResolvePullSelectionLatestSemverTieIsDeterministic proves that when two
+// spellings of one semver version share a platform group (build metadata, or a
+// "v" prefix), "latest" keeps the lexically smaller spelling whichever the
+// index lists first, matching --all-versions' tie-break. The other spelling is
+// a distinct published build that was not mirrored, so the note names it, and
+// names it the same way in either index order.
+func TestResolvePullSelectionLatestSemverTieIsDeterministic(t *testing.T) {
+	for _, tc := range []struct {
+		a, b, want, skipped string
+	}{
+		{"1.0.0+b", "1.0.0+a", "1.0.0+a", "1.0.0+b"},
+		{"v1.0.0", "1.0.0", "1.0.0", "v1.0.0"},
+	} {
+		for _, plat := range []string{"", "linux/amd64"} {
+			label := "hello"
+			if plat != "" {
+				label = "hello (" + plat + ")"
+			}
+			wantNote := []string{fmt.Sprintf("%s: mirrored %s, did not mirror %s (select it with --package hello@%s)",
+				label, tc.want, tc.skipped, tc.skipped)}
+			for _, order := range [][2]string{{tc.a, tc.b}, {tc.b, tc.a}} {
+				idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+					"hello": {
+						{Version: order[0], Platform: plat, ContentHash: "blake3:" + order[0]},
+						{Version: order[1], Platform: plat, ContentHash: "blake3:" + order[1]},
+					},
+				}}
+				got, notes, err := resolvePullSelection(idx, nil, false)
+				if err != nil {
+					t.Fatalf("order %v, platform %q: %v", order, plat, err)
+				}
+				if len(got) != 1 || got[0].version != tc.want {
+					t.Fatalf("order %v, platform %q: selected %+v, want only %s", order, plat, got, tc.want)
+				}
+				if !reflect.DeepEqual(notes, wantNote) {
+					t.Fatalf("order %v, platform %q: notes = %q, want %q", order, plat, notes, wantNote)
+				}
+			}
+		}
+	}
+}
+
+// TestResolvePullSelectionLatestIgnoresIndexOrder proves that "latest" within
+// a platform group does not depend on where the index lists each version: an
+// older version listed after a newer one does not displace it.
+func TestResolvePullSelectionLatestIgnoresIndexOrder(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.1.0", Platform: "linux/amd64", ContentHash: "blake3:linux110"},
+			{Version: "1.0.0", Platform: "linux/amd64", ContentHash: "blake3:linux100"},
+			{Version: "2.0.0", Platform: "darwin/arm64", ContentHash: "blake3:darwin200"},
+			{Version: "1.9.0", Platform: "darwin/arm64", ContentHash: "blake3:darwin190"},
+		},
+	}}
+	got, notes, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if want := []string{"blake3:darwin200", "blake3:linux110"}; !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v", selectedHashes(got), want)
+	}
+	want := []string{
+		"hello (darwin/arm64): mirrored 2.0.0, did not mirror 1.9.0 (select it with --package hello@1.9.0)",
+		"hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)",
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Fatalf("notes = %q, want %q", notes, want)
+	}
+}
+
+// TestResolvePullSelectionNoteOrdersSkippedBySemver proves that the narrowing
+// note lists skipped versions in semver order, not text order (1.10.0 after
+// 1.9.0), with semver-equal spellings ordered by spelling.
+func TestResolvePullSelectionNoteOrdersSkippedBySemver(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.10.0", ContentHash: "blake3:1100"},
+			{Version: "2.0.0", ContentHash: "blake3:200"},
+			{Version: "1.9.0+b", ContentHash: "blake3:190b"},
+			{Version: "1.2.0", ContentHash: "blake3:120"},
+			{Version: "1.9.0+a", ContentHash: "blake3:190a"},
+		},
+	}}
+	_, notes, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	want := []string{"hello: mirrored 2.0.0, did not mirror 1.2.0, 1.9.0+a, 1.9.0+b, 1.10.0 (select each with --package hello@<version>)"}
+	if !reflect.DeepEqual(notes, want) {
+		t.Fatalf("notes = %q, want %q", notes, want)
 	}
 }

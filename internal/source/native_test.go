@@ -154,7 +154,7 @@ var _ = Describe("NativeBackend", func() {
 		It("returns both the raw index body and its signature", func() {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{}}`))
+				_, _ = w.Write([]byte(`{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{}}`))
 			})
 			mux.HandleFunc("/index.json.minisig", func(w http.ResponseWriter, r *http.Request) {
 				_, _ = w.Write([]byte("untrusted comment: x\nSIGDATA\n"))
@@ -165,7 +165,7 @@ var _ = Describe("NativeBackend", func() {
 			b := NewNativeBackend(NativeBackendOpts{URL: srv.URL, CacheDir: GinkgoT().TempDir()})
 			raw, sig, err := b.FetchIndex(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(strings.Contains(string(raw), "polypkg.index/v2")).To(BeTrue(), "raw = %q", raw)
+			Expect(strings.Contains(string(raw), "polypkg.index/v3")).To(BeTrue(), "raw = %q", raw)
 			Expect(strings.Contains(sig, "SIGDATA")).To(BeTrue(), "sig = %q", sig)
 		})
 

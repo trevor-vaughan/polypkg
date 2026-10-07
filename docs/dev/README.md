@@ -10,7 +10,7 @@ Read these before reworking a subsystem:
 - **[Architecture](architecture.md)** — the apply pipeline end to end
   (`profile → planner (resolver) → runner → generation → integrators`), the CLI
   command tree, and a one-line map of every `internal/` package. Start here.
-- **[Supply chain](supply-chain.md)** — the consumer half of trust: the v2 wire
+- **[Supply chain](supply-chain.md)** — the consumer half of trust: the signed wire
   formats, the per-package verification chain, the four carried-attestation
   tiers, freshness and anti-rollback, prebuilt ingest, and the mirror hop. Read
   it before touching `trust`, `attest`, `planner`, or `mirror`.

@@ -3,6 +3,7 @@ package integration
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/onsi/gomega"
 	"github.com/trevor-vaughan/polypkg/internal/cli"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"lukechampine.com/blake3"
 )
@@ -108,8 +110,11 @@ func blakeHash(b []byte) string {
 }
 
 // signArtifact signs data with the comment apply requires of an artifact.
-func (k minisignKeypair) signArtifact(name, version string, data []byte) string {
-	return k.signWithComment(data, fmt.Sprintf("name=%s version=%s hash=%s", name, version, blakeHash(data)))
+// plat is the index entry's platform; "" (platform-agnostic) signs the
+// reserved token platform.Any, exactly as the producer does.
+func (k minisignKeypair) signArtifact(name, version, plat string, data []byte) string {
+	return k.signWithComment(data, fmt.Sprintf("name=%s version=%s platform=%s hash=%s",
+		name, version, cmp.Or(plat, platform.Any), blakeHash(data)))
 }
 
 // signIndex signs index bytes with the comment carrying the monotonic serial.
@@ -138,8 +143,10 @@ func publishTrustDoc(t testing.TB, repoDir, source string, anchor minisignKeypai
 	g.Expect(os.WriteFile(filepath.Join(repoDir, "trust.json.minisig"), []byte(anchor.sign(raw)), 0o644)).To(gomega.Succeed())
 }
 
-// writeArtifact writes an artifact and its name/version/hash-bound signature.
-func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, version, artName string, content []byte) {
+// writeArtifact writes an artifact and its name/version/platform/hash-bound
+// signature. plat is the platform of the index entry the artifact is
+// published under ("" = platform-agnostic).
+func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, version, plat, artName string, content []byte) {
 	t.Helper()
 	g := gomega.NewWithT(t)
 	if artName == "" {
@@ -148,7 +155,7 @@ func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, vers
 	full := filepath.Join(repoDir, artName)
 	g.Expect(os.MkdirAll(filepath.Dir(full), 0o755)).To(gomega.Succeed())
 	g.Expect(os.WriteFile(full, content, 0o644)).To(gomega.Succeed())
-	g.Expect(os.WriteFile(full+".minisig", []byte(key.signArtifact(name, version, content)), 0o644)).To(gomega.Succeed())
+	g.Expect(os.WriteFile(full+".minisig", []byte(key.signArtifact(name, version, plat, content)), 0o644)).To(gomega.Succeed())
 }
 
 // writeTrustRoot writes anchor's .pub to a temp file and returns its path.
@@ -171,7 +178,7 @@ func signRepo(t testing.TB, repoDir, source string, serial uint64, pkgs ...index
 		[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 	publishIndex(t, repoDir, signer, serial, pkgs...)
 	for _, p := range pkgs {
-		writeArtifact(t, repoDir, signer, p.name, p.version, p.artifactName, p.artifact)
+		writeArtifact(t, repoDir, signer, p.name, p.version, p.platform, p.artifactName, p.artifact)
 	}
 	return writeTrustRoot(t, anchor)
 }
@@ -240,6 +247,9 @@ type indexPkg struct {
 	name     string
 	version  string
 	artifact []byte
+	// platform is the entry's platform ("" = platform-agnostic). publishIndex
+	// writes it to the entry and signRepo signs it into the artifact claim.
+	platform string
 	// artifactName overrides the published Artifact path. When empty, it
 	// defaults to the conventional "<name>-<version>.tar.zst".
 	artifactName string
@@ -288,7 +298,7 @@ func runUnlinkInProcess() (string, error) {
 func publishIndex(t testing.TB, repoDir string, indexKey minisignKeypair, serial uint64, pkgs ...indexPkg) {
 	t.Helper()
 	g := gomega.NewWithT(t)
-	idx := schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{}}
+	idx := schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{}}
 	for _, p := range pkgs {
 		artifact := p.artifactName
 		if artifact == "" {
@@ -298,6 +308,7 @@ func publishIndex(t testing.TB, repoDir string, indexKey minisignKeypair, serial
 			Version:      p.version,
 			ContentHash:  blakeHash(p.artifact),
 			Artifact:     artifact,
+			Platform:     p.platform,
 			Attestations: p.attestations,
 			Depends:      p.depends,
 			Recommends:   p.recommends,

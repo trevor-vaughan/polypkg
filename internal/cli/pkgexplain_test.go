@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/trevor-vaughan/polypkg/internal/action"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
@@ -105,5 +106,44 @@ var _ = Describe("pkg explain", func() {
 		phases, ok := result.Data["phases"].([]any)
 		Expect(ok).To(BeTrue(), "data.phases must be a JSON array")
 		Expect(phases).To(HaveLen(6))
+	})
+
+	It("documents per-platform artifacts before fat !starlark artifacts", func() {
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "explain"})
+		Expect(root.Execute()).To(Succeed())
+
+		text := out.String()
+		Expect(text).To(ContainSubstring("Per-platform artifacts"))
+		Expect(text).To(ContainSubstring(platformExample))
+		Expect(text).To(ContainSubstring(`platform-agnostic ("any")`))
+		Expect(text).To(ContainSubstring("Fat artifact"))
+		Expect(text).NotTo(ContainSubstring("ships a single artifact by default"))
+		Expect(strings.Index(text, platformExample)).To(BeNumerically("<", strings.Index(text, starlarkExample)))
+	})
+
+	It("shows a platform example that the producer grammar accepts", func() {
+		Expect(platform.ValidateProducer(strings.TrimPrefix(platformExample, "platform: "))).To(Succeed())
+	})
+
+	It("adds the platform example to the json envelope without removing existing keys", func() {
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "explain", "--format", "json"})
+		Expect(root.Execute()).To(Succeed())
+
+		var result schema.CLIResult
+		Expect(json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result)).To(Succeed())
+		Expect(result.Data["platform_example"]).To(Equal(platformExample))
+		Expect(result.Data["starlark_example"]).To(Equal(starlarkExample))
+		notes, ok := result.Data["notes"].([]any)
+		Expect(ok).To(BeTrue(), "data.notes must be a JSON array")
+		Expect(notes).To(HaveLen(4))
+		Expect(notes).To(ContainElement(ContainSubstring("platform: <os>/<arch>")))
 	})
 })

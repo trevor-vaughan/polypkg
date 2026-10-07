@@ -1,7 +1,7 @@
-# The supply chain: v2 metadata, attestations, freshness, anti-downgrade
+# The supply chain: signed metadata, attestations, freshness, anti-downgrade
 
 This document covers the path a package takes between a publisher's signed
-index and an installed file: the v2 wire formats, the per-package verification
+index and an installed file: the signed wire formats, the per-package verification
 chain, the four tiers a carried external attestation can land in, the freshness
 and anti-rollback floors, and how all of that survives a mirror hop. It is
 aimed at maintainers working in `internal/trust`, `internal/attest`,
@@ -11,12 +11,12 @@ Two neighbours: the producer half — how a repository is signed, cached, and
 published — is [repo-publisher.md](repo-publisher.md), and the apply pipeline
 this hangs off is [architecture.md](architecture.md).
 
-The publisher and consumer share three v2 wire formats (hard cutover — v1
-readers and schemas were removed):
+The publisher and consumer share three wire formats. Every version change was
+a hard cutover: no reader or schema for an earlier version remains.
 
 | Schema | Carries |
 |---|---|
-| `polypkg.index/v2` | `expires`, per-entry content-addressed `artifact` pool paths, an informational `revision` republish ordinal, and `attestations[]` refs (`predicate_type`, `artifact`, `content_hash`). Living inside the signed index makes attestations strip-resistant: removing one invalidates the index signature. |
+| `polypkg.index/v3` | `expires`, per-entry content-addressed `artifact` pool paths, an optional per-entry `platform` (see "Index v3: platforms" below), an informational `revision` republish ordinal, and `attestations[]` refs (`predicate_type`, `artifact`, `content_hash`). Package keys are restricted to the slug `^[a-zA-Z0-9_-]+$` by the schema's `propertyNames`. Living inside the signed index makes attestations strip-resistant: removing one invalidates the index signature. |
 | `polypkg.trust/v2` | `expires`, monotonic `serial`, and the key list with roles `["index", "artifact", "attestation"]`. |
 | `polypkg.manifest/v2` | Per-entry install-time `attestation` record (`status`, `predicate_types`, `attestation_hash`, `policy_at_install`, `gate_disabled`), plus `carried_bindings` recording external provenance bound to the installed bytes. Each `CarriedBinding` carries `predicate_type`, `format`, `subject_scope`, `tier`, its own `attestation_hash` (for offline revocation matching), and — depending on tier — `verifying_key_id` and `builder_identity` (builder-verified) or `certificate_identity` and `certificate_issuer` (verified-offline). Only `verified` or `unattested` ever persist — a failed verification never installs. |
 
@@ -51,8 +51,18 @@ readers and schemas were removed):
      one `WARNING:` line each telling the operator the publisher should
      re-sign. A zero threshold disables the check, and an already-expired
      document is not "near" — that is the expiry/grace path above.
-2. Artifact: minisign signature under the `artifact` role, then the BLAKE3
-   digest against the signed index's `content_hash`.
+2. Artifact: three checks before extraction, then one after it.
+
+   - Before extraction: the minisign signature under the `artifact` role.
+   - Before extraction: the trusted-comment claims (`name`, `version`,
+     `platform`, `hash`) against the selected entry, via
+     `trust.Claims.Artifact`. `platform=any` matches an entry with no
+     platform, and a comment without `platform=` is refused.
+   - Before extraction: the BLAKE3 digest against the signed index's
+     `content_hash`.
+   - After extraction, before any action runs: the artifact's own
+     `polypkg.yaml` must name the same `name`, `version`, and `platform` as
+     the entry.
 3. Attestation transport (when the index entry carries refs). Each ref's
    `.att.json` + `.minisig` is fetched, then:
 
@@ -94,6 +104,40 @@ readers and schemas were removed):
    `warn` (default) installs with a stderr warning, `require` refuses, `off`
    installs silently. The verdict is recorded in the manifest entry and
    surfaced by `status -vv` (`[attested]`/`[unattested]`) and `info`.
+
+## Index v3: platforms
+
+`polypkg.index/v3` replaced `v2` so that one version can publish one artifact
+per platform. Each change, and the reason for its shape:
+
+- **`platform` on entries.** `<os>/<arch>` in Go's vocabulary, absent for a
+  platform-agnostic artifact. The consumer filters on it before resolution;
+  see [architecture.md](architecture.md#platform-aware-catalogs).
+- **A mandatory `platform=` in the artifact claim.** The signed comment is
+  `name=<name> version=<version> platform=<platform|any> hash=<content_hash>`.
+  If a missing field meant "any", a genuinely signed artifact from before
+  platforms existed could be replayed under another platform's entry, binding
+  a darwin artifact to a linux entry. Requiring the field turns absence into
+  a verification failure. The claim itself cannot be stripped or edited,
+  because minisign's global signature covers the trusted comment. `any` is
+  reserved, and no platform can spell it because every platform contains a
+  `/`.
+- **Slug-checked names, in three layers.** Index package names become
+  extract-store and staging paths, and relation names choose which entries
+  the resolver loads. Both are untrusted input even though the index is
+  signed, and three layers check them:
+  - the index schema restricts package keys with `propertyNames`;
+  - `BuildCatalog` checks keys and relation names with
+    `schema.ValidatePackageName`;
+  - at install time, the artifact's own `polypkg.yaml` must agree with its
+    entry on name, version, and platform.
+- **No dual read.** A `v2` index is refused, and the error asks for a rebuild
+  with `polypkg repo build`. A fetched document (index, trust document, trust
+  bundle, revocation list, or pool manifest) whose schema is newer than this
+  binary reads is reported as written by a newer polypkg. It no longer fails
+  strict decoding on an unknown field.
+- **Attestation comments unchanged.** An attestation binds its artifact by
+  digest, and the digest already differs per platform.
 
 ## Carried-attestation tiers
 
@@ -287,13 +331,20 @@ offline revocation matching reads.
 
 **Anti-downgrade (per-package high-water mark).** `FetchCatalog` folds every
 verified index into a per-source, per-package version high-water map persisted
-in the trust state. `Plan` refuses a resolved version below its source's mark
-only when the source has WITHDRAWN its top — no version ≥ the mark remains in
-the current signed index — and the profile does not exact-pin the selected
-version (`x.y.z`, `=x.y.z`, or `==x.y.z`, the operator's escape hatch for a
-pulled release). Selecting an older entry the index still offers is ordinary
-constraint resolution and never refused; cross-source masking is structurally
-impossible because catalog merging is a per-name all-or-nothing overlay.
+in the trust state. The fold reads the host-filtered catalog, and the map is
+stored per host platform (`packages_by_platform` in the source's state file), so
+a state home shared by machines of different platforms never lets one platform's
+newer build refuse another's older one. A legacy un-keyed `packages` map is
+adopted as the marks of whichever host fetches the source first, and persisted
+(in the per-platform form, without the legacy map) only when that fetch stores
+the trust state; any other platform sharing the home then starts with no marks.
+`Plan` refuses a resolved version below its source's mark only when the source
+has WITHDRAWN its top — no version ≥ the mark remains in the current signed
+index — and the profile does not exact-pin the selected version (`x.y.z`,
+`=x.y.z`, or `==x.y.z`, the operator's escape hatch for a pulled release).
+Selecting an older entry the index still offers is ordinary constraint
+resolution and never refused; cross-source masking is structurally impossible
+because catalog merging is a per-name all-or-nothing overlay.
 
 **Pool.** Artifacts and attestations are content-addressed under
 `<output>/pool/<blake3>.{tar.zst,att.json}`. A republish writes a new blob and
@@ -491,9 +542,9 @@ publisher and consumer halves that use them follow below.
   `polypkg-link`, `slsa-provenance`, `spdx`, `cyclonedx`, `in-toto-generic`,
   `in-toto-unclassified`, `sigstore-bundle`), `subject_scope` (`artifact` or
   `content:<path>`), and an
-  advisory `subject_digests` (algorithm→hex). These are additive to
-  `polypkg.index/v2`; existing indexes stay valid and there is **no** version
-  bump.
+  advisory `subject_digests` (algorithm→hex). They were added to
+  `polypkg.index/v2` without a version bump, and `polypkg.index/v3` carries
+  them unchanged.
 - `ParseStatement` (in `internal/attest/statement.go`) is generalized to accept
   an in-toto Statement whose subjects carry *any* digest algorithm, so a carried
   SLSA statement (sha256 subjects) parses. Native-jcs (blake3) statements are
@@ -522,7 +573,8 @@ an externally supplied attestation claims to cover. Neither verifies anything:
 sigstore verification is the *consumer's* job at install time — a publisher
 relaying an envelope is not in a position to vouch for its signer.
 
-- The cache schema bumps `polypkg.repo-cache/v2` → `v3` and stores
+- The cache schema bumps `polypkg.repo-cache/v2` → `v3` (now `v4`, which adds
+  the entry platform; see [repo-publisher.md](repo-publisher.md)) and stores
   `[]AttestationRef` in place of the former single-attestation fields. A
   package now routinely produces several refs — the SARIF lint statement, the
   `polypkg-link` statement, and one per carried envelope — so the multi-ref
@@ -770,7 +822,8 @@ verifies, what it deliberately does not, and how it stages.
     planner's install path is entangled with resolver selection, generation
     state, and posture-floor policy that a one-shot mirror fetch has no use for.
   - `pull.go`'s own `verifyClaim` re-states the same small "signed claim matches
-    the index entry" assertion `planner.verifyArtifact` makes, against the shared
+    the index entry" assertion `planner.verifyArtifact` makes (name, version,
+    platform, and hash), against the shared
     `Claims.Artifact()` accessor, so the two call sites can't drift on what
     "verified" means even though they don't share a call path.
 - **Verify-inbound-but-defer-binding.**
@@ -811,12 +864,24 @@ verifies, what it deliberately does not, and how it stages.
     floor, and once one has been seen its absence is refused. A replayed older
     list or a 404 therefore cannot shrink the set the pull enforces and
     propagates.
-- **One version per package name** (`resolvePullSelection`). Empty selectors
-  pick the latest semver of every package in the index; a bare `name` picks
-  the latest of that name; `name@version` pins an exact version. Selecting
-  the same name twice among explicit selectors is refused — a `repo build`
-  manifest keys `packages:` by name, so the staged output can only hold one
-  version per name regardless.
+- **Selection is per platform group** (`resolvePullSelection`).
+  - Entries for a name are grouped by platform, and platform-agnostic
+    entries form one more group of their own (shown as `any`). Empty
+    selectors or a bare `name` take each group's newest semver, so a version
+    that is newest on one platform but superseded on another is mirrored only
+    where it is newest. `name@version` takes every platform build of that
+    version. `--all-versions` takes every entry of an unpinned name. The same
+    selector given twice, or a bare `name` paired with a `name@version` of
+    it, is refused as ambiguous.
+  - `narrowingNote` runs per group. A platform group's note names its
+    platform (`hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 …`).
+    The agnostic group keeps the unqualified wording, and a group whose only
+    build was mirrored gets no note.
+  - Before any selection, an index that lists one `(name, version, platform)`
+    twice fails the whole pull, including packages the operator did not
+    select. `repo build` never publishes one. Allowing it would mean a
+    duplicate of a group's newest build is dropped silently, and a pin would
+    stage both copies into one directory.
 - **Per-upstream anti-rollback floors** (`Pull`, `runMirrorPull`).
   - `Pull` loads a `trust.Seen` record with `trust.LoadSeen`, the consumer's
     format, from `PullOptions.StateHome`. The record is keyed
@@ -855,18 +920,23 @@ verifies, what it deliberately does not, and how it stages.
     upstream's, and track floors only against the mirror's own serials. Without
     an upstream floor, a replayed or stripped upstream document would launder
     revocations across the hop with nothing downstream able to notice.
-- **`stagedPkgDir` traversal guard.** Index package names are map keys with no
-  charset constraint in `index-v2.json`, so a signature-valid index from a
-  compromised source could in principle name a package `../../evil`.
+- **`stagedPkgDir` traversal guard.** Index package names are map keys.
+  `index-v3.json` restricts them to the slug pattern, but `stagedPkgDir` does
+  not rely on the schema alone. A signature-valid index from a compromised
+  source must not be able to name a package `../../evil` and write outside
+  the staging root.
 
   - Before any file is written under it, `stagedPkgDir` rejects a name or
     version that is empty, is `.` or `..`, contains a path separator or the
     substring `..`, or resolves outside the staging root.
   - It then applies a stricter charset floor than traversal alone requires: the
-    name must match `safePkgName` (`[A-Za-z0-9_-]+`) and the version must match
-    `safePkgVersion`. That is what makes `<name>/<version>` two unambiguous
-    path segments, so two distinct packages can never collide into one
-    `attestations/` directory.
+    name must pass `schema.ValidatePackageName` (`[A-Za-z0-9_-]+`) and the
+    version must match `safePkgVersion`. The platform segment is the entry's
+    platform with `/` replaced by `-` (`linux-amd64`), or `any` for an entry
+    with no platform. Platform segments never contain `-`, so `any` cannot
+    collide with a real platform. Together these make
+    `<name>/<version>/<platform>` three unambiguous path segments, so two
+    distinct artifacts can never collide into one `attestations/` directory.
   - It is defense in depth mirroring the traversal rejection in `readTar`
     (`internal/mirror/verify.go`, the bundle reader), applied here to
     index-entry names instead of tar member names. The equivalent guard on the

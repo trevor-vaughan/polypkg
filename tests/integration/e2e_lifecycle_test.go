@@ -59,8 +59,8 @@ var _ = Describe("fresh UX lifecycle journey", Ordered, func() {
 			indexPkg{name: "hello", version: "1.0.0", artifact: hello100},
 			indexPkg{name: "world", version: "1.0.0", artifact: world100},
 		)
-		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", hello100)
-		writeArtifact(t, repoDir, signer, "world", "1.0.0", "", world100)
+		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", "", hello100)
+		writeArtifact(t, repoDir, signer, "world", "1.0.0", "", "", world100)
 		trustRoot = writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -146,7 +146,7 @@ var _ = Describe("fresh UX lifecycle journey", Ordered, func() {
 			indexPkg{name: "hello", version: "1.0.0", artifact: hello100},
 			indexPkg{name: "world", version: "1.0.0", artifact: world100},
 		)
-		writeArtifact(t, repoDir, signer, "hello", "1.1.0", "", hello110)
+		writeArtifact(t, repoDir, signer, "hello", "1.1.0", "", "", hello110)
 
 		out, err := runCmd("upgrade", "hello")
 		Expect(err).NotTo(HaveOccurred(), "upgrade hello: %s", out)

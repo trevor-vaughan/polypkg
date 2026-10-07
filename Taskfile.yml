@@ -61,6 +61,10 @@ tasks:
     desc: Format all Go source with go fmt
     cmd: '{{.GO}} fmt ./...'
 
+  generate:
+    desc: Regenerate committed generated Go source (go generate)
+    cmd: '{{.GO}} generate ./...'
+
   check:
     desc: Run all quality gates
     deps: [lint, test]

@@ -16,6 +16,7 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/drift"
 	"github.com/trevor-vaughan/polypkg/internal/gc"
 	"github.com/trevor-vaughan/polypkg/internal/paths"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/substrate"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
@@ -27,11 +28,11 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show retained generations, drift, and GC preview",
 		Long: "Default verbosity prints a one-line summary (generation, retention, drift, any freshness-grace count, any revoked-builder count, and any revocation-data expired/expiring-soon count). " +
-			"-v adds per-generation listing, freshness-grace detail, and a revocation freshness section (each non-fresh source's expires with an [EXPIRED … ago] or [expiring in …] tag, plus [grace acknowledged] when an open grace window still covers an expired list); -vv adds drift detail and per-package attestation/revoked-builder tags; -vvv adds GC preview. " +
+			"-v adds per-generation listing, freshness-grace detail, and a revocation freshness section (each non-fresh source's expires with an [EXPIRED … ago] or [expiring in …] tag, plus [grace acknowledged] when an open grace window still covers an expired list); -vv adds drift detail and the installed-package listing with per-package platform (per-platform artifacts only), attestation, and revoked-builder tags; -vvv adds GC preview. " +
 			"Exits 3 when an installed package's builder key has been revoked (as of the last fetch). " +
 			"Exits 5 when an installed package carries an attestation whose content-hash has been revoked (as of the last fetch); the revoked-builder exit 3 takes precedence when both apply. " +
 			"Exits 4 when an installed source's enforced revocation list is expired and not covered by an open accept_expiry_until grace window; the revoked-builder exit 3 takes precedence when both apply. " +
-			"Under --format json the full StatusResult schema is always emitted and verbosity flags are ignored.",
+			"Under --format json the full StatusResult schema is always emitted and verbosity flags are ignored; revoked_builders and revoked_attestations entries carry each package's platform (\"any\" when agnostic).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -357,7 +358,9 @@ func collectRevokedBuilders(m *schema.Manifest, revoked map[string]struct{}) []s
 				continue
 			}
 			seen[key] = struct{}{}
-			out = append(out, schema.StatusRevokedBuilder{Package: e.Name, Version: e.Version, KeyID: b.VerifyingKeyID})
+			out = append(out, schema.StatusRevokedBuilder{
+				Package: e.Name, Version: e.Version, Platform: platform.Display(e.Platform), KeyID: b.VerifyingKeyID,
+			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -416,7 +419,7 @@ func collectRevokedAttestations(m *schema.Manifest, revoked map[string]struct{})
 	}
 	seen := map[string]struct{}{}
 	var out []schema.StatusRevokedAttestation
-	match := func(name, version, hash string) {
+	match := func(name, version, plat, hash string) {
 		if hash == "" {
 			return
 		}
@@ -428,7 +431,7 @@ func collectRevokedAttestations(m *schema.Manifest, revoked map[string]struct{})
 			return
 		}
 		seen[key] = struct{}{}
-		out = append(out, schema.StatusRevokedAttestation{Package: name, Version: version, AttestationHash: hash})
+		out = append(out, schema.StatusRevokedAttestation{Package: name, Version: version, Platform: plat, AttestationHash: hash})
 	}
 	for i := range m.Entries {
 		e := &m.Entries[i]
@@ -439,9 +442,10 @@ func collectRevokedAttestations(m *schema.Manifest, revoked map[string]struct{})
 		// level with no carried binding; carried external attestations record theirs
 		// per binding. Both must be tested against the revoked set (issue: a revoked
 		// native attestation previously escaped this audit).
-		match(e.Name, e.Version, e.Attestation.AttestationHash)
+		plat := platform.Display(e.Platform)
+		match(e.Name, e.Version, plat, e.Attestation.AttestationHash)
 		for j := range e.Attestation.CarriedBindings {
-			match(e.Name, e.Version, e.Attestation.CarriedBindings[j].AttestationHash)
+			match(e.Name, e.Version, plat, e.Attestation.CarriedBindings[j].AttestationHash)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -655,6 +659,9 @@ func emitStatusText(w io.Writer, verbosity, cur int, gens []substrate.GenInfo,
 		for i := range curManifest.Entries {
 			e := &curManifest.Entries[i]
 			suffix := attestationTag(e.Attestation)
+			if p := platform.Display(e.Platform); p != platform.Any {
+				suffix = " [platform: " + p + "]" + suffix
+			}
 			if e.Weak {
 				suffix += " [weak]"
 				if len(e.RecommendedBy) > 0 {

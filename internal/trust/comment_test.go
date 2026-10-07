@@ -45,5 +45,6 @@ var _ = Describe("parseComment", func() {
 		Entry("rejects token without equals", "name hello", false, nil),
 		Entry("rejects empty key", "=v", false, nil),
 		Entry("rejects duplicate key", "name=a name=b", false, nil),
+		Entry("rejects duplicate platform key", "platform=any platform=linux/amd64", false, nil),
 	)
 })

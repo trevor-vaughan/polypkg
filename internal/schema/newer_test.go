@@ -44,6 +44,29 @@ var _ = Describe("newer-schema detection", func() {
 			`{"schema":"polypkg.resets/v2"}`, "polypkg.resets/v2", 1),
 	)
 
+	// A newer publisher's document usually carries fields this binary does not
+	// know, so the check must run before the strict (DisallowUnknownFields)
+	// decode, or the user sees "unknown field" instead of "upgrade polypkg".
+	DescribeTable("detects it for every fetched document kind, ahead of strict decoding",
+		func(parse func(io.Reader) error, doc, found string, supported int) {
+			err := parse(strings.NewReader(doc))
+			var ne *NewerSchemaError
+			Expect(errors.As(err, &ne)).To(BeTrue(), "got %v", err)
+			Expect(ne.Found).To(Equal(found))
+			Expect(ne.Supported).To(Equal(supported))
+		},
+		Entry("index", func(r io.Reader) error { _, err := ParseIndex(r); return err },
+			`{"schema":"polypkg.index/v4","expires":"2099-01-01T00:00:00Z","packages":{},"future":true}`, "polypkg.index/v4", 3),
+		Entry("trust document", func(r io.Reader) error { _, err := ParseTrustDoc(r); return err },
+			`{"schema":"polypkg.trust/v3","future":true}`, "polypkg.trust/v3", 2),
+		Entry("trust bundle", func(r io.Reader) error { _, err := ParseTrustBundle(r); return err },
+			`{"schema":"polypkg.trust-bundle/v2","future":true}`, "polypkg.trust-bundle/v2", 1),
+		Entry("revocation list", func(r io.Reader) error { _, err := ParseRevocationList(r); return err },
+			`{"schema":"polypkg.revocation-list/v2","future":true}`, "polypkg.revocation-list/v2", 1),
+		Entry("pool manifest", func(r io.Reader) error { _, err := ParsePoolManifest(r); return err },
+			`{"schema":"polypkg.pool-manifest/v2","future":true}`, "polypkg.pool-manifest/v2", 1),
+	)
+
 	DescribeTable("leaves every other failure to strict validation",
 		func(doc string) {
 			_, err := ParseOwnership(strings.NewReader(doc))

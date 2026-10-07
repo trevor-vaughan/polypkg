@@ -83,10 +83,59 @@ packages:
         - source: ./pkgs/hello-1.1.0
 ```
 
-`repo add` appends a new version to that list (or updates the entry already
-there if the version repeats). `repo remove hello` withdraws every version of
-`hello`; `repo remove hello@1.0.0` withdraws only that one, leaving the rest
-published.
+`repo add` appends a new entry to that list, or updates the entry already
+there when its source path repeats. `repo remove hello` withdraws every
+version of `hello`; `repo remove hello@1.0.0` withdraws every entry for that
+version (every platform build of it), leaving the other versions published.
+
+**Several platforms of one version.** A version can be published once per
+platform. Give each platform its own package source with the same `name` and
+`version` and a different `platform:` (see
+[Authoring a package](authoring.md#platforms-per-platform-or-fat-artifacts)),
+and list each one:
+
+```yaml
+packages:
+    jot:
+        - source: ./pkgs/jot-1.4.2-linux-amd64
+        - source: ./pkgs/jot-1.4.2-darwin-arm64
+```
+
+`repo add ./pkgs/jot-1.4.2-darwin-arm64` appends the second entry like any
+other. A client downloads only the artifact for its own platform.
+
+`repo build` reads each entry's platform from the package itself, so the
+manifest has no platform field. For a `source:` entry it reads the source's
+`polypkg.yaml`. For a `prebuilt:` entry it reads the `polypkg.yaml` inside
+the artifact. The build fails in two cases:
+
+- **Mixed.** A version that has an entry without a platform alongside
+  entries with one would give a client two candidates for that version, so
+  the build fails and names the version. A version is either a single entry
+  without a platform or entries that all have one.
+- **Duplicate.** Two entries with the same version and the same platform.
+
+The artifact signature covers the platform as well as the name, version,
+and content hash, and a client refuses an artifact signature that names no
+platform. An artifact genuinely signed before platforms existed therefore
+cannot be replayed under another platform's entry, for example to serve a
+darwin build to a linux host.
+
+`repo remove jot@1.4.2` withdraws every platform build of 1.4.2 and lists
+each entry it removed with its platform:
+
+```
+$ polypkg repo remove jot@1.4.2
+Removed jot@1.4.2 and rebuilt the repository (serial 7)
+  ./pkgs/jot-1.4.2-linux-amd64 (linux/amd64)
+  ./pkgs/jot-1.4.2-darwin-arm64 (darwin/arm64)
+```
+
+A version published as one platform-agnostic entry prints only the first
+line, as before. With `--format json`, `data.removed` lists each withdrawn
+entry as `{"entry": …, "platform": …}` (`any` for a platform-agnostic entry)
+whenever a version is given. To withdraw a single platform, delete its entry
+from `polypkg-repo.yaml` and run `polypkg repo build`.
 
 **A failed `add` or `remove` leaves `polypkg-repo.yaml` byte-identical** — for
 *any* failure, not just a rejected flag. The reconcile runs against an in-memory
@@ -337,7 +386,7 @@ endpoint or a local `file://` path — and verifies everything inbound before
 staging a single byte: the source's trust document and signed index
 (signature plus freshness, honoring the same `accept_expiry_until` grace
 described above), then each selected artifact (signature, its signed
-name/version/hash claim, and a blake3 check against the verified index's
+name/version/platform/hash claim, and a blake3 check against the verified index's
 `content_hash`) and each of its attestation blobs (transport signature and
 hash against its index reference).
 
@@ -357,6 +406,12 @@ given twice, or a bare `name` paired with an explicit `name@version` (the
 bare form means "latest", so pairing it with a pin does not resolve to one
 outcome).
 
+"Latest" is worked out per platform: each platform's builds, and the
+platform-agnostic builds as one more group, contribute their own newest
+version. `name@version` pulls every platform build of that version. An
+upstream index that lists one name, version, and platform twice fails the
+whole pull.
+
 Because a default pull (no selectors, or a bare `name`) always takes the
 newest version of a name, it silently narrows any upstream that has published
 more than one version — the older releases simply are not mirrored. `Pull`
@@ -367,8 +422,11 @@ prints each note to stderr prefixed `note:`. Pin the versions you need
 explicitly (`name@version`) to avoid narrowing a version a downstream client
 depends on.
 
-Verified bytes land under a staging directory (`<name>/<version>/<name>.tar.zst`
-plus an `attestations/` dir of `.att.json` blobs), alongside the source's
+Verified bytes land under a staging directory
+(`<name>/<version>/<platform>/<name>.tar.zst`, where `<platform>` is the
+entry's platform with `/` replaced by `-`, such as `linux-amd64`, or `any`
+for a platform-agnostic package, plus an `attestations/` dir of `.att.json`
+blobs beside it), alongside the source's
 `trust-bundle.json` when it publishes one. `mirror.WritePrebuiltManifest` then
 writes a `repo build`-ready manifest whose packages are `prebuilt:` entries
 pointing at those staged files — running `repo build` against it re-publishes
@@ -405,8 +463,9 @@ output directory once the publish has committed. Clients see a higher-serial
 trust set that no longer vouches for the dropped builder keys.
 
 **Pool layout.** Artifacts are published content-addressed under
-`public/pool/<blake3-hash>.tar.zst`. Republishing a changed build of the same
-version writes a *new* blob and repoints the index at it; old blobs persist
+`public/pool/<blake3-hash>.tar.zst`, one blob per platform of a version.
+Republishing a changed build of the same version and platform writes a *new*
+blob and repoints the index at it; old blobs persist
 immutably so previously signed indexes — and consumer rollbacks — keep
 resolving. The pool therefore grows with every republish until pool garbage
 collection lands (future work).

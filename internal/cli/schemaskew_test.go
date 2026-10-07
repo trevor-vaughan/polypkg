@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -145,4 +146,39 @@ var _ = Describe("state written by a newer polypkg", func() {
 		Entry("pending resets", func(p string) error { _, err := readPendingResets(p); return err },
 			"pending-resets.json", `{"schema":"polypkg.resets/v2"}`),
 	)
+})
+
+var _ = Describe("an index an older polypkg built", func() {
+	It("names the index and tells both the operator and the consumer what to do", func() {
+		inner := &schema.OlderIndexError{Found: "polypkg.index/v2"}
+		cmd := NewRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		err := WrapError(cmd, FormatText, "plan", fmt.Errorf("parse index: %w", inner))
+
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("parse index: the repository index is polypkg.index/v2, " +
+			"which an older polypkg built; this polypkg reads only polypkg.index/v3"))
+		Expect(ce.Hint).To(ContainSubstring("polypkg repo build"))
+		Expect(ce.Hint).To(ContainSubstring("ask"))
+		var oe *schema.OlderIndexError
+		Expect(errors.As(err, &oe)).To(BeTrue(), "the typed cause must survive the CLIError wrapper")
+	})
+
+	It("carries the same message and hint in the JSON error envelope", func() {
+		cmd := NewRootCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		_ = WrapError(cmd, FormatJSON, "plan", &schema.OlderIndexError{Found: "polypkg.index/v2"})
+
+		var env struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+			Hint   string `json:"hint"`
+		}
+		Expect(json.Unmarshal(out.Bytes(), &env)).To(Succeed(), out.String())
+		Expect(env.Status).To(Equal("error"))
+		Expect(env.Error).To(ContainSubstring("which an older polypkg built"))
+		Expect(env.Hint).To(ContainSubstring("polypkg repo build"))
+	})
 })

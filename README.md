@@ -170,11 +170,11 @@ must be confirmed before it is pinned: on a TTY, by answering a prompt that show
 `--trust-root-fingerprint <key id>`, where the key id is the one the publisher sees with `polypkg repo key show`. A
 mismatch is refused. With a local file the fingerprint is optional and is checked when given.
 
-**`polypkg search <name>`**: queries your configured source for packages whose name contains `<name>`. Marks packages that are already installed.
+**`polypkg search <name>`**: queries your configured source for packages whose name contains `<name>`. Marks packages that are already installed, and versions that are not published for this machine's platform.
 
-**`polypkg install <name>`**: resolves the package, writes it into the profile, and applies. A bare name (`hello`) pins the newest available version as a `>=` floor. `<name>@<version>` pins exactly (`hello@1.2.3` writes `=1.2.3`). `<name>@<constraint>` is written verbatim (`hello@">=1.2"`). Validation is all-or-nothing: if any requested package is unknown, nothing is written.
+**`polypkg install <name>`**: resolves the package, writes it into the profile, and applies. A bare name (`hello`) pins the newest available version as a `>=` floor. `<name>@<version>` pins exactly (`hello@1.2.3` writes `=1.2.3`). `<name>@<constraint>` is written verbatim (`hello@">=1.2"`). Validation is all-or-nothing: if any requested package is unknown, nothing is written. A package published only for other platforms is refused with a message that names them and this machine's platform.
 
-**`polypkg list`**: shows installed packages in the current generation, including any exact pins.
+**`polypkg list`**: shows installed packages in the current generation, including any exact pins. `-v` adds each package's platform: the `<os>/<arch>` its artifact was published for, or `any` for a platform-agnostic artifact.
 
 **`polypkg upgrade`**: re-applies the profile so range-constrained packages pick up newer versions. Exact pins (`=X.Y.Z`) with a newer version available are reported as held back. Pass one or more package names to bump those exact pins to the newest available version.
 
@@ -199,8 +199,8 @@ mismatch is refused. With a local file the fingerprint is optional and is checke
 |---|---|
 | `search` | Search configured sources for packages matching a term. |
 | `list` (alias: `ls`) | List installed packages in the current generation. |
-| `info` (alias: `show`) | Show installed and available versions for a package. |
-| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). Exit 3 = an installed package's builder key has been revoked; exit 5 = an installed package carries a revoked attestation; exit 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4). |
+| `info` (alias: `show`) | Show installed and available versions for a package, the platform of the artifact the newest would install (`any` when platform-agnostic), the other platforms that version is published for, and the installed package's platform when it has one. For a package published only for other platforms, a note names where it is published. |
+| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). `-vv` lists the installed packages, tagging each per-platform package with `[platform: <os>/<arch>]`. Exit 3 = an installed package's builder key has been revoked; exit 5 = an installed package carries a revoked attestation; exit 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4). |
 | `plan` | Compute the apply plan and report what would change. Exit 2 = changes pending, 0 = nothing to do. |
 
 ### Audit
@@ -304,6 +304,20 @@ polypkg --format json list                # polypkg.cli-result/v2
 polypkg --format json status              # polypkg.status/v1; exit 3/4/5 carry meaning
 ```
 
+Platform fields in the envelope data:
+
+- `search`: each entry in `matches` has `versions` (installable on this machine)
+  and `unavailable_versions` (published only for other platforms). `versions`
+  can be empty when `unavailable_versions` is not, for a package published only
+  for other platforms, so check it before installing.
+- `info`: `platform` is the newest candidate's platform (`any` when
+  platform-agnostic), `other_platforms` the other platforms that version is
+  published for, and `installed_platform` the installed package's (`""` when not
+  installed). For a package published only for other platforms, `platform` is
+  `""`, `other_platforms` is non-empty, and `note` carries the reason (`<name>
+  <version> is published for <platforms>; this host is <os>/<arch>`).
+- `list`: each package carries `platform` (`any` when platform-agnostic).
+
 ## Environment
 
 `NO_COLOR` is honored (suppresses ANSI color output).
@@ -373,7 +387,7 @@ bound:
 | `pkg-extract/` | Unpacked packages that generations are installed from (and, under `policy: symlink`, link into). | The same sweep, by the same rule. |
 | `audit.log` | One JSON object per line for each apply, `gc`, pin, and recorded security decision. `plan` never writes to it. | At 10 MiB it is renamed to `audit.log.1`; `audit.log.2` and `audit.log.3` keep older history and the oldest is deleted. `audit.log.lock` coordinates writers. |
 | `apply.lock` | Held by `apply` and by the commands that change what it reads (packages and sources in the profile, generations, pins, and the files in this directory), including `source add`, `source remove`, and `source set-trust-root`. A command that finds it held stops at once and names the holder. | One small file. |
-| `trust/` | The highest signed-metadata serial seen per source (anti-rollback). | One small file per source. |
+| `trust/` | The highest signed-metadata serial seen per source (anti-rollback), and each package's highest offered version, kept per host platform (downgrade guard). | One small file per source. |
 | `accepted-drift.json`, `pending-resets.json` | Paths whose drift you adopted with `accept-drift`, and config files `config reset` queued for the next apply. | At most one entry per managed path. |
 
 If a generation's manifest is damaged, or the current generation has no
@@ -508,6 +522,15 @@ with the same name, the **first source in `order` that has it wins**; lower
 sources are shadowed for that name. To prefer a different source's build, move
 it earlier in `order` or pin the package.
 
+A source "has" a package when it publishes that name for **any** platform, not
+only for this machine's. If the first source publishes `tool` only for other
+platforms, installing `tool` here fails with a message naming the platforms it
+is published for; polypkg does not fall back to a lower source's build. That
+rule prevents dependency confusion: otherwise a public source lower in `order`
+could supply its own `tool` on every machine your private source does not build
+for. To take a lower source's build deliberately, pin the package to it with
+`source:`.
+
 Pin a single package to a specific source with `source:`:
 
 ```yaml
@@ -568,7 +591,10 @@ required:
    minisign-signed, carry a monotonic serial, and expire. Stale metadata, or a
    mirror trying to pin you to an older snapshot, is refused.
 2. **Artifact signatures** — every downloaded artifact is checked against the
-   source's signing key and the BLAKE3 content hash in the signed index.
+   source's signing key and the BLAKE3 content hash in the signed index. The
+   signature also covers the package's name, version, and platform, and the
+   package's own `polypkg.yaml` must agree with all three before anything
+   installs.
 3. **Attestations** — a per-package [in-toto](https://in-toto.io/) lint
    attestation is referenced from the signed index, so a mirror cannot strip it
    without invalidating that signature. An attestation that is present but does

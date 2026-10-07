@@ -31,6 +31,7 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/action"
 	"github.com/trevor-vaughan/polypkg/internal/attest"
 	"github.com/trevor-vaughan/polypkg/internal/extractstore"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/runner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -273,8 +274,11 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 			return nil, verr
 		}
 		// Attestations verify against the fetched artifact bytes/metadata only,
-		// so they run BEFORE extraction: a package refused here must not leave
-		// its extracted tree lingering in the pkg-extract scratch area.
+		// so they run BEFORE extraction: a package refused here never writes a
+		// tree into the pkg-extract store. Refusals that need the extracted
+		// tree (carried-attestation binding, policy gate, posture floor,
+		// recipe identity) run after it and leave the content-addressed tree
+		// in place; gc sweeps it once unreferenced.
 		attState, carried, attWarn, err := verifyAttestations(ctx, backend, artState, fr.Revocations[e.Source], *e, effectivePolicy)
 		if err != nil {
 			return nil, err
@@ -283,6 +287,9 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 			attWarnings = append(attWarnings, attWarn)
 		}
 
+		// The extract dir is built from catalog-validated values; this
+		// composition is the containment contract TestExtractDirCannotEscapeStore
+		// (extractpath_test.go) pins, so changing its key means updating that test.
 		pkgRoot := extractstore.Dir(opts.StateHome, e.Name, e.Version, e.ContentHash)
 		if err := ensureExtracted(data, pkgRoot); err != nil {
 			return nil, fmt.Errorf("extract %s-%s: %w", e.Name, e.Version, err)
@@ -348,15 +355,22 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", pkgFileName, err)
 		}
+		if err := checkArtifactIdentity(pkg, *e); err != nil {
+			return nil, err
+		}
 		for _, reserved := range []string{action.SharedBinDir, action.SharedCompletionsDir, action.SharedApplicationsDir, action.SharedMimeDir, action.SharedManDir} {
 			if pkg.Name == reserved {
 				return nil, fmt.Errorf("package %q uses the reserved shared-directory name %q", pkg.Name, reserved)
 			}
 		}
 		manifestEntries = append(manifestEntries, schema.ManifestEntry{
-			Name:          e.Name,
-			Version:       e.Version,
-			ContentHash:   e.ContentHash,
+			Name:        e.Name,
+			Version:     e.Version,
+			ContentHash: e.ContentHash,
+			// The extracted artifact's own polypkg.yaml, which the install-time
+			// cross-check has already matched to the index entry; "" records a
+			// platform-agnostic artifact.
+			Platform:      pkg.Platform,
 			SourceURL:     sourceURL + "/" + e.Artifact,
 			Weak:          e.Weak,
 			RecommendedBy: e.RecommendedBy,
@@ -405,13 +419,14 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 }
 
 // verifyArtifact runs the full artifact verification chain over data: the
-// detached minisign signature, the signed claims binding (name/version/hash),
-// and the index content-hash recomputation. staleable reports whether the
-// failure could be explained by stale locally cached bytes — the mismatch
-// cases a cache eviction and refetch may recover from. Authorization failures
-// (revoked key, key not in the trust set, wrong role) and malformed signed
-// claims are trust-configuration problems no refetch can fix, so they return
-// staleable=false.
+// detached minisign signature, the signed claims binding (name/version/
+// platform/hash), and the index content-hash recomputation. staleable reports
+// whether the failure could be explained by stale locally cached bytes — the
+// mismatch cases a cache eviction and refetch may recover from. Authorization
+// failures (revoked key, key not in the trust set, wrong role), malformed
+// signed claims (including a missing or invalid platform=), and a claimed
+// platform that differs from the entry's are problems no refetch can fix, so
+// they return staleable=false.
 func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.Resolved) (staleable bool, err error) {
 	claims, err := keyring.Verify(trust.RoleArtifact, data, sig)
 	if err != nil {
@@ -426,13 +441,21 @@ func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.R
 		}
 		return false, fmt.Errorf("signature verification failed for %s-%s: %w", e.Name, e.Version, err)
 	}
-	cname, cversion, chash, err := claims.Artifact()
+	cname, cversion, cplat, chash, err := claims.Artifact()
 	if err != nil {
 		return false, fmt.Errorf("artifact %s-%s: %w", e.Name, e.Version, err)
 	}
 	if cname != e.Name || cversion != e.Version || chash != e.ContentHash {
 		return true, fmt.Errorf("artifact signature for %s-%s claims %s-%s/%s, expected %s-%s/%s",
 			e.Name, e.Version, cname, cversion, chash, e.Name, e.Version, e.ContentHash)
+	}
+	// Claim "" (signed as "any") must meet entry "", and a platform claim must
+	// meet the identical entry platform; render "" as "any" for the operator.
+	// Not staleable: the signature already verified over these bytes, so a
+	// refetch cannot change the claimed or the expected platform.
+	if cplat != e.Platform {
+		return false, fmt.Errorf("artifact signature for %s-%s claims platform %s, expected %s",
+			e.Name, e.Version, platform.Display(cplat), platform.Display(e.Platform))
 	}
 
 	h := blake3.New(32, nil)
@@ -445,6 +468,27 @@ func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.R
 			e.Name, e.Version, e.ContentHash, computed)
 	}
 	return false, nil
+}
+
+// checkArtifactIdentity refuses an artifact whose own package recipe does not
+// describe the index entry e it was fetched for: name, version and platform
+// must be equal as strings, and an agnostic entry ("") matches only an agnostic
+// recipe. It runs after extraction (the recipe lives inside the artifact) and
+// before any action is evaluated, because the runner confines actions to
+// ActiveRoot/<recipe name> while the manifest records the entry's name.
+func checkArtifactIdentity(pkg *schema.Package, e resolver.Resolved) error {
+	mismatch := func(field, got, want string) error {
+		return &ArtifactIdentityError{Name: e.Name, Version: e.Version, Source: e.Source, Field: field, Got: got, Want: want}
+	}
+	switch {
+	case pkg.Name != e.Name:
+		return mismatch("name", pkg.Name, e.Name)
+	case pkg.Version != e.Version:
+		return mismatch("version", pkg.Version, e.Version)
+	case pkg.Platform != e.Platform:
+		return mismatch("platform", platform.Display(pkg.Platform), platform.Display(e.Platform))
+	}
+	return nil
 }
 
 // verifyTransport runs the transport half of the attestation chain over
@@ -464,7 +508,7 @@ func verifyTransport(attBytes []byte, attSig string, keyring trust.Keyring, e re
 		// signature) is staleable; distinct authorization failures are terminal.
 		return errors.Is(err, trust.ErrSignatureMismatch), "", fmt.Errorf("attestation signature for %s-%s: %w", e.Name, e.Version, err)
 	}
-	cname, cversion, chash, err := claims.Artifact()
+	cname, cversion, chash, err := claims.Attestation()
 	if err != nil {
 		// Malformed signed claims are a trust-configuration problem; no refetch can fix them.
 		return false, "", fmt.Errorf("attestation claims for %s-%s: %w", e.Name, e.Version, err)

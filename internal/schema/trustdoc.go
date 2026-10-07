@@ -37,6 +37,9 @@ func ParseTrustDoc(r io.Reader) (*TrustDoc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read trust document: %w", err)
 	}
+	if err := checkNotNewer(data, trustSchemaV2); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var td TrustDoc

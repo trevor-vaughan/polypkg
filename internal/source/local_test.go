@@ -109,7 +109,7 @@ var _ = Describe("NativeBackend (local source)", func() {
 	Describe("FetchIndex", func() {
 		It("returns raw index and signature from local dir", func() {
 			root := GinkgoT().TempDir()
-			indexContent := []byte(`{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{}}`)
+			indexContent := []byte(`{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{}}`)
 			sigContent := []byte("untrusted comment: x\nSIGDATA\n")
 			Expect(os.WriteFile(filepath.Join(root, "index.json"), indexContent, 0o644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(root, "index.json.minisig"), sigContent, 0o644)).To(Succeed())

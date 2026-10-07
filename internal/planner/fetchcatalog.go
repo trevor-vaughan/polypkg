@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
 
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/source"
@@ -291,31 +293,35 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		graced = append(graced, GracedMetadata{Source: sourceName, What: "index", AcceptUntil: acceptUntil})
 	}
 
+	host := platform.Host()
+	catalog, err := resolver.BuildCatalog(index, sourceName, host)
+	if err != nil {
+		return nil, fmt.Errorf("build catalog: %w", err)
+	}
+
 	// Fold this verified index into the per-package version high-water map:
 	// semver-max per package, preserving entries for packages the index no
-	// longer offers (vanish-then-reappear-older must still refuse, D15).
-	hwm := seen.Packages
-	if hwm == nil {
-		hwm = map[string]string{}
-	}
-	for name, entries := range index.Packages {
-		for i := range entries {
-			e := &entries[i]
-			nv, err := semver.NewVersion(e.Version)
+	// longer offers (vanish-then-reappear-older must still refuse). The
+	// fold reads the host-filtered catalog, not the raw index: a version
+	// published only for another platform is not an offer to this host, so
+	// letting it raise the mark would refuse this host's own older build as a
+	// downgrade. Marks are kept per host platform for the same reason: a
+	// state home shared with another platform's machine holds that platform's
+	// marks too, and those are written back untouched.
+	hwm := seen.HighWater(host)
+	for _, name := range catalog.Names() {
+		for _, v := range catalog.Versions(name) {
+			nv, err := semver.NewVersion(v)
 			if err != nil {
-				continue // BuildCatalog rejects non-semver below; don't double-report here
+				continue // unreachable: BuildCatalog parsed every version it kept
 			}
 			if cur, ok := hwm[name]; ok {
 				if cv, cerr := semver.NewVersion(cur); cerr == nil && !nv.GreaterThan(cv) {
 					continue
 				}
 			}
-			hwm[name] = e.Version
+			hwm[name] = v
 		}
-	}
-	catalog, err := resolver.BuildCatalog(index, sourceName)
-	if err != nil {
-		return nil, fmt.Errorf("build catalog: %w", err)
 	}
 
 	// Optional trust bundle (2c-0): validate signature/freshness and advance its
@@ -389,13 +395,18 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		seenGrace = &trust.SeenGrace{AcceptUntil: acceptUntil, Docs: docs}
 	}
 
+	highWaterByPlatform := maps.Clone(seen.PackagesByPlatform)
+	if highWaterByPlatform == nil {
+		highWaterByPlatform = map[string]map[string]string{}
+	}
+	highWaterByPlatform[host] = hwm
 	if err := trust.StoreSeen(opts.StateHome, sourceName, trust.Seen{
 		TrustSerial:         trustSerial,
 		IndexSerial:         indexSerial,
 		BundleSerial:        bundleSerial,
 		RevocationSerial:    revSerial,
 		RevocationExpires:   revExpires,
-		Packages:            hwm,
+		PackagesByPlatform:  highWaterByPlatform,
 		Graced:              seenGrace,
 		RevokedBuilderKeys:  revs.RevokedBuilderKeyIDs(),
 		RevokedAttestations: revs.RevokedAttestationHashes(),

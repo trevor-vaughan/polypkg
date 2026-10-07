@@ -44,6 +44,14 @@ func planExecError(err error) error {
 			Err:  ase,
 		}
 	}
+	var aie *planner.ArtifactIdentityError
+	if errors.As(err, &aie) {
+		return &CLIError{
+			Msg:  aie.Error(),
+			Hint: "the repository published an artifact whose own package recipe does not match the index entry it is listed under, which is a publishing error or tampering; nothing was installed; contact the repository operator",
+			Err:  aie,
+		}
+	}
 	var pfe *planner.PostureFloorError
 	if errors.As(err, &pfe) {
 		return postureFloorCLIError(err, pfe)
@@ -159,6 +167,16 @@ func resolveCLIError(re *resolver.ResolveError) *CLIError {
 			Msg:  re.Error(),
 			Hint: "adjust the version constraint in your profile",
 			Err:  re,
+		}
+	case resolver.KindWrongPlatform:
+		return &CLIError{
+			Msg: re.Error(),
+			// Two causes share this kind: the name has no build for this host
+			// at all, or only the constrained version lacks one. info lists the
+			// versions this host can install, which answers the second.
+			Hint: "ask the repository operator to publish a build for this host's platform, " +
+				"or pick a version that is published for it (polypkg info " + re.Requirement.Name + " lists them)",
+			Err: re,
 		}
 	default:
 		// KindConflict, KindNoCandidate, KindTooComplex: no single profile knob

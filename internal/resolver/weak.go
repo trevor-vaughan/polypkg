@@ -321,6 +321,8 @@ func weakSkipReason(ferr *ResolveError) string {
 		return "no candidate (unknown package)"
 	case KindNoVersion:
 		return "no version satisfies the constraint"
+	case KindWrongPlatform:
+		return "not published for this host (" + ferr.Host + ")"
 	case KindConflict:
 		if ferr.Detail != "" {
 			return "conflict: " + ferr.Detail

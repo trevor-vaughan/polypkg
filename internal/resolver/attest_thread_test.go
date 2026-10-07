@@ -15,7 +15,7 @@ var _ = Describe("attestation ref threading", func() {
 			ContentHash:   "blake3:aa11",
 		}
 		idx := &schema.Index{
-			Schema:  "polypkg.index/v2",
+			Schema:  "polypkg.index/v3",
 			Expires: "2099-01-01T00:00:00Z",
 			Packages: map[string][]schema.IndexEntry{
 				"a": {{
@@ -24,7 +24,7 @@ var _ = Describe("attestation ref threading", func() {
 				}},
 			},
 		}
-		cat, err := BuildCatalog(idx, "native")
+		cat, err := BuildCatalog(idx, "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 		out, err := Resolve([]Requirement{{Name: "a"}}, cat)
 		Expect(err).NotTo(HaveOccurred())
@@ -33,7 +33,7 @@ var _ = Describe("attestation ref threading", func() {
 	})
 
 	It("leaves Attestations empty for an unattested entry", func() {
-		cat, err := BuildCatalog(idx(), "native")
+		cat, err := BuildCatalog(idx(), "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 		out, err := Resolve([]Requirement{{Name: "a"}}, cat)
 		Expect(err).NotTo(HaveOccurred())

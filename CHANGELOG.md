@@ -127,6 +127,29 @@ and on-disk formats may change in breaking ways.
 - `--trust-root-fingerprint <key id>` on `init` and `source add` confirms a
   `--trust-root-url` download without a prompt, and checks a local trust-root
   file when given. The key id is the one `polypkg repo key show` prints.
+- Per-platform packages. A package version can be published once per
+  platform, and a client downloads only the artifact for its own platform.
+  A package's `polypkg.yaml` takes an optional `platform:` (`<os>/<arch>` in
+  Go's `GOOS`/`GOARCH` names, such as `linux/amd64`), and a repository lists
+  one source per platform under the same name.
+  - `pkg lint` rule PKG011 refuses a `platform:` that is not an `<os>/<arch>`
+    pair `go tool dist list` names.
+  - `repo build` refuses a version that mixes an entry without a platform
+    with entries that have one, and refuses two entries with the same version
+    and platform.
+  - Installing a package published only for other platforms is refused with
+    a message that names them and this machine's platform.
+  - `info` shows the platform it would install, the other platforms
+    published for that version, and the installed package's platform.
+    `search` marks versions not published for this machine. `list -v` adds a
+    platform column, and `status -vv` tags per-platform packages in its
+    package listing. `list --format json` carries each package's platform, as
+    do the revoked-builder and revoked-attestation entries of `status`.
+  - Each generation's manifest records the installed artifact's platform,
+    shown by `list -v`, `status -vv`, `info`, and `--format json` output.
+  - Packages without `platform:` work as before on every host. See
+    [docs/authoring.md](docs/authoring.md) for when to prefer per-platform
+    artifacts over one artifact that selects files with `!starlark`.
 
 ### Changed
 
@@ -191,6 +214,50 @@ and on-disk formats may change in breaking ways.
   regular file owner-read and every directory owner read, write and search,
   whatever mode the archive records, so an extracted package can always be
   checked against its artifact.
+- **Breaking (repository index):** repositories publish `polypkg.index/v3`,
+  which adds a per-entry `platform`. Clients refuse a `polypkg.index/v2`
+  index with a message asking its operator to rebuild it.
+  - Artifact signatures now also sign the platform (`platform=<os>/<arch>`,
+    or `platform=any`), and an artifact signed without it is refused.
+  - Publishers run `polypkg repo build` once with this version. The build
+    cache format changed (`polypkg.repo-cache/v4`), so that build repacks and
+    re-signs every package.
+  - A mirror can pull from an upstream only after the upstream has rebuilt.
+- With several sources, the first source in `sources.order` that publishes a
+  name for any platform owns it. A machine that source has no build for gets
+  the "published for …" error and is not served by a lower-priority source
+  unless the package is pinned to that source with `source:`. This keeps a
+  public source from standing in for a private package (dependency
+  confusion).
+- `search --format json`: `versions` lists only versions installable on this
+  machine, and the new `unavailable_versions` lists the ones published only
+  for other platforms. `versions` can now be empty for a package that is
+  still listed, so check it before installing.
+- `info --format json`: for a package published only for other platforms,
+  `note` carries the reason (`<name> <version> is published for …; this host
+  is …`), `platform` is `""`, and `other_platforms` is non-empty. New fields
+  `platform`, `other_platforms`, and `installed_platform` describe the
+  candidate and installed builds.
+- The downgrade guard's high-water marks are kept per host platform in each
+  source's state file under `trust/`, so machines of different platforms
+  sharing one state directory no longer refuse each other's older builds. An
+  existing un-keyed record is adopted by the first host that fetches the
+  source.
+- `mirror pull` mirrors every platform. "Latest" is now the newest version
+  per package and platform, with platform-agnostic builds as their own group.
+  A `name@version` selector pulls every platform build of that version. A
+  narrowing note for a platform build names the platform
+  (`hello (linux/amd64): mirrored …`), and notes for platform-agnostic
+  packages are unchanged. An upstream index that lists one name, version, and
+  platform twice fails the pull. Each artifact is staged under
+  `<name>/<version>/<platform>/` (`linux-amd64` style, or `any`).
+- `repo remove <name>@<version>` withdraws every entry for that version,
+  which means every platform build of it. When it removes anything other
+  than a single platform-agnostic entry, the text output lists each removed
+  entry and its platform under the usual line. `--format json` adds
+  `data.removed` (`[{"entry": …, "platform": …}]`) whenever a version is
+  given. To withdraw one platform, delete its entry from
+  `polypkg-repo.yaml`.
 
 ### Fixed
 
@@ -199,6 +266,10 @@ and on-disk formats may change in breaking ways.
   reads v1); upgrade polypkg` — instead of failing with a schema-validation
   dump. A generation manifest a newer polypkg wrote is not mistaken for a
   damaged one: `gc` removes nothing while it is present.
+- A document fetched from a source that a newer polypkg wrote is now
+  reported as written by a newer polypkg, instead of failing strict decoding
+  on an unknown field. This covers the index, trust document, trust bundle,
+  revocation list, and export-bundle pool manifest.
 - An older polypkg treats a generation pinned by a newer polypkg as pinned, so
   its `gc` cannot collect it.
 - Validation errors for polypkg's own files no longer print your working
@@ -246,6 +317,14 @@ and on-disk formats may change in breaking ways.
 
 ### Security
 
+- A repository index can no longer name a package with a path. Package and
+  relation names in a signed index were used unchecked, and a package name
+  became part of the directory its artifact was extracted to. An index signed
+  with a compromised or malicious publisher key could therefore name a
+  package `../../somewhere`. Now the index schema and the catalog loader
+  require every package and relation name to be a slug (`^[a-zA-Z0-9_-]+$`).
+  An artifact whose own `polypkg.yaml` disagrees with its index entry on
+  name, version, or platform is refused before any action runs.
 - The `dir` and `perms` actions no longer apply a mode with group-write,
   other-write, setuid, setgid, or sticky bits. They passed any octal mode
   straight to `chmod`, which ignores the umask. A package declaring

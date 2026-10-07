@@ -66,4 +66,5 @@ var rules = map[string]rule{
 	"PKG008": {"PKG008", "case-fold identifier collision"},
 	"PKG009": {"PKG009", "file-placing action in non-pre-swap phase"},
 	"PKG010": {"PKG010", "invalid parameter value"},
+	"PKG011": {"PKG011", "unpublishable platform"},
 }

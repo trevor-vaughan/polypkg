@@ -21,12 +21,12 @@ func TestEntryVersionReadsSourceTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := EntryVersion(root, schema.RepoPackage{Source: "./pkgs/hello"})
+	got, plat, err := EntryVersion(root, schema.RepoPackage{Source: "./pkgs/hello"})
 	if err != nil {
 		t.Fatalf("EntryVersion: %v", err)
 	}
-	if got != "2.3.4" {
-		t.Fatalf("EntryVersion = %q, want 2.3.4", got)
+	if got != "2.3.4" || plat != "" {
+		t.Fatalf("EntryVersion = %q, %q; want 2.3.4 and no platform", got, plat)
 	}
 }
 
@@ -49,11 +49,43 @@ func TestEntryVersionExtractsPrebuiltArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := EntryVersion(root, schema.RepoPackage{Prebuilt: &schema.RepoPrebuilt{Artifact: "hello.tar.zst"}})
+	got, plat, err := EntryVersion(root, schema.RepoPackage{Prebuilt: &schema.RepoPrebuilt{Artifact: "hello.tar.zst"}})
 	if err != nil {
 		t.Fatalf("EntryVersion: %v", err)
 	}
-	if got != "1.0.0" {
-		t.Fatalf("EntryVersion = %q, want 1.0.0", got)
+	if got != "1.0.0" || plat != "" {
+		t.Fatalf("EntryVersion = %q, %q; want 1.0.0 and no platform", got, plat)
+	}
+}
+
+// TestEntryVersionReportsPlatform pins that both entry kinds report the
+// platform their polypkg.yaml declares — the source tree's, or the one inside
+// a prebuilt artifact — so `repo remove name@version` can name what it withdraws.
+func TestEntryVersionReportsPlatform(t *testing.T) {
+	root := t.TempDir()
+	writePlatformPkgSrc(t, filepath.Join(root, "pkgs", "a"), "linux/amd64", "a")
+	_, plat, err := EntryVersion(root, schema.RepoPackage{Source: "./pkgs/a"})
+	if err != nil {
+		t.Fatalf("EntryVersion(source): %v", err)
+	}
+	if plat != "linux/amd64" {
+		t.Fatalf("source platform = %q, want linux/amd64", plat)
+	}
+
+	srcDir := filepath.Join(root, "origin", "b")
+	writePlatformPkgSrc(t, srcDir, "darwin/arm64", "b")
+	artifact, _, err := PackArtifact(srcDir)
+	if err != nil {
+		t.Fatalf("PackArtifact: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.tar.zst"), artifact, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, plat, err = EntryVersion(root, schema.RepoPackage{Prebuilt: &schema.RepoPrebuilt{Artifact: "b.tar.zst"}})
+	if err != nil {
+		t.Fatalf("EntryVersion(prebuilt): %v", err)
+	}
+	if plat != "darwin/arm64" {
+		t.Fatalf("prebuilt platform = %q, want darwin/arm64", plat)
 	}
 }

@@ -108,7 +108,7 @@ var _ = Describe("resolve", func() {
 		// Sign over the SERVED bytes but claim the index's (other) hash, so the
 		// comment-claim check passes and the computed-vs-index hash-binding rejects.
 		Expect(os.WriteFile(filepath.Join(repoDir, "app-1.0.0.tar.zst.minisig"),
-			[]byte(signer.signWithComment(served, "name=app version=1.0.0 hash="+blakeHash(other))), 0o644)).To(Succeed())
+			[]byte(signer.signWithComment(served, "name=app version=1.0.0 platform=any hash="+blakeHash(other))), 0o644)).To(Succeed())
 		publishIndex(t, repoDir, signer, 1, indexPkg{name: "app", version: "1.0.0", artifact: other})
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))

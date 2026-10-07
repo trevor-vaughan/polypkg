@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -475,5 +477,257 @@ func TestRepoKeyShowPrintsPublicKeyNotSecret(t *testing.T) {
 	}
 	if strings.Contains(out, "ciphertext") || strings.Contains(strings.ToLower(out), "private") {
 		t.Fatalf("key show leaked secret material: %q", out)
+	}
+}
+
+// helloBuild is one hello package source for setupHelloBuilds: its directory
+// under <repo>/pkgs, its version, and its platform ("" for platform-agnostic).
+type helloBuild struct{ sub, version, platform string }
+
+// setupHelloBuilds initialises a repository and registers one hello source per
+// build with `repo add`, in order, so each lands in polypkg-repo.yaml as
+// "pkgs/<sub>". Returns the manifest path, key dir, and env for runRepo.
+func setupHelloBuilds(t *testing.T, builds ...helloBuild) (mPath, keyDir string, env map[string]string) {
+	t.Helper()
+	sandboxUserEnv(t)
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir = t.TempDir()
+	env = map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath = filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	for _, b := range builds {
+		dir := filepath.Join(repoDir, "pkgs", b.sub)
+		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		recipe := "schema: polypkg.package/v1\nname: hello\nversion: " + b.version + "\n"
+		if b.platform != "" {
+			recipe += "platform: " + b.platform + "\n"
+		}
+		recipe += "actions: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(recipe), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hello"),
+			[]byte("#!/bin/sh\necho "+b.sub+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := runRepo(t, env, "repo", "add", dir, "--manifest", mPath, "--key-dir", keyDir); err != nil {
+			t.Fatalf("repo add %s: %v (out=%s)", b.sub, err, out)
+		}
+	}
+	return mPath, keyDir, env
+}
+
+// manifestHelloSources returns the source of every hello entry in the
+// manifest at mPath, in manifest order.
+func manifestHelloSources(t *testing.T, mPath string) []string {
+	t.Helper()
+	f, err := os.Open(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	m, err := schema.ParseRepoManifest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(m.Packages["hello"]))
+	for _, e := range m.Packages["hello"] {
+		got = append(got, e.Source)
+	}
+	return got
+}
+
+// publishedHelloVersions returns the version of every hello entry in the
+// published index beside the manifest at mPath, in index order.
+func publishedHelloVersions(t *testing.T, mPath string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(mPath), "public", "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var idx struct {
+		Packages map[string][]struct {
+			Version string `json:"version"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(idx.Packages["hello"]))
+	for _, e := range idx.Packages["hello"] {
+		got = append(got, e.Version)
+	}
+	return got
+}
+
+// removedJSON is one element of `repo remove`'s data.removed list.
+type removedJSON struct {
+	Entry    string `json:"entry"`
+	Platform string `json:"platform"`
+}
+
+// repoRemoveJSON is the --format json envelope `repo remove` emits.
+type repoRemoveJSON struct {
+	Status string `json:"status"`
+	Data   struct {
+		Package string        `json:"package"`
+		Version string        `json:"version"`
+		Serial  uint64        `json:"serial"`
+		Removed []removedJSON `json:"removed"`
+	} `json:"data"`
+}
+
+// TestRepoRemoveVersionWithdrawsEveryPlatform pins the user decision: `@<version>`
+// withdraws every platform build of that version, reports each one, and leaves
+// the package's other versions published.
+func TestRepoRemoveVersionWithdrawsEveryPlatform(t *testing.T) {
+	mPath, keyDir, env := setupHelloBuilds(t,
+		helloBuild{"a", "1.0.0", "linux/amd64"},
+		helloBuild{"b", "1.0.0", "darwin/arm64"},
+		helloBuild{"c", "2.0.0", ""})
+
+	out, err := runRepo(t, env, "repo", "remove", "hello@1.0.0",
+		"--manifest", mPath, "--key-dir", keyDir, "--format", "json")
+	if err != nil {
+		t.Fatalf("repo remove: %v (out=%s)", err, out)
+	}
+	var res repoRemoveJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	want := []removedJSON{{"pkgs/a", "linux/amd64"}, {"pkgs/b", "darwin/arm64"}}
+	if res.Status != "ok" || res.Data.Package != "hello" || res.Data.Version != "1.0.0" ||
+		res.Data.Serial == 0 || !slices.Equal(res.Data.Removed, want) {
+		t.Fatalf("result = %+v, want both 1.0.0 builds removed: %+v", res, want)
+	}
+	if got := manifestHelloSources(t, mPath); !slices.Equal(got, []string{"pkgs/c"}) {
+		t.Fatalf("manifest hello sources = %v, want [pkgs/c]", got)
+	}
+	if got := publishedHelloVersions(t, mPath); !slices.Equal(got, []string{"2.0.0"}) {
+		t.Fatalf("published hello versions = %v, want [2.0.0]", got)
+	}
+}
+
+// TestRepoRemoveVersionListsEveryPlatformInText pins the text rendering: the
+// usual summary line, then one line per withdrawn entry with its platform.
+func TestRepoRemoveVersionListsEveryPlatformInText(t *testing.T) {
+	mPath, keyDir, env := setupHelloBuilds(t,
+		helloBuild{"a", "1.0.0", "linux/amd64"},
+		helloBuild{"b", "1.0.0", "darwin/arm64"},
+		helloBuild{"c", "2.0.0", ""})
+
+	out, err := runRepo(t, env, "repo", "remove", "hello@1.0.0", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("repo remove: %v (out=%s)", err, out)
+	}
+	want := regexp.MustCompile(`\ARemoved hello@1\.0\.0 and rebuilt the repository \(serial \d+\)\n` +
+		`  pkgs/a \(linux/amd64\)\n  pkgs/b \(darwin/arm64\)\n\z`)
+	if !want.MatchString(out) {
+		t.Fatalf("output = %q, want the summary line plus one line per platform", out)
+	}
+}
+
+// TestRepoRemoveSingleEntryVersionUnchanged pins that a version published as
+// one platform-agnostic entry keeps today's text output byte-for-byte, and
+// that its JSON result only gains the removed list, as the additive JSON
+// contract allows.
+func TestRepoRemoveSingleEntryVersionUnchanged(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			mPath, keyDir, env := setupHelloBuilds(t,
+				helloBuild{"d", "1.0.0", ""},
+				helloBuild{"c", "2.0.0", ""})
+
+			out, err := runRepo(t, env, "repo", "remove", "hello@1.0.0",
+				"--manifest", mPath, "--key-dir", keyDir, "--format", format)
+			if err != nil {
+				t.Fatalf("repo remove: %v (out=%s)", err, out)
+			}
+			if format == "text" {
+				want := regexp.MustCompile(`\ARemoved hello@1\.0\.0 and rebuilt the repository \(serial \d+\)\n\z`)
+				if !want.MatchString(out) {
+					t.Fatalf("output = %q, want exactly the one-line summary", out)
+				}
+			} else {
+				var res repoRemoveJSON
+				if err := json.Unmarshal([]byte(out), &res); err != nil {
+					t.Fatalf("decode %q: %v", out, err)
+				}
+				want := []removedJSON{{"pkgs/d", "any"}}
+				if res.Status != "ok" || res.Data.Package != "hello" || res.Data.Version != "1.0.0" ||
+					res.Data.Serial == 0 || !slices.Equal(res.Data.Removed, want) {
+					t.Fatalf("result = %+v, want hello@1.0.0 with removed %+v", res, want)
+				}
+			}
+			if got := manifestHelloSources(t, mPath); !slices.Equal(got, []string{"pkgs/c"}) {
+				t.Fatalf("manifest hello sources = %v, want [pkgs/c]", got)
+			}
+			if got := publishedHelloVersions(t, mPath); !slices.Equal(got, []string{"2.0.0"}) {
+				t.Fatalf("published hello versions = %v, want [2.0.0]", got)
+			}
+		})
+	}
+}
+
+// TestRepoRemoveUnknownVersionErrorsAndLeavesManifest pins that a version no
+// entry builds fails exactly as before — same message, every published version
+// listed once — and writes nothing.
+func TestRepoRemoveUnknownVersionErrorsAndLeavesManifest(t *testing.T) {
+	mPath, keyDir, env := setupHelloBuilds(t,
+		helloBuild{"a", "1.0.0", "linux/amd64"},
+		helloBuild{"b", "1.0.0", "darwin/arm64"},
+		helloBuild{"c", "2.0.0", ""})
+	before := readManifestBytes(t, mPath)
+
+	_, err := runRepo(t, env, "repo", "remove", "hello@9.9.9", "--manifest", mPath, "--key-dir", keyDir)
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("repo remove hello@9.9.9 = %v (%T), want *CLIError", err, err)
+	}
+	if ce.Msg != "package hello has no published version 9.9.9" {
+		t.Fatalf("Msg = %q", ce.Msg)
+	}
+	if ce.Hint != "published versions of hello: 1.0.0, 2.0.0" {
+		t.Fatalf("Hint = %q, want each published version listed once", ce.Hint)
+	}
+	if !bytes.Equal(readManifestBytes(t, mPath), before) {
+		t.Fatal("a failed repo remove modified polypkg-repo.yaml")
+	}
+}
+
+// TestRepoRemoveVersionNamesUnreadableEntry pins that an entry whose version
+// cannot be read blocks `@<version>` (every entry must be read to find all of
+// a version's builds) with an error that says so and names the entry to fix,
+// and that nothing is written.
+func TestRepoRemoveVersionNamesUnreadableEntry(t *testing.T) {
+	mPath, keyDir, env := setupHelloBuilds(t,
+		helloBuild{"a", "1.0.0", "linux/amd64"},
+		helloBuild{"b", "2.0.0", ""})
+	if err := os.Remove(filepath.Join(filepath.Dir(mPath), "pkgs", "b", "polypkg.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	before := readManifestBytes(t, mPath)
+
+	_, err := runRepo(t, env, "repo", "remove", "hello@1.0.0", "--manifest", mPath, "--key-dir", keyDir)
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("repo remove hello@1.0.0 = %v (%T), want *CLIError", err, err)
+	}
+	for _, want := range []string{"hello@1.0.0", "every entry of hello must be readable"} {
+		if !strings.Contains(ce.Msg, want) {
+			t.Fatalf("Msg %q does not mention %q", ce.Msg, want)
+		}
+	}
+	for _, want := range []string{"pkgs/b", "polypkg-repo.yaml"} {
+		if !strings.Contains(ce.Hint, want) {
+			t.Fatalf("Hint %q does not mention %q", ce.Hint, want)
+		}
+	}
+	if !bytes.Equal(readManifestBytes(t, mPath), before) {
+		t.Fatal("a failed repo remove modified polypkg-repo.yaml")
 	}
 }

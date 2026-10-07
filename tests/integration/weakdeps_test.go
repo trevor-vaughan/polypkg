@@ -98,8 +98,8 @@ var _ = Describe("forward weak dependencies", func() {
 				},
 				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
 			)
-			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", appPkg)
-			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", extrasPkg)
+			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", "", appPkg)
+			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", "", extrasPkg)
 
 			trustRoot = writeTrustRoot(t, anchor)
 			srv = httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -160,7 +160,7 @@ var _ = Describe("forward weak dependencies", func() {
 				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
 				indexPkg{name: "base", version: "1.0.0", artifact: basePkg},
 			)
-			writeArtifact(t, repoDir, signer, "base", "1.0.0", "", basePkg)
+			writeArtifact(t, repoDir, signer, "base", "1.0.0", "", "", basePkg)
 
 			// Profile now selects 'base' only — extras has no recommender.
 			profile := weakProfile(srvURL, trustRoot, "base", "")
@@ -229,7 +229,7 @@ var _ = Describe("forward weak dependencies", func() {
 				},
 				// NOTE: extras is intentionally absent from the serial-1 index.
 			)
-			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", appPkg)
+			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", "", appPkg)
 
 			trustRoot = writeTrustRoot(t, anchor)
 			srv = httptest.NewServer(http.FileServer(http.Dir(repoDir)))
@@ -307,7 +307,7 @@ var _ = Describe("forward weak dependencies", func() {
 				},
 				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
 			)
-			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", extrasPkg)
+			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", "", extrasPkg)
 
 			// Re-apply the SAME profile — no profile edit.
 			applyOut, applyErr := runApplyProfile(profilePath)

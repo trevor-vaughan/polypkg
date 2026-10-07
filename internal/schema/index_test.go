@@ -10,7 +10,7 @@ import (
 var _ = Describe("ParseIndex", func() {
 	It("parses a valid index with dependencies and provides", func() {
 		src := `{
-  "schema": "polypkg.index/v2",
+  "schema": "polypkg.index/v3",
   "expires": "2099-01-01T00:00:00Z",
   "packages": {
     "python-utils": [
@@ -32,7 +32,7 @@ var _ = Describe("ParseIndex", func() {
 	})
 
 	It("rejects an unknown top-level field", func() {
-		src := `{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{},"evil":true}`
+		src := `{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{},"evil":true}`
 		_, err := ParseIndex(strings.NewReader(src))
 		Expect(err).To(HaveOccurred())
 	})
@@ -44,20 +44,20 @@ var _ = Describe("ParseIndex", func() {
 	})
 
 	It("rejects an index without expires", func() {
-		src := `{"schema":"polypkg.index/v2","packages":{}}`
+		src := `{"schema":"polypkg.index/v3","packages":{}}`
 		_, err := ParseIndex(strings.NewReader(src))
 		Expect(err).To(HaveOccurred())
 	})
 
 	It("rejects a package entry missing content_hash", func() {
-		src := `{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{"x":[{"version":"1.0.0","artifact":"x-1.0.0.tar.zst"}]}}`
+		src := `{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{"x":[{"version":"1.0.0","artifact":"x-1.0.0.tar.zst"}]}}`
 		_, err := ParseIndex(strings.NewReader(src))
 		Expect(err).To(HaveOccurred())
 	})
 
 	It("parses recommends and suggests on an index entry", func() {
 		src := `{
-  "schema": "polypkg.index/v2",
+  "schema": "polypkg.index/v3",
   "expires": "2099-01-01T00:00:00Z",
   "packages": {
     "foo": [
@@ -82,7 +82,7 @@ var _ = Describe("ParseIndex", func() {
 
 	It("parses revision and attestations on an index entry", func() {
 		src := `{
-  "schema": "polypkg.index/v2",
+  "schema": "polypkg.index/v3",
   "expires": "2099-01-01T00:00:00Z",
   "packages": {
     "foo": [
@@ -110,7 +110,7 @@ var _ = Describe("ParseIndex", func() {
 	})
 
 	It("rejects an attestation missing content_hash", func() {
-		src := `{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{"x":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","attestations":[{"predicate_type":"p","artifact":"pool/bb.att.json"}]}]}}`
+		src := `{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{"x":[{"version":"1.0.0","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","attestations":[{"predicate_type":"p","artifact":"pool/bb.att.json"}]}]}}`
 		_, err := ParseIndex(strings.NewReader(src))
 		Expect(err).To(HaveOccurred())
 	})
@@ -118,7 +118,7 @@ var _ = Describe("ParseIndex", func() {
 
 var _ = Describe("AttestationRef carriage fields", func() {
 	const withCarriage = `{
-      "schema": "polypkg.index/v2",
+      "schema": "polypkg.index/v3",
       "expires": "2099-01-01T00:00:00Z",
       "packages": {
         "hello": [{
@@ -150,7 +150,7 @@ var _ = Describe("AttestationRef carriage fields", func() {
 
 	It("parses an attestation ref WITHOUT the new fields (backward compatible)", func() {
 		const legacy = `{
-          "schema": "polypkg.index/v2",
+          "schema": "polypkg.index/v3",
           "expires": "2099-01-01T00:00:00Z",
           "packages": { "hello": [{
             "version": "1.0.0", "content_hash": "blake3:aa", "artifact": "pool/aa.tar.zst",
@@ -184,7 +184,7 @@ var _ = Describe("AttestationRef carriage fields", func() {
 var _ = DescribeTable("ParseIndex rejects invalid carriage fields",
 	func(mutate func(string) string) {
 		const base = `{
-          "schema": "polypkg.index/v2", "expires": "2099-01-01T00:00:00Z",
+          "schema": "polypkg.index/v3", "expires": "2099-01-01T00:00:00Z",
           "packages": { "hello": [{
             "version": "1.0.0", "content_hash": "blake3:aa", "artifact": "pool/aa.tar.zst",
             "attestations": [{ "predicate_type": "x", "artifact": "pool/bb.att.json", "content_hash": "blake3:bb", "kind": "native-jcs", "format": "polypkg-sarif", "subject_scope": "artifact" }]

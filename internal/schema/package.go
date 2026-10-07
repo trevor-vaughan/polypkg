@@ -24,9 +24,13 @@ type Relation struct {
 
 // Package is the parsed polypkg.yaml from inside a package tarball.
 type Package struct {
-	Schema      string          `yaml:"schema"                json:"schema"`
-	Name        string          `yaml:"name"                  json:"name"`
-	Version     string          `yaml:"version"               json:"version"`
+	Schema  string `yaml:"schema"                json:"schema"`
+	Name    string `yaml:"name"                  json:"name"`
+	Version string `yaml:"version"               json:"version"`
+	// Platform is <os>/<arch>[/<variant>]; "" means platform-agnostic. A
+	// recipe's explicit platform: "" means the same as omitting the key; an
+	// index entry omits the key and never spells "" (index-v3.json refuses it).
+	Platform    string          `yaml:"platform,omitempty"    json:"platform,omitempty"`
 	Title       string          `yaml:"title,omitempty"       json:"title,omitempty"`
 	Description string          `yaml:"description,omitempty" json:"description,omitempty"`
 	Depends     []Relation      `yaml:"depends,omitempty"     json:"depends,omitempty"`

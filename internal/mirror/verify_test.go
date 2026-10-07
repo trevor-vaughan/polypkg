@@ -13,6 +13,7 @@ import (
 
 	"github.com/trevor-vaughan/polypkg/internal/mirror"
 	"github.com/trevor-vaughan/polypkg/internal/repo"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
@@ -274,5 +275,130 @@ func TestVerifyBundleExpiryAndGrace(t *testing.T) {
 	}
 	if !res.Graced {
 		t.Fatal("expected Graced=true within accept_expiry_until")
+	}
+}
+
+// buildTwoPlatformBundle lays out a repo publishing hello 1.0.0 for
+// linux/amd64 and darwin/arm64, builds it, exports a whole-repo bundle, and
+// returns (bundlePath, trustRootPath). It is buildBundle with two platform
+// builds of one version.
+func buildTwoPlatformBundle(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	keyDir := t.TempDir()
+	for _, p := range []struct{ dir, platform string }{
+		{"hello-linux", "linux/amd64"},
+		{"hello-darwin", "darwin/arm64"},
+	} {
+		binDir := filepath.Join(root, "pkgs", p.dir, "content", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pm := "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\nplatform: " + p.platform + "\nactions: []\n"
+		if err := os.WriteFile(filepath.Join(root, "pkgs", p.dir, "polypkg.yaml"), []byte(pm), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(binDir, "hello"), []byte("#!/bin/sh\necho "+p.dir+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "example.key")
+	if err := repo.SaveKey(keyPath, kp, "pw", repo.KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/hello-linux\n    - source: ./pkgs/hello-darwin\n"
+	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Build(repo.BuildOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(t.TempDir(), "bundle.tar")
+	b2, err := repo.NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b2.ExportBundle(nil, bundle); err != nil {
+		t.Fatal(err)
+	}
+	return bundle, filepath.Join(root, "public", "trust_root.pub")
+}
+
+// platformArtifact returns the bundle-relative artifact path of hello's build
+// for plat, read from the bundle's own index.json.
+func platformArtifact(t *testing.T, files map[string][]byte, plat string) string {
+	t.Helper()
+	idx, err := schema.ParseIndex(bytes.NewReader(files["index.json"]))
+	if err != nil {
+		t.Fatalf("parse bundled index: %v", err)
+	}
+	for _, e := range idx.Packages["hello"] {
+		if e.Platform == plat {
+			if _, ok := files[e.Artifact]; !ok {
+				t.Fatalf("bundle is missing the %s build %q", plat, e.Artifact)
+			}
+			return e.Artifact
+		}
+	}
+	t.Fatalf("bundled index has no hello build for %s", plat)
+	return ""
+}
+
+func TestVerifyBundleAcceptsMultiPlatformBundle(t *testing.T) {
+	bundle, root := buildTwoPlatformBundle(t)
+	res, err := mirror.VerifyBundle(bundle, mirror.VerifyOptions{TrustRootPath: root})
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if res.Source != "example" || res.EntriesChecked == 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+// TestVerifyBundleMultiPlatformTamperedBuildFails proves that each platform
+// build is covered on its own: corrupting either one, with the other intact,
+// fails and names the corrupted artifact.
+func TestVerifyBundleMultiPlatformTamperedBuildFails(t *testing.T) {
+	bundle, root := buildTwoPlatformBundle(t)
+	for _, plat := range []string{"linux/amd64", "darwin/arm64"} {
+		var art string
+		bad := filepath.Join(t.TempDir(), "bad.tar")
+		rewriteTar(t, bundle, bad, func(m map[string][]byte) {
+			art = platformArtifact(t, m, plat)
+			m[art] = append(m[art], 0x00)
+		})
+		_, err := mirror.VerifyBundle(bad, mirror.VerifyOptions{TrustRootPath: root})
+		if err == nil || !strings.Contains(err.Error(), "content hash mismatch") || !strings.Contains(err.Error(), art) {
+			t.Fatalf("%s: want a content-hash mismatch naming %q, got %v", plat, art, err)
+		}
+	}
+}
+
+// TestVerifyBundleMultiPlatformMissingBuildFails proves that dropping either
+// platform build from a bundle, with the other intact, fails and names it.
+func TestVerifyBundleMultiPlatformMissingBuildFails(t *testing.T) {
+	bundle, root := buildTwoPlatformBundle(t)
+	for _, plat := range []string{"linux/amd64", "darwin/arm64"} {
+		var art string
+		bad := filepath.Join(t.TempDir(), "missing.tar")
+		rewriteTar(t, bundle, bad, func(m map[string][]byte) {
+			art = platformArtifact(t, m, plat)
+			delete(m, art)
+		})
+		_, err := mirror.VerifyBundle(bad, mirror.VerifyOptions{TrustRootPath: root})
+		if err == nil || !strings.Contains(err.Error(), "missing manifest entry") || !strings.Contains(err.Error(), art) {
+			t.Fatalf("%s: want a missing-entry error naming %q, got %v", plat, art, err)
+		}
 	}
 }

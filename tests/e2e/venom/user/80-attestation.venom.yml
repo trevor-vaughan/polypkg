@@ -105,7 +105,7 @@ testcases:
         script: 'cat {{.pub}}/noatt/public/index.json'
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "polypkg.index/v2"
+          - result.systemout ShouldContainSubstring "polypkg.index/v3"
           - result.systemout ShouldNotContainSubstring "attestations"
       - type: exec
         script: '{{.pxr}} init --source-url {{.source_url}}/noatt/public --trust-root-file {{.pub}}/noatt/public/trust_root.pub --scope user'

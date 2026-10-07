@@ -128,6 +128,42 @@ produces no narrowing note. Bundles grow with every version mirrored, so
 reach for this only where the air-gapped site's clients hold pins against
 exact versions.
 
+There is no platform filter: a mirror serves every platform its upstream
+publishes. "Latest" is worked out per platform. Each platform takes its own
+newest version, and platform-agnostic builds form one more group of their
+own. If the upstream published `hello` 1.1.0 only for `linux/amd64` and
+1.0.0 only for `darwin/arm64`, a bare `--package hello` mirrors both. A
+`name@version` selector pulls every platform build of that version. Neither
+platform has an older version left behind there, so no note is printed. If
+`linux/amd64` had also published 1.0.0, the pull would skip it and the
+narrowing note would name the platform:
+
+```
+note: upstream https://upstream.example/repo: hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)
+```
+
+Platform-agnostic packages keep the note shown above. An upstream index that
+lists the same name, version, and platform more than once fails the whole
+pull, including packages you did not select. `polypkg repo build` never
+publishes such an index.
+
+Fetching and staging accept any well-formed platform, including an
+architecture variant such as `linux/arm/v7` or a port added by a newer Go than
+the one that built your polypkg. Turning a staged build into a `prebuilt:`
+entry runs `repo build`'s publishing rules, which allow only the `<os>/<arch>`
+pairs `go tool dist list` names for that toolchain. A pull that selects such
+a build therefore fails at its re-publish step, and so does a later
+`repo build` of the staged manifest:
+
+```
+error: package "hello" version 1.1.0 declares platform "linux/arm/v7", which repo build cannot publish
+```
+
+A selector cannot leave out one platform's build of a version. Select a
+version with no such build (`--package hello@1.0.0`), leave the package out,
+or run the pull with a polypkg built by a Go toolchain that knows the
+platform.
+
 ## What gets re-signed
 
 Carried provenance (SLSA/sigstore/SARIF attestations) keeps its **statement

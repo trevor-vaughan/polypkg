@@ -50,7 +50,7 @@ var _ = Describe("trust", func() {
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
 			[]trustKeySpec{{kp: idxKey, roles: []string{"index"}}}, []string{artKey.keyIDHex()})
 		publishIndex(t, repoDir, idxKey, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
-		writeArtifact(t, repoDir, artKey, "hello", "1.0.0", "", art) // signed by the revoked key
+		writeArtifact(t, repoDir, artKey, "hello", "1.0.0", "", "", art) // signed by the revoked key
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		defer srv.Close()
@@ -70,7 +70,7 @@ var _ = Describe("trust", func() {
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
-		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", "", art)
 		// Tamper the artifact bytes on disk AFTER signing so the served bytes no
 		// longer match the (valid, trusted) signature: a pure cryptographic
 		// mismatch, the Finding D tampered-bytes case.
@@ -99,7 +99,7 @@ var _ = Describe("trust", func() {
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
 			[]trustKeySpec{{kp: artOnly, roles: []string{"artifact"}}}, nil)
 		publishIndex(t, repoDir, artOnly, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
-		writeArtifact(t, repoDir, artOnly, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, artOnly, "hello", "1.0.0", "", "", art)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		defer srv.Close()
@@ -122,13 +122,59 @@ var _ = Describe("trust", func() {
 		// Artifact signature claims a DIFFERENT name than the resolved entry.
 		Expect(os.WriteFile(filepath.Join(repoDir, "hello-1.0.0.tar.zst"), art, 0o644)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(repoDir, "hello-1.0.0.tar.zst.minisig"),
-			[]byte(signer.signWithComment(art, "name=evil version=1.0.0 hash="+blakeHash(art))), 0o644)).To(Succeed())
+			[]byte(signer.signWithComment(art, "name=evil version=1.0.0 platform=any hash="+blakeHash(art))), 0o644)).To(Succeed())
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		defer srv.Close()
 		_, err := applyHello(t, srv.URL, writeTrustRoot(t, anchor))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("claims"))
+	})
+
+	It("rejects an artifact whose signed platform differs from its index entry", func() {
+		t := GinkgoTB()
+		IsolatedEnv(t)
+		repoDir := t.TempDir()
+		art := helloArtifact(t)
+
+		anchor := newMinisignKeypair(t)
+		signer := newMinisignKeypair(t)
+		publishTrustDoc(t, repoDir, "native", anchor, 1,
+			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
+		// The index entry is platform-agnostic, but the publisher's signature
+		// binds these bytes to darwin/arm64.
+		publishIndex(t, repoDir, signer, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
+		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "darwin/arm64", "", art)
+
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		defer srv.Close()
+		_, err := applyHello(t, srv.URL, writeTrustRoot(t, anchor))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("claims platform darwin/arm64, expected any"))
+	})
+
+	It("rejects an artifact signature whose comment omits platform=", func() {
+		t := GinkgoTB()
+		IsolatedEnv(t)
+		repoDir := t.TempDir()
+		art := helloArtifact(t)
+
+		anchor := newMinisignKeypair(t)
+		signer := newMinisignKeypair(t)
+		publishTrustDoc(t, repoDir, "native", anchor, 1,
+			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
+		publishIndex(t, repoDir, signer, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
+		// An old-format claim: correctly signed and otherwise matching, but with
+		// no platform. Absence must not be read as "any".
+		Expect(os.WriteFile(filepath.Join(repoDir, "hello-1.0.0.tar.zst"), art, 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(repoDir, "hello-1.0.0.tar.zst.minisig"),
+			[]byte(signer.signWithComment(art, "name=hello version=1.0.0 hash="+blakeHash(art))), 0o644)).To(Succeed())
+
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		defer srv.Close()
+		_, err := applyHello(t, srv.URL, writeTrustRoot(t, anchor))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("artifact signature comment missing platform"))
 	})
 
 	It("rotates: old key rejected, new key accepted", func() {
@@ -150,13 +196,13 @@ var _ = Describe("trust", func() {
 		trustRoot := writeTrustRoot(t, anchor)
 
 		// Artifact signed by the OLD (now removed) key -> rejected.
-		writeArtifact(t, repoDir, oldKey, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, oldKey, "hello", "1.0.0", "", "", art)
 		_, err := applyHello(t, srv.URL, trustRoot)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("not in the trust set"))
 
 		// Re-sign with the NEW key -> accepted.
-		writeArtifact(t, repoDir, newKey, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, newKey, "hello", "1.0.0", "", "", art)
 		out, err := applyHello(t, srv.URL, trustRoot)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("applied generation"))
@@ -172,7 +218,7 @@ var _ = Describe("trust", func() {
 		signer := newMinisignKeypair(t)
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
-		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", "", art)
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		defer srv.Close()
 		trustRoot := writeTrustRoot(t, anchor)
@@ -209,7 +255,7 @@ var _ = Describe("trust", func() {
 		publishTrustDoc(t, repoDir, "native", anchor, 2,
 			[]trustKeySpec{{kp: idxKey, roles: []string{"index"}}}, []string{artKey.keyIDHex()})
 		publishIndex(t, repoDir, idxKey, 2, indexPkg{name: "hello", version: "1.0.0", artifact: art})
-		writeArtifact(t, repoDir, artKey, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, artKey, "hello", "1.0.0", "", "", art)
 		_, err := applyHello(t, srv.URL, trustRoot)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("revoked"))
@@ -236,7 +282,7 @@ var _ = Describe("trust", func() {
 		signer := newMinisignKeypair(t)
 		// Publish index + artifact in-band, but NOT trust.json (airgap: no fetch).
 		publishIndex(t, repoDir, signer, 1, indexPkg{name: "hello", version: "1.0.0", artifact: art})
-		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", art)
+		writeArtifact(t, repoDir, signer, "hello", "1.0.0", "", "", art)
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		defer srv.Close()
 

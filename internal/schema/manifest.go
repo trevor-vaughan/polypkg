@@ -98,9 +98,14 @@ const CarriedTierVerifiedOffline = "verified-offline"
 
 // ManifestEntry is one resolved package in the manifest.
 type ManifestEntry struct {
-	Name          string            `json:"name"`
-	Version       string            `json:"version"`
-	ContentHash   string            `json:"content_hash"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	ContentHash string `json:"content_hash"`
+	// Platform is the <os>/<arch>[/<variant>] the installed artifact was
+	// published for, recorded at apply. Empty means the artifact is
+	// platform-agnostic ("any"); generations written before the field existed
+	// read back as agnostic. omitempty keeps their canonical bytes unchanged.
+	Platform      string            `json:"platform,omitempty"`
 	SourceURL     string            `json:"source_url,omitempty"`
 	DependsOn     []string          `json:"depends_on,omitempty"`
 	Weak          bool              `json:"weak,omitempty"`

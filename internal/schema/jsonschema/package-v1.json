@@ -19,6 +19,7 @@
     "schema": { "type": "string", "const": "polypkg.package/v1" },
     "name": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
     "version": { "type": "string" },
+    "platform": { "type": "string", "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$" },
     "title": { "type": "string" },
     "description": { "type": "string" },
     "depends":     { "type": "array", "items": { "$ref": "#/$defs/relation" } },

@@ -3,6 +3,7 @@ package trust
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,9 +36,20 @@ type Seen struct {
 	// once one of these is above zero.
 	BundleSerial     uint64 `json:"bundle_serial,omitempty"`
 	RevocationSerial uint64 `json:"revocation_serial,omitempty"`
-	// Packages maps package name -> highest version ever OFFERED by this
-	// source's verified index (D15). Entries persist even when a package
-	// disappears from the index, so vanish-then-reappear-older still refuses.
+	// PackagesByPlatform maps host platform -> package name -> highest version
+	// this source's verified index ever OFFERED to that host. Entries persist
+	// even when a package disappears from the index, so
+	// vanish-then-reappear-older still refuses. Keyed by host because a state
+	// home can be shared by machines of different platforms, and one platform's
+	// newer build must not refuse another platform's older one as a downgrade.
+	// Read it through HighWater.
+	PackagesByPlatform map[string]map[string]string `json:"packages_by_platform,omitempty"`
+	// Packages is the un-keyed high-water map written before marks were kept
+	// per platform. It is only read, by HighWater, to seed a host that has no
+	// marks yet; writers leave it empty so it drops out of the file. An older
+	// polypkg that rewrites the file knows only this field and drops
+	// PackagesByPlatform, losing other hosts' marks; accepted while polypkg is
+	// pre-release. Its own host's marks come back through this adoption.
 	Packages map[string]string `json:"packages,omitempty"`
 	// Graced records that this source's metadata was accepted under freshness
 	// grace at the last fetch. Nil/absent when the last fetch needed no grace —
@@ -61,6 +73,21 @@ type Seen struct {
 	// when the last fetch saw no revocation list — StoreSeen overwrites the whole
 	// file, so a later fetch with none clears it.
 	RevocationExpires string `json:"revocation_expires,omitempty"`
+}
+
+// HighWater returns a copy of host's package high-water marks, never nil.
+// When host has no marks yet, a legacy un-keyed Packages map is adopted as
+// host's, so upgrading from that format loses no rollback protection.
+func (s Seen) HighWater(host string) map[string]string {
+	src, ok := s.PackagesByPlatform[host]
+	if !ok {
+		src = s.Packages
+	}
+	out := maps.Clone(src)
+	if out == nil {
+		out = map[string]string{}
+	}
+	return out
 }
 
 // RollbackError is a signed document served at a serial below the persisted

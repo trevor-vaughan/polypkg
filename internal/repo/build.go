@@ -137,6 +137,47 @@ func NewInspector(manifestPath, keyDir string) (*Inspector, error) {
 	return &Inspector{layout: lay, now: time.Now}, nil
 }
 
+// sourceCacheResult is the outcome of lookupSourceCache.
+type sourceCacheResult int
+
+const (
+	// sourceCacheHit: the cached artifact can be republished as is.
+	sourceCacheHit sourceCacheResult = iota
+	// sourceCacheChanged: no cache entry, or the source no longer matches it.
+	sourceCacheChanged
+	// sourceCacheArtifactMissing: the source matches but its artifact is gone
+	// from the output directory.
+	sourceCacheArtifactMissing
+)
+
+// lookupSourceCache decides whether the source entry for package name, cached
+// under key, with current fingerprint fp and tree srcDir, can republish its
+// cached artifact from outputDir without repacking. Build and
+// Inspector.Pending both call it, so `repo status` always agrees with what a
+// build would do.
+//
+// SourceFingerprint hashes sizes and mtimes, not bytes, so an edit to
+// polypkg.yaml that keeps both (platform: linux/amd64 -> linux/arm64, version:
+// 1.0.0 -> 1.0.1) would otherwise republish the cached artifact, built from
+// the old recipe. The recipe is re-read and its name, version and platform
+// must still match what the cached artifact was published as (the cache
+// records no name; the entry is published under name, so that is the match).
+// A read error is a miss, leaving PackArtifact to report it.
+func lookupSourceCache(cache *BuildCache, name, key, fp, srcDir, outputDir string) (CacheEntry, sourceCacheResult) {
+	prev, ok := cache.Get(key)
+	if !ok || prev.Fingerprint != fp {
+		return CacheEntry{}, sourceCacheChanged
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, prev.Artifact)); err != nil {
+		return CacheEntry{}, sourceCacheArtifactMissing
+	}
+	src, err := ReadPackageSource(srcDir)
+	if err != nil || src.Name != name || src.Version != prev.Version || src.Platform != prev.Platform {
+		return CacheEntry{}, sourceCacheChanged
+	}
+	return prev, sourceCacheHit
+}
+
 // Pending reports whether Build() would change anything without writing any
 // files, with a human-readable reason when it would. It is used by
 // `repo status`. reason is "" when nothing is pending.
@@ -159,22 +200,9 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 	manifestKeys := make(map[string]bool, len(i.layout.manifest.Packages))
 	for name, entries := range i.layout.manifest.Packages {
 		for _, pkg := range entries {
-			var cacheKey, fp string
-			if pkg.Prebuilt != nil {
-				artPath := resolveRel(i.layout.manifestDir, pkg.Prebuilt.Artifact)
-				artifact, rerr := os.ReadFile(artPath) //nolint:gosec // G304: artPath is the operator-declared prebuilt artifact
-				if rerr != nil {
-					return false, "", &PublishError{
-						Msg:  fmt.Sprintf("cannot read prebuilt artifact for %q", name),
-						Hint: fmt.Sprintf("check packages.%s.prebuilt.artifact (%s)", name, pkg.Prebuilt.Artifact),
-						Err:  rerr,
-					}
-				}
-				cacheKey = ContentHash(artifact)
-				fp = cacheKey
-			} else {
+			if pkg.Prebuilt == nil {
 				srcDir := resolveRel(i.layout.manifestDir, pkg.Source)
-				f, ferr := SourceFingerprint(srcDir)
+				fp, ferr := SourceFingerprint(srcDir)
 				if ferr != nil {
 					return false, "", &PublishError{
 						Msg:  fmt.Sprintf("cannot fingerprint package %q source", name),
@@ -182,17 +210,30 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 						Err:  ferr,
 					}
 				}
-				cacheKey = pkg.Source
-				fp = f
-			}
-			manifestKeys[cacheKey] = true
-
-			prev, ok := cache.Get(cacheKey)
-			if !ok || prev.Fingerprint != fp {
-				if pkg.Prebuilt != nil {
-					return true, fmt.Sprintf("package %q prebuilt artifact is new or changed", name), nil
+				manifestKeys[pkg.Source] = true
+				switch _, res := lookupSourceCache(cache, name, pkg.Source, fp, srcDir, i.layout.outputDir); res {
+				case sourceCacheChanged:
+					return true, fmt.Sprintf("package %q source is new or changed", name), nil
+				case sourceCacheArtifactMissing:
+					return true, fmt.Sprintf("package %q artifact is missing from the output directory", name), nil
 				}
-				return true, fmt.Sprintf("package %q source is new or changed", name), nil
+				continue
+			}
+
+			artPath := resolveRel(i.layout.manifestDir, pkg.Prebuilt.Artifact)
+			artifact, rerr := os.ReadFile(artPath) //nolint:gosec // G304: artPath is the operator-declared prebuilt artifact
+			if rerr != nil {
+				return false, "", &PublishError{
+					Msg:  fmt.Sprintf("cannot read prebuilt artifact for %q", name),
+					Hint: fmt.Sprintf("check packages.%s.prebuilt.artifact (%s)", name, pkg.Prebuilt.Artifact),
+					Err:  rerr,
+				}
+			}
+			cacheKey := ContentHash(artifact)
+			manifestKeys[cacheKey] = true
+			prev, ok := cache.Get(cacheKey)
+			if !ok || prev.Fingerprint != cacheKey {
+				return true, fmt.Sprintf("package %q prebuilt artifact is new or changed", name), nil
 			}
 			// Artifact file must still be present in the output dir.
 			if _, statErr := os.Stat(filepath.Join(i.layout.outputDir, prev.Artifact)); statErr != nil {
@@ -368,7 +409,7 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	sort.Strings(names)
 
 	idx := schema.Index{
-		Schema:   "polypkg.index/v2",
+		Schema:   schema.IndexSchemaID,
 		Packages: map[string][]schema.IndexEntry{},
 	}
 
@@ -384,10 +425,10 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	var bundleRoots []schema.SigstoreRoot
 
 	for _, name := range names {
-		// Two entries resolving to one version cannot both be published: the
-		// index lists versions within a name, so the second would overwrite the
-		// first and the repository would stop matching its manifest.
-		seenVersions := map[string]string{} // version -> the source that declared it
+		// Every entry under one name is checked against the per-name build
+		// rules (see entryRules) on all four paths below — prebuilt and source,
+		// cache hit and fresh pack — before it is published.
+		rules := entryRules{name: name, seen: map[string]map[string]string{}}
 
 		for _, pkg := range lay.manifest.Packages[name] {
 			if pkg.Prebuilt != nil {
@@ -400,24 +441,18 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 				if err != nil {
 					return Result{}, err
 				}
-				// w.version is set on both the cache-hit and cache-miss return paths
-				// of ingestPackage, so checking here (before the reuse branch) catches
-				// a duplicate on a cache-hit build too, not just a fresh pack.
-				if prevSrc, dup := seenVersions[w.version]; dup {
-					return Result{}, &PublishError{
-						Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
-							name, w.version, prevSrc, pkg.Prebuilt.Artifact),
-						Hint: "each entry under a package name must build a distinct version; " +
-							"drop one with `polypkg repo remove " + name + "@" + w.version + "`",
-					}
+				// w.version and w.platform are set on both the cache-hit and
+				// cache-miss return paths of ingestPackage, so checking here (before
+				// the reuse branch) covers a cache-hit build too, not just a fresh pack.
+				if err := rules.admit(w.version, w.platform, pkg.Prebuilt.Artifact, true); err != nil {
+					return Result{}, err
 				}
-				seenVersions[w.version] = pkg.Prebuilt.Artifact
 				if hit.reuse {
 					idx.Packages[name] = append(idx.Packages[name], hit.entry)
 					newEntries[w.cacheKey] = hit.cacheEntry
 					continue
 				}
-				rev := nextRevision(cache, pubIdx, w.cacheKey, name, w.version, w.contentHash)
+				rev := nextRevision(cache, pubIdx, w.cacheKey, name, w.version, w.platform, w.contentHash)
 				entry, ce, err := b.emitPackage(lay.outputDir, w, rev)
 				if err != nil {
 					return Result{}, err
@@ -438,25 +473,17 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 				}
 			}
 
-			if prev, ok := cache.Get(pkg.Source); ok && prev.Fingerprint == fp {
-				if _, statErr := os.Stat(filepath.Join(lay.outputDir, prev.Artifact)); statErr == nil {
-					// A cache hit skips PackArtifact, so the version comes from the
-					// cache entry: the duplicate check must run here too, or a
-					// second entry that also hits cache never reaches the
-					// post-PackArtifact guard below.
-					if prevSrc, dup := seenVersions[prev.Version]; dup {
-						return Result{}, &PublishError{
-							Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
-								name, prev.Version, prevSrc, pkg.Source),
-							Hint: "each entry under a package name must build a distinct version; " +
-								"drop one with `polypkg repo remove " + name + "@" + prev.Version + "`",
-						}
-					}
-					seenVersions[prev.Version] = pkg.Source
-					idx.Packages[name] = append(idx.Packages[name], prev.indexEntry())
-					newEntries[pkg.Source] = prev
-					continue
+			if prev, res := lookupSourceCache(cache, name, pkg.Source, fp, srcDir, lay.outputDir); res == sourceCacheHit {
+				// A cache hit skips PackArtifact, so the version and platform
+				// come from the cache entry: the rules must run here too, or a
+				// second entry that also hits cache never reaches the
+				// post-PackArtifact check below.
+				if err := rules.admit(prev.Version, prev.Platform, pkg.Source, false); err != nil {
+					return Result{}, err
 				}
+				idx.Packages[name] = append(idx.Packages[name], prev.indexEntry())
+				newEntries[pkg.Source] = prev
+				continue
 			}
 
 			artifact, pkgParsed, err := PackArtifact(srcDir)
@@ -473,25 +500,19 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 					Hint: "the key in packages.<name> must match the name field in the package's polypkg.yaml",
 				}
 			}
-			if prevSrc, dup := seenVersions[pkgParsed.Version]; dup {
-				return Result{}, &PublishError{
-					Msg: fmt.Sprintf("package %q version %s is declared twice: %s and %s",
-						name, pkgParsed.Version, prevSrc, pkg.Source),
-					Hint: "each entry under a package name must build a distinct version; " +
-						"drop one with `polypkg repo remove " + name + "@" + pkgParsed.Version + "`",
-				}
+			if err := rules.admit(pkgParsed.Version, pkgParsed.Platform, pkg.Source, false); err != nil {
+				return Result{}, err
 			}
-			seenVersions[pkgParsed.Version] = pkg.Source
 			ch := ContentHash(artifact)
 			refs, blobs, err := b.sourceAttestations(srcDir, pkg.Source, name, pkgParsed.Version, ch, artifact, opts.SkipAttestations)
 			if err != nil {
 				return Result{}, err
 			}
 			w := packageWork{
-				name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
+				name: name, version: pkgParsed.Version, platform: pkgParsed.Platform, contentHash: ch, artifact: artifact,
 				fingerprint: fp, cacheKey: pkg.Source, attRefs: refs, attBlobs: blobs, pkg: pkgParsed,
 			}
-			rev := nextRevision(cache, pubIdx, pkg.Source, name, pkgParsed.Version, ch)
+			rev := nextRevision(cache, pubIdx, pkg.Source, name, w.version, w.platform, ch)
 			entry, ce, err := b.emitPackage(lay.outputDir, w, rev)
 			if err != nil {
 				return Result{}, err

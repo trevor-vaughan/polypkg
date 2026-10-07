@@ -88,7 +88,7 @@ func TestStaleV1CacheIsCold(t *testing.T) {
 	// its entries carry flat artifact names that would leak into a v2 pool
 	// index via the stat-check cache-hit path (D-C8).
 	c := NewBuildCache()
-	if c.Schema != "polypkg.repo-cache/v3" {
+	if c.Schema != "polypkg.repo-cache/v4" {
 		t.Fatalf("new cache schema = %q", c.Schema)
 	}
 	dir := t.TempDir()
@@ -185,5 +185,51 @@ func TestBuildCacheSaveCreatesParentDir(t *testing.T) {
 	// not be group- or world-readable.
 	if perm := fi.Mode().Perm(); perm != 0o700 {
 		t.Fatalf("parent dir mode = %04o, want 0700 (it holds the signing key)", perm)
+	}
+}
+
+// TestStaleV3CacheIsCold pins the v3→v4 bump: a v3 entry records no platform,
+// so reusing it would republish a platform-specific artifact as
+// platform-agnostic. It must cold-reset instead.
+func TestStaleV3CacheIsCold(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	body := `{"schema":"polypkg.repo-cache/v3","serial":5,"entries":{"./pkgs/hello":{"fingerprint":"f","content_hash":"blake3:aa","artifact":"pool/aa.tar.zst","version":"1.0.0","revision":1}}}`
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadBuildCache(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 0 || got.Serial != 0 {
+		t.Fatalf("v3 cache not treated as cold: %+v", got)
+	}
+}
+
+// TestBuildCacheRoundTripsPlatform pins that the platform survives Save/Load
+// and reaches the index entry a cache hit republishes.
+func TestBuildCacheRoundTripsPlatform(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	c := NewBuildCache()
+	c.Put("./pkgs/hello", CacheEntry{
+		Fingerprint: "fp", ContentHash: "blake3:x", Artifact: "pool/x.tar.zst",
+		Version: "1.0.0", Platform: "linux/amd64", Revision: 1,
+	})
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadBuildCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := got.Get("./pkgs/hello")
+	if !ok {
+		t.Fatal("entry lost across Save/Load")
+	}
+	if e.Platform != "linux/amd64" {
+		t.Fatalf("cached platform = %q, want linux/amd64", e.Platform)
+	}
+	if p := e.indexEntry().Platform; p != "linux/amd64" {
+		t.Fatalf("republished index entry platform = %q, want linux/amd64", p)
 	}
 }

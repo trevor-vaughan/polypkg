@@ -34,6 +34,9 @@ func ParseRevocationList(r io.Reader) (*RevocationList, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read revocation list: %w", err)
 	}
+	if err := checkNotNewer(data, revocationListSchemaV1); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var rl RevocationList

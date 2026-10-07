@@ -77,19 +77,23 @@ type StatusGraceEntry struct {
 
 // StatusRevokedBuilder reports one installed package whose builder-verified
 // binding was signed by a builder key that a configured source's revocation list
-// (as of the last fetch) has since revoked.
+// (as of the last fetch) has since revoked. Platform is the installed artifact's
+// platform ("any" when agnostic); it is absent in output from a polypkg that
+// predates per-platform artifacts.
 type StatusRevokedBuilder struct {
-	Package string `json:"package"`
-	Version string `json:"version"`
-	KeyID   string `json:"key_id"`
+	Package  string `json:"package"`
+	Version  string `json:"version"`
+	Platform string `json:"platform,omitempty"`
+	KeyID    string `json:"key_id"`
 }
 
 // StatusRevokedAttestation reports one installed package carrying an attestation
 // whose content-hash a configured source's revocation list (as of the last fetch)
-// has since revoked.
+// has since revoked. Platform is as for StatusRevokedBuilder.
 type StatusRevokedAttestation struct {
 	Package         string `json:"package"`
 	Version         string `json:"version"`
+	Platform        string `json:"platform,omitempty"`
 	AttestationHash string `json:"attestation_hash"`
 }
 

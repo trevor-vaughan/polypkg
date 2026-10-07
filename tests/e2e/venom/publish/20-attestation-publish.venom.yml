@@ -19,13 +19,13 @@ testcases:
           - result.systemout ShouldContainSubstring ".att.json"
           - result.systemout ShouldContainSubstring ".att.json.minisig"
 
-  - name: The signed index is v2 with attestation refs and a freshness bound
+  - name: The signed index is v3 with attestation refs and a freshness bound
     steps:
       - type: exec
         script: 'cat {{.repo}}/public/index.json'
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "polypkg.index/v2"
+          - result.systemout ShouldContainSubstring "polypkg.index/v3"
           - result.systemout ShouldContainSubstring "attestations"
           - result.systemout ShouldContainSubstring "expires"
 

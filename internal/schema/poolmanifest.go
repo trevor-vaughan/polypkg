@@ -60,6 +60,9 @@ func ParsePoolManifest(r io.Reader) (*PoolManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read pool manifest: %w", err)
 	}
+	if err := checkNotNewer(data, poolManifestSchemaV1); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var m PoolManifest

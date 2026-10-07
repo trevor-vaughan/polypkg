@@ -59,6 +59,9 @@ func ParseTrustBundle(r io.Reader) (*TrustBundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read trust bundle: %w", err)
 	}
+	if err := checkNotNewer(data, trustBundleSchemaV1); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var b TrustBundle

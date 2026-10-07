@@ -46,7 +46,7 @@ func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPreb
 	// Cache hit: same fetched bytes, artifact still in the pool → reuse verbatim.
 	if prev, ok := cache.Get(ch); ok && prev.Fingerprint == ch {
 		if _, statErr := os.Stat(filepath.Join(lay.outputDir, prev.Artifact)); statErr == nil {
-			return packageWork{cacheKey: ch, version: prev.Version, contentHash: ch},
+			return packageWork{cacheKey: ch, version: prev.Version, platform: prev.Platform, contentHash: ch},
 				ingestHit{reuse: true, entry: prev.indexEntry(), cacheEntry: prev}, nil
 		}
 	}
@@ -94,7 +94,7 @@ func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPreb
 		sort.SliceStable(refs, func(i, j int) bool { return attRefLess(refs[i], refs[j]) })
 	}
 	return packageWork{
-		name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
+		name: name, version: pkgParsed.Version, platform: pkgParsed.Platform, contentHash: ch, artifact: artifact,
 		fingerprint: ch, cacheKey: ch, attRefs: refs, attBlobs: blobs, pkg: pkgParsed,
 	}, ingestHit{}, nil
 }

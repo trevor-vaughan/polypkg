@@ -3,6 +3,7 @@ package repo
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -285,5 +286,51 @@ func TestPlanRemovePackageSourceNoMatchErrors(t *testing.T) {
 
 	if _, err := PlanRemovePackageSource(path, "hello", "./pkgs/does-not-exist"); err == nil {
 		t.Fatal("expected an error for a source with no matching entry")
+	}
+}
+
+// writeThreeEntryManifest writes a hand-authored manifest whose package hello
+// has three source entries, ./pkgs/a, ./pkgs/b and ./pkgs/c, in that order.
+func writeThreeEntryManifest(t *testing.T, path string) {
+	t.Helper()
+	body := "schema: polypkg.repo/v1\nsource: demo\noutput: ./public\n" +
+		"key:\n  path: /tmp/demo.key\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n" +
+		"    - source: ./pkgs/a\n    - source: ./pkgs/b\n    - source: ./pkgs/c\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
+// TestPlanRemovePackageSourceDropsEveryNamedEntry covers withdrawing a version
+// published as several entries (one per platform): every named entry goes,
+// the rest stay in order.
+func TestPlanRemovePackageSourceDropsEveryNamedEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "polypkg-repo.yaml")
+	writeThreeEntryManifest(t, path)
+
+	edit, err := PlanRemovePackageSource(path, "hello", "./pkgs/a", "./pkgs/c")
+	if err != nil {
+		t.Fatalf("PlanRemovePackageSource: %v", err)
+	}
+	got := edit.Manifest.Packages["hello"]
+	if len(got) != 1 || got[0].Source != "./pkgs/b" {
+		t.Fatalf("packages[hello] = %+v, want only ./pkgs/b", got)
+	}
+}
+
+// TestPlanRemovePackageSourceRefusesWhenAnyIdentifierIsMissing pins that a
+// partial match plans nothing: removing some but not all of a version's
+// entries would leave the version half-withdrawn.
+func TestPlanRemovePackageSourceRefusesWhenAnyIdentifierIsMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "polypkg-repo.yaml")
+	writeThreeEntryManifest(t, path)
+
+	_, err := PlanRemovePackageSource(path, "hello", "./pkgs/a", "./pkgs/nope")
+	if err == nil {
+		t.Fatal("PlanRemovePackageSource accepted an identifier with no entry")
+	}
+	if !strings.Contains(err.Error(), "./pkgs/nope") {
+		t.Fatalf("error %q does not name the unmatched identifier", err)
 	}
 }

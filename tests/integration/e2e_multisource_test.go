@@ -132,7 +132,7 @@ var _ = Describe("multi-source", func() {
 		publishTrustDoc(t, repoB, "b", anchorB, 1,
 			[]trustKeySpec{{kp: signerB, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoB, signerB, 1, indexPkg{name: "hello", version: "1.0.0", artifact: pkgHello})
-		writeArtifact(t, repoB, untrusted, "hello", "1.0.0", "", pkgHello) // bad signature
+		writeArtifact(t, repoB, untrusted, "hello", "1.0.0", "", "", pkgHello) // bad signature
 		trustB := writeTrustRoot(t, anchorB)
 		srvB := httptest.NewServer(http.FileServer(http.Dir(repoB)))
 		DeferCleanup(srvB.Close)

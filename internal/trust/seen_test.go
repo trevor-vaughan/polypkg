@@ -245,3 +245,62 @@ var _ = Describe("RollbackError", func() {
 		Expect(err.Error()).To(Equal("revocation list rollback: serial 1 is below last-seen 2"))
 	})
 })
+
+var _ = Describe("Seen per-platform high-water marks", func() {
+	It("round-trips marks keyed by host platform under packages_by_platform", func() {
+		dir := GinkgoT().TempDir()
+		want := Seen{IndexSerial: 2, PackagesByPlatform: map[string]map[string]string{
+			"linux/amd64":  {"hello": "1.0.0"},
+			"darwin/arm64": {"hello": "2.0.0"},
+		}}
+		Expect(StoreSeen(dir, "native", want)).To(Succeed())
+		raw, err := os.ReadFile(SeenPath(dir, "native"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring(`"packages_by_platform":{`))
+		Expect(string(raw)).NotTo(ContainSubstring(`"packages":`))
+
+		got, err := LoadSeen(dir, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(want))
+		Expect(got.HighWater("linux/amd64")).To(Equal(map[string]string{"hello": "1.0.0"}))
+		Expect(got.HighWater("darwin/arm64")).To(Equal(map[string]string{"hello": "2.0.0"}))
+	})
+
+	It("gives a host with no marks an empty, writable map", func() {
+		s := Seen{PackagesByPlatform: map[string]map[string]string{"darwin/arm64": {"hello": "2.0.0"}}}
+		hwm := s.HighWater("linux/amd64")
+		Expect(hwm).To(BeEmpty())
+		hwm["x"] = "1.0.0" // must not panic on a nil map
+		Expect(s.PackagesByPlatform).NotTo(HaveKey("linux/amd64"))
+	})
+
+	It("adopts a legacy un-keyed packages map as the host's marks", func() {
+		dir := GinkgoT().TempDir()
+		Expect(os.MkdirAll(filepath.Join(dir, "trust"), 0o700)).To(Succeed())
+		legacy := []byte(`{"trust_serial":3,"index_serial":5,"packages":{"hello":"2.0.0"}}`)
+		Expect(os.WriteFile(SeenPath(dir, "native"), legacy, 0o600)).To(Succeed())
+
+		got, err := LoadSeen(dir, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.HighWater("linux/amd64")).To(Equal(map[string]string{"hello": "2.0.0"}))
+	})
+
+	It("prefers the host's own marks over a legacy map", func() {
+		s := Seen{
+			Packages:           map[string]string{"hello": "9.0.0"},
+			PackagesByPlatform: map[string]map[string]string{"linux/amd64": {"hello": "1.0.0"}},
+		}
+		Expect(s.HighWater("linux/amd64")).To(Equal(map[string]string{"hello": "1.0.0"}))
+	})
+
+	It("returns a copy, so folding new marks never mutates the loaded state", func() {
+		s := Seen{
+			Packages:           map[string]string{"legacy": "1.0.0"},
+			PackagesByPlatform: map[string]map[string]string{"linux/amd64": {"hello": "1.0.0"}},
+		}
+		s.HighWater("linux/amd64")["hello"] = "5.0.0"
+		s.HighWater("darwin/arm64")["legacy"] = "5.0.0"
+		Expect(s.PackagesByPlatform["linux/amd64"]).To(HaveKeyWithValue("hello", "1.0.0"))
+		Expect(s.Packages).To(HaveKeyWithValue("legacy", "1.0.0"))
+	})
+})
