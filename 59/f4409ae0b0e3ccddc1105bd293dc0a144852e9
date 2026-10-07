@@ -1,0 +1,24 @@
+Taskfile.yml
+  s_976d6ae9a5c17c::t_d7960380c78896 27,75-78,80-81
+CONTRIBUTING.md
+  s_976d6ae9a5c17c::t_d7960380c78896 87
+docs/dev/README.md
+  s_976d6ae9a5c17c::t_991290e3ee72f2 114-116
+  s_976d6ae9a5c17c::t_d7960380c78896 103-113,117-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59f4409ae0b0e3ccddc1105bd293dc0a144852e9",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
