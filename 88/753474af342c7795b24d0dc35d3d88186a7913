@@ -1,0 +1,19 @@
+tests/integration/weakdeps_test.go
+  s_976d6ae9a5c17c::t_6c8e4dde958e30 67-68,70-71,74-75,80-82,104-105,107-136,140-141,165-166,191-192,194-195,198-199,204-206,226-227,230-257,261-266,268,287-289,303-304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88753474af342c7795b24d0dc35d3d88186a7913",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
