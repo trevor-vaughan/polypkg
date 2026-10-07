@@ -76,7 +76,7 @@ import (
 const (
 	// san and issuer are the Fulcio identity the fixture bundle certifies; the
 	// planner records them (CertificateIdentity/CertificateIssuer) on a
-	// verified-offline binding. They are recorded, not gated (phase 2d).
+	// verified-offline binding. They are recorded, not gated by the verifier.
 	san    = "https://github.com/acme/ci/.github/workflows/release.yml@refs/tags/v1"
 	issuer = "https://token.actions.githubusercontent.com"
 )
@@ -337,7 +337,7 @@ func run() error {
 	}
 
 	// A SECOND, independent virtual CA: its mirrored root shares the wide
-	// 2000-2100 window (so SigstoreRootAt selects it for the bindable bundle's
+	// 2000-2100 window (so SigstoreRootsAt selects it for the bindable bundle's
 	// integrated time and the kernel is genuinely reached) but never signed the
 	// bundle. The wrong-root negative test proves the kernel rejects it and no
 	// identity leaks — exercising the innermost verdict.Verified gate that a nil

@@ -59,6 +59,7 @@ type transport interface {
 // (NewHTTPClient) enforces the idle-read deadline on every response body.
 type httpTransport struct {
 	base   string
+	source string // the source's name in the profile, named in fetch errors
 	client *http.Client
 	// metadataTimeout bounds the whole of every metadataFetch.
 	metadataTimeout time.Duration
@@ -88,17 +89,17 @@ func (t *httpTransport) get(ctx context.Context, name string, limit int64, kind 
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, newNetworkFetchError("native", t.base, rawURL, err)
+		return nil, newNetworkFetchError(t.source, t.base, rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, newStatusFetchError("native", t.base, rawURL, resp.StatusCode)
+		return nil, newStatusFetchError(t.source, t.base, rawURL, resp.StatusCode)
 	}
 	data, err := readLimited(resp.Body, limit)
 	if err != nil {
 		var se *StallError
 		if errors.As(err, &se) {
-			return nil, newNetworkFetchError("native", t.base, rawURL, err)
+			return nil, newNetworkFetchError(t.source, t.base, rawURL, err)
 		}
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -107,7 +108,8 @@ func (t *httpTransport) get(ctx context.Context, name string, limit int64, kind 
 
 // localTransport fetches files from a local filesystem directory.
 type localTransport struct {
-	root string
+	root   string
+	source string // the source's name in the profile, named in fetch errors
 }
 
 func (t *localTransport) get(_ context.Context, name string, limit int64, _ fetchKind) ([]byte, error) {
@@ -130,7 +132,9 @@ func (t *localTransport) get(_ context.Context, name string, limit int64, _ fetc
 	f, err := os.Open(clean)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, newStatusFetchError("native", t.root, clean, http.StatusNotFound)
+			// A local file has no HTTP status: report the absence itself
+			// rather than a made-up 404.
+			return nil, &FetchError{Source: t.source, BaseURL: t.root, URL: clean, Err: fs.ErrNotExist}
 		}
 		return nil, fmt.Errorf("open %s: %w", clean, err)
 	}
@@ -145,7 +149,10 @@ func (t *localTransport) get(_ context.Context, name string, limit int64, _ fetc
 
 // NativeBackendOpts configures a NativeBackend.
 type NativeBackendOpts struct {
-	URL      string
+	URL string
+	// Source is the source's name in the profile. Fetch errors name it, so
+	// with several sources the operator is told which one failed.
+	Source   string
 	CacheDir string
 }
 
@@ -166,7 +173,7 @@ type NativeBackend struct {
 func NewNativeBackend(opts NativeBackendOpts) *NativeBackend {
 	if root, ok := isLocalSourceURL(opts.URL); ok {
 		return &NativeBackend{
-			transport:   &localTransport{root: root},
+			transport:   &localTransport{root: root, source: opts.Source},
 			cacheDir:    opts.CacheDir,
 			localSource: true,
 		}
@@ -174,6 +181,7 @@ func NewNativeBackend(opts NativeBackendOpts) *NativeBackend {
 	return &NativeBackend{
 		transport: &httpTransport{
 			base:            opts.URL,
+			source:          opts.Source,
 			client:          NewHTTPClient(),
 			metadataTimeout: metadataFetchTimeout,
 		},
@@ -356,7 +364,7 @@ func (b *NativeBackend) fetchOptionalMeta(ctx context.Context, name string, limi
 	doc, err := b.transport.get(ctx, name, limit, metadataFetch)
 	if err != nil {
 		var fe *FetchError
-		if errors.As(err, &fe) && fe.Status == http.StatusNotFound {
+		if errors.As(err, &fe) && fe.NotFound() {
 			return nil, "", fmt.Errorf("%w: %s", ErrMetadataAbsent, name)
 		}
 		return nil, "", err

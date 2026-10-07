@@ -1,7 +1,7 @@
 // Package pkglint validates a polypkg package source (polypkg.yaml + content/)
 // against structure, identity, action/phase, parameter, and content-reference
 // rules. It is the single lint/predicate producer, consumed by `pkg lint`,
-// `pkg build`, and (Phase C) `repo build`.
+// `pkg build`, and `repo build`.
 package pkglint
 
 // Severity classifies a finding. Error-severity findings make lint exit

@@ -230,6 +230,27 @@ var _ = Describe("plan", func() {
 		Expect(pr.Packages.Added).To(BeEmpty())
 	})
 
+	It("reports when the current generation was committed under --format json", func() {
+		apply := cli.NewRootCmd()
+		apply.SilenceUsage, apply.SilenceErrors = true, true
+		var ab bytes.Buffer
+		apply.SetOut(&ab)
+		apply.SetErr(&ab)
+		apply.SetArgs([]string{"apply", profile})
+		Expect(apply.Execute()).To(Succeed(), "apply output: %s", ab.String())
+
+		out, err := runPlanCmd("--format", "json", profile)
+		Expect(err).NotTo(HaveOccurred(), "plan output: %s", out)
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		last := lines[len(lines)-1]
+		pr, perr := schema.ParsePlanResult(strings.NewReader(last))
+		Expect(perr).NotTo(HaveOccurred())
+		Expect(pr.Current).NotTo(BeNil(), "plan result body: %s", last)
+		Expect(pr.Current.Generation).To(Equal(1))
+		Expect(pr.Current.CommittedAt.IsZero()).To(BeFalse(),
+			"committed_at must be the generation's commit time, not Go's zero time: %s", last)
+	})
+
 	It("emits a polypkg.plan/v1 envelope under --format json", func() {
 		out, _ := runPlanCmd("--format", "json", profile)
 		// Take the last non-empty line in case warnings precede the JSON.

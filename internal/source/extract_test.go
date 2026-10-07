@@ -144,6 +144,6 @@ var _ = Describe("ExtractTarZst", func() {
 		dir := GinkgoT().TempDir()
 		err = ExtractTarZst(bytes.NewReader(z.Bytes()), dir)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("traversal"))
+		Expect(err.Error()).To(ContainSubstring("escapes the extraction root"))
 	})
 })

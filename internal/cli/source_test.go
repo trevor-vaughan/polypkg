@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,15 +22,22 @@ import (
 )
 
 // runSource runs the root command in-process with the given args, setting
-// POLYPKG_PROFILE to profilePath, and returns combined output.
+// POLYPKG_PROFILE to profilePath, and returns combined output. Its stdin is
+// empty and not a terminal.
 func runSource(profilePath string, args ...string) (string, error) {
+	return runWithStdin(profilePath, strings.NewReader(""), args...)
+}
+
+// runWithStdin is runSource with in as the command's stdin; pass ttyInput to
+// answer a confirmation prompt.
+func runWithStdin(profilePath string, in io.Reader, args ...string) (string, error) {
 	root := NewRootCmd()
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	var buf strings.Builder
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(in)
 	root.SetArgs(args)
 	GinkgoT().Setenv("POLYPKG_PROFILE", profilePath)
 	err := root.Execute()
@@ -56,7 +64,7 @@ func initMinimalProfile(dir string) string {
 	root.SetArgs([]string{
 		"init",
 		"--source-url", "file:///srv/initial",
-		"--trust-root-file", keyPath,
+		"--trust-root", keyPath,
 	})
 	GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
 	GinkgoT().Setenv("POLYPKG_PROFILE", "")
@@ -383,6 +391,7 @@ var _ = Describe("source commands", func() {
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 			Expect(ce.Msg).To(ContainSubstring("is not a valid slug"))
+			Expect(ce.Hint).To(ContainSubstring("e.g. team-mirror"))
 		})
 
 		It("rejects a source named \"order\" because it collides with the reserved order key", func() {
@@ -612,14 +621,9 @@ var _ = Describe("source commands", func() {
 		})
 
 		It("clears the persisted anti-rollback floor on remove so a later re-add starts clean", func() {
-			// Pin the state home the CLI resolves (scopeHomes("user", "") ->
-			// paths.UserStateHome(), which honors XDG_STATE_HOME but appends the
-			// "polypkg" appName segment — see paths.xdgUserDir) so the
-			// StoreSeen/LoadSeen calls below agree with what runSourceRemove uses.
-			GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(tmpDir, "data"))
-			GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(tmpDir, "state"))
-			stateHome := filepath.Join(tmpDir, "state", "polypkg")
-
+			// stateHome (from BeforeEach's sandbox) is the state home the CLI
+			// resolves, so the StoreSeen/LoadSeen calls below agree with what
+			// runSourceRemove uses.
 			Expect(trust.StoreSeen(stateHome, "extra", trust.Seen{TrustSerial: 4, BundleSerial: 2})).To(Succeed())
 
 			out, err := runSource(profilePath, "source", "remove", "extra")

@@ -93,7 +93,7 @@ testcases:
   - name: install runs the imported binary and records it verified-offline
     steps:
       - type: exec
-        script: '{{.px}} init --source-url file://{{.repo}}/public --trust-root-file {{.repo}}/public/trust_root.pub --source-name ghimport --scope user'
+        script: '{{.px}} init --source-url file://{{.repo}}/public --trust-root {{.repo}}/public/trust_root.pub --source-name ghimport --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

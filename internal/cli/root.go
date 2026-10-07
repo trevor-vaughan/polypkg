@@ -23,6 +23,11 @@ func NewRootCmd() *cobra.Command {
 		Long:          "polypkg is a declarative package manager supporting both system and user-level installs across Linux, macOS, and FreeBSD.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		// cobra's default edit distance for "did you mean" suggestions;
+		// unknownCommand reads it through SuggestionsFor, which does not
+		// apply the default itself.
+		SuggestionsMinimumDistance: 2,
+		Args:                       unknownCommand,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion, _ := cmd.Flags().GetBool("version"); showVersion {
 				if Commit != "unknown" && Date != "unknown" {

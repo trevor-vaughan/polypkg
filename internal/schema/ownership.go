@@ -58,7 +58,7 @@ type Expected struct {
 }
 
 // StatInfo is the lstat data recorded for a managed path so drift detection can
-// skip re-hashing when stat is unchanged (apply-semantics §6.4).
+// skip re-hashing when stat is unchanged.
 type StatInfo struct {
 	Size    int64  `json:"size"`
 	MtimeNs int64  `json:"mtime_ns"`

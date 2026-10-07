@@ -16,7 +16,7 @@ import (
 var ErrMetadataAbsent = errors.New("repository metadata document absent")
 
 // Backend is implemented by every source backend (native, RPM bridge,
-// OCI bridge, etc.). In M1 we ship only the native backend.
+// OCI bridge, etc.). Only the native backend exists.
 type Backend interface {
 	Name() string
 	Fetch(ctx context.Context, artifact string) ([]byte, error)

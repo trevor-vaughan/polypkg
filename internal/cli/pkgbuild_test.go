@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -52,7 +55,7 @@ var _ = Describe("pkg build", func() {
 	})
 
 	It("produces a byte-identical att.json across two independent builds", func() {
-		// Phase C's signed attestation depends on this: the author's preview is
+		// repo build's signed attestation depends on this: the author's preview is
 		// exactly the statement the publisher signs, and two builds of the same
 		// source must yield the same bytes to sign.
 		src := GinkgoT().TempDir()
@@ -107,9 +110,33 @@ var _ = Describe("pkg build", func() {
 		build.SetErr(&bytes.Buffer{})
 		build.SetArgs([]string{"pkg", "build", "-o", outDir, src})
 		err := build.Execute()
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("create output dir"))
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("cannot create output directory " + outDir + ": part of the path is not a directory"))
+		Expect(ce.Hint).To(ContainSubstring("-o"))
 		Expect(outDir).ToNot(BeADirectory())
+	})
+
+	It("names the artifact it cannot write and why", func() {
+		src := GinkgoT().TempDir()
+		root := NewRootCmd()
+		root.SetOut(&bytes.Buffer{})
+		root.SetArgs([]string{"pkg", "init", "--name", "hello", "--version", "1.0.0", src})
+		Expect(root.Execute()).To(Succeed())
+		outDir := filepath.Join(GinkgoT().TempDir(), "ro")
+		Expect(os.Mkdir(outDir, 0o500)).To(Succeed())
+		DeferCleanup(os.Chmod, outDir, os.FileMode(0o700))
+
+		build := NewRootCmd()
+		build.SetOut(&bytes.Buffer{})
+		build.SetErr(&bytes.Buffer{})
+		build.SetArgs([]string{"pkg", "build", "-o", outDir, src})
+		err := build.Execute()
+
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("cannot write artifact " + filepath.Join(outDir, "hello-1.0.0.tar.zst") + ": permission denied"))
+		Expect(ce.Hint).To(ContainSubstring("-o"))
 	})
 
 	It("aborts on lint errors and writes nothing", func() {
@@ -127,4 +154,31 @@ var _ = Describe("pkg build", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(entries).To(BeEmpty())
 	})
+})
+
+var _ = Describe("pkg build pack refusals", func() {
+	DescribeTable("names the file that cannot be packed, why, and what to change",
+		func(makeBad func(testing.TB, string) string, reason, wantHint string) {
+			sandboxUserEnv(GinkgoTB())
+			src := GinkgoT().TempDir()
+			initCmd := NewRootCmd()
+			initCmd.SetOut(&bytes.Buffer{})
+			initCmd.SetArgs([]string{"pkg", "init", "--name", "hello", src})
+			Expect(initCmd.Execute()).To(Succeed())
+			rel := makeBad(GinkgoTB(), src)
+
+			build := NewRootCmd()
+			build.SetOut(&bytes.Buffer{})
+			build.SetErr(&bytes.Buffer{})
+			build.SetArgs([]string{"pkg", "build", "-o", GinkgoT().TempDir(), src})
+			err := build.Execute()
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "want a CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(fmt.Sprintf("%q", rel)))
+			Expect(ce.Msg).To(ContainSubstring(reason))
+			Expect(ce.Hint).To(ContainSubstring(wantHint))
+		},
+		Entry("a setuid file", makeSetuidContent, "is setuid", "chmod u-s,g-s,-t"),
+		Entry("a path too deep to extract", makeTooDeepContent, "more than 64 path segments", "shorten"),
+	)
 })

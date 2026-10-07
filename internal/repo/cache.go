@@ -27,7 +27,7 @@ type CacheEntry struct {
 	// cache hit and keys nextRevision, so it is recorded here rather than
 	// re-derived from the artifact.
 	Platform string `json:"platform,omitempty"`
-	Revision int    `json:"revision"` // informational rebuild ordinal (D10)
+	Revision int    `json:"revision"` // informational rebuild ordinal
 	// Per-entry attestation refs, reused verbatim on cache hits so an unchanged
 	// package keeps its published attestation set. Empty when the entry was built
 	// with --skip-attestations. A list (not a single ref) so carried external
@@ -73,7 +73,7 @@ type BuildCache struct {
 	// documents carry the expiry but not the window that produced it — index.json
 	// has no issued_at, and trust.json's is pinned to the epoch for deterministic
 	// signatures — so the window is recorded here, next to the serial, and read
-	// back by both Build and Inspector.Pending to apply the D13 half-life rule
+	// back by both Build and Inspector.Pending to apply the half-life rule
 	// against the real window rather than a guess.
 	//
 	// Zero means "not recorded": a cache written before this field existed, or a
@@ -99,7 +99,7 @@ func (c *BuildCache) Put(source string, e CacheEntry) { c.Entries[source] = e }
 // (a cold or invalidated cache is never an error); a corrupt file is treated as
 // cold rather than fatal. Any schema other than the current v4 is also treated
 // as cold: a stale v1 entry carries a flat artifact name that would leak into a
-// pool-addressed index (D-C8), a v2 entry carries single-attestation fields v3
+// pool-addressed index, a v2 entry carries single-attestation fields v3
 // no longer models, and a v3 entry records no platform, so a cache hit would
 // republish a platform-specific artifact as platform-agnostic. Build floors the
 // serial against the published trust.json, so zeroing it here cannot regress a

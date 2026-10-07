@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
@@ -738,5 +742,147 @@ func TestRepoRemoveVersionNamesUnreadableEntry(t *testing.T) {
 	}
 	if !bytes.Equal(readManifestBytes(t, mPath), before) {
 		t.Fatal("a failed repo remove modified polypkg-repo.yaml")
+	}
+}
+
+// repo add and repo remove rebuild the repository, so a trust-bundle change
+// they publish is shown the same way repo build shows it, never silently.
+func TestRepoAddAndRemoveShowTheTrustBundleChange(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "r")
+	keyDir := t.TempDir()
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
+	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	pkgDir := writeHelloPkgSource(t, repoDir)
+
+	fixture, err := os.ReadFile(filepath.Join("..", "repo", "testdata", "sigstore-public-good-trusted-root.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "trusted_root.json"), fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const rootsEntry = "sigstore_roots:\n    - ./trusted_root.json\n"
+	before := readManifestBytes(t, mPath)
+	if err := os.WriteFile(mPath, append(slices.Clone(before), rootsEntry...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRepo(t, env, "repo", "add", pkgDir, "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("repo add: %v (out=%s)", err, out)
+	}
+	for _, want := range []string{
+		"The trust bundle now vouches for:",
+		"sigstore root: Fulcio root sha256:3ba7b6cc4e95469d4d334b49cb257ad8537076fa84b0ca87ff4ecfe6a54680c1, valid 2022-04-13T20:06:15Z to open-ended",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repo add output lacks %q:\n%s", want, out)
+		}
+	}
+
+	// Drop sigstore_roots again: the remove's rebuild withdraws the bundle.
+	withRoots := readManifestBytes(t, mPath)
+	if !bytes.Contains(withRoots, []byte(rootsEntry)) {
+		t.Fatalf("repo add rewrote the sigstore_roots entry; the test cannot drop it:\n%s", withRoots)
+	}
+	if err := os.WriteFile(mPath, bytes.Replace(withRoots, []byte(rootsEntry), nil, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runRepo(t, env, "--format", "json", "repo", "remove", "hello", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("repo remove: %v (out=%s)", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	res, err := schema.ParseCLIResult(strings.NewReader(lines[len(lines)-1]))
+	if err != nil {
+		t.Fatalf("parse result: %v (out=%s)", err, out)
+	}
+	if tb, _ := res.Data["trust_bundle"].(map[string]any); tb["withdrawn"] != true {
+		t.Fatalf("data.trust_bundle = %v, want the withdrawal", res.Data["trust_bundle"])
+	}
+
+	// A rebuild that leaves the bundle alone does not report it.
+	out, err = runRepo(t, env, "--format", "json", "repo", "add", pkgDir, "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("second repo add: %v (out=%s)", err, out)
+	}
+	if strings.Contains(out, "trust_bundle") {
+		t.Fatalf("a repo add that leaves the trust bundle alone reported it: %s", out)
+	}
+}
+
+// makeSetuidContent sets setuid on dir's content/bin/hello and returns that
+// file's source-relative path. It skips t when the filesystem drops the bit.
+func makeSetuidContent(t testing.TB, dir string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "content", "bin", "hello")
+	if err := os.Chmod(bin, 0o755|fs.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(bin); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&fs.ModeSetuid == 0 {
+		t.Skipf("this filesystem does not keep setuid (got %v)", info.Mode())
+	}
+	return "content/bin/hello"
+}
+
+// makeTooDeepContent writes a content file one path segment deeper than any
+// install could extract and returns its source-relative path.
+func makeTooDeepContent(t testing.TB, dir string) string {
+	t.Helper()
+	// "content", then the nested directories, then the file.
+	segs := append([]string{"content"}, slices.Repeat([]string{"d"}, archive.MaxMemberDepth-1)...)
+	if err := os.MkdirAll(filepath.Join(append([]string{dir}, segs...)...), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel := path.Join(append(segs, "f")...)
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte("deep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return rel
+}
+
+// TestRepoAddNamesTheFileThatCannotBePacked pins that a pack refusal reaches
+// the user with the offending file, the reason, and what to change, instead
+// of only "cannot pack package".
+func TestRepoAddNamesTheFileThatCannotBePacked(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		make     func(testing.TB, string) string
+		reason   string
+		wantHint string
+	}{
+		{"setuid", makeSetuidContent, "is setuid", "chmod u-s,g-s,-t"},
+		{"too deep", makeTooDeepContent, "more than 64 path segments", "shorten"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxUserEnv(t)
+			repoDir := filepath.Join(t.TempDir(), "r")
+			keyDir := t.TempDir()
+			env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+			if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+			src := writeHelloPkgSource(t, repoDir)
+			rel := tc.make(t, src)
+			_, err := runRepo(t, env, "repo", "add", src,
+				"--manifest", filepath.Join(repoDir, "polypkg-repo.yaml"), "--key-dir", keyDir)
+			var ce *CLIError
+			if !errors.As(err, &ce) {
+				t.Fatalf("repo add = %v (%T), want a CLIError", err, err)
+			}
+			for _, want := range []string{`cannot pack package "hello"`, fmt.Sprintf("%q", rel), tc.reason} {
+				if !strings.Contains(ce.Msg, want) {
+					t.Errorf("Msg = %q, want it to contain %q", ce.Msg, want)
+				}
+			}
+			if !strings.Contains(ce.Hint, tc.wantHint) {
+				t.Errorf("Hint = %q, want it to contain %q", ce.Hint, tc.wantHint)
+			}
+		})
 	}
 }

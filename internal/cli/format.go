@@ -134,6 +134,14 @@ func withRecoveryHint(err error) error {
 			Err: err,
 		}
 	}
+	if errors.Is(err, trust.ErrSignatureMismatch) {
+		return &CLIError{
+			Msg: err.Error(),
+			Hint: "the signature does not verify under the trust root polypkg was given: the data was signed by another key, or altered. " +
+				"If the publisher confirms the repository was re-created with a new key, re-pin it (docs/trust-policy.md, \"Recovering after a repository is re-created\"); otherwise treat it as tampering",
+			Err: err,
+		}
+	}
 	var ne *schema.NewerSchemaError
 	if errors.As(err, &ne) {
 		return newerStateError(err, ne)

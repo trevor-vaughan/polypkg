@@ -598,6 +598,38 @@ var _ = Describe("pkg import errors", func() {
 		Expect(hint).To(ContainSubstring("remove or rename"))
 	})
 
+	It("tells how to get past a case variant of the package directory", func() {
+		api, _, rootPath := startFake(importRelease())
+		out := importOut()
+		Expect(os.MkdirAll(filepath.Join(out, "Hello", "0.9.0"), 0o755)).To(Succeed())
+
+		_, stderr, code := runRoot("pkg", "import", "github:acme/hello@v1.2.0", out, "--api-url", api, "--trusted-root", rootPath)
+
+		Expect(code).NotTo(BeZero())
+		Expect(lineWith(stderr, "error:")).To(ContainSubstring(`already holds "Hello", which differs from the package "hello" only in letter case`))
+		hint := lineWith(stderr, "hint:")
+		Expect(hint).To(ContainSubstring(`pass --name "Hello"`))
+		Expect(hint).To(ContainSubstring(fmt.Sprintf("remove %q", filepath.Join(out, "Hello"))))
+	})
+
+	It("carries the case-variant hint in the JSON error envelope", func() {
+		api, _, rootPath := startFake(importRelease())
+		out := importOut()
+		Expect(os.MkdirAll(filepath.Join(out, "hello", "1.2.0-RC1"), 0o755)).To(Succeed())
+		rel := "github:acme/hello@v1.2.0"
+
+		stdout, _, code := runRoot("--format", "json", "pkg", "import", rel, out,
+			"--version", "1.2.0-rc1", "--api-url", api, "--trusted-root", rootPath)
+
+		Expect(code).NotTo(BeZero())
+		var env importEnvelope
+		Expect(json.Unmarshal([]byte(stdout), &env)).To(Succeed())
+		Expect(env.Status).To(Equal("error"))
+		Expect(env.Error).To(ContainSubstring(`already holds "1.2.0-RC1", which differs from the version "1.2.0-rc1" only in letter case`))
+		Expect(env.Hint).To(ContainSubstring(`pass --version "1.2.0-RC1"`))
+		Expect(env.Hint).To(ContainSubstring(fmt.Sprintf("remove %q", filepath.Join(out, "hello", "1.2.0-RC1"))))
+	})
+
 	It("suggests --name when the repository name is not a package name, before any request", func() {
 		_, fake, rootPath := startFake(importRelease())
 

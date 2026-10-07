@@ -152,7 +152,7 @@ var _ = Describe("InspectCarried SLSA predicate interpretation", func() {
 		Expect(info.BuildTime).To(Equal(time.Date(2023, 3, 3, 0, 0, 0, 0, time.UTC)))
 	})
 
-	It("reports no timestamp and no builder for a SLSA statement without metadata (F1)", func() {
+	It("reports no timestamp and no builder for a SLSA statement without metadata", func() {
 		env := build("https://slsa.dev/provenance/v1", map[string]any{})
 		info, err := attest.InspectCarried(env)
 		Expect(err).NotTo(HaveOccurred())

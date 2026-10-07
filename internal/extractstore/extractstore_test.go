@@ -3,6 +3,7 @@ package extractstore_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -21,6 +22,13 @@ var _ = Describe("naming", func() {
 	})
 	It("legacy name is the pre-content-addressed layout", func() {
 		Expect(extractstore.LegacyDirName("greet", "1.0.0")).To(Equal("greet-1.0.0"))
+	})
+	It("keeps packages whose names or versions differ only in case apart on a case-insensitive filesystem", func() {
+		// Two such packages are two artifacts, so their content hashes, and
+		// with them the dir names, differ even after case folding.
+		a := extractstore.DirName("Tool", "1.0.0-RC1", "blake3:"+strings.Repeat("a1", 32))
+		b := extractstore.DirName("tool", "1.0.0-rc1", "blake3:"+strings.Repeat("b2", 32))
+		Expect(strings.EqualFold(a, b)).To(BeFalse(), "%s and %s fold to one name", a, b)
 	})
 	It("Dir joins Root and DirName", func() {
 		Expect(extractstore.Dir("/state", "greet", "1.0.0", "blake3:aa11223344556677889900")).

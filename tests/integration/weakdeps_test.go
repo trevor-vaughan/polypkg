@@ -64,22 +64,22 @@ func minimalPkg(name, version string) []byte {
 var _ = Describe("forward weak dependencies", func() {
 	// Scenario 1 + 2 share a repo server; each step builds on the prior state.
 	Describe("pulled in and fall out by construction", Ordered, func() {
+		// Each step's apply is what its spec judges, so BeforeAll records the
+		// outcomes and the specs assert them.
 		var (
-			repoDir   string
-			anchor    minisignKeypair
-			signer    minisignKeypair
-			srvURL    string
-			trustRoot string
-			srv       *httptest.Server
+			step1Out, step2Out string
+			step1Err, step2Err error
 		)
 
+		// The whole journey lives here, not in specs, so every spec below runs
+		// on its own (ginkgo --focus) as well as in sequence.
 		BeforeAll(func() {
 			t := GinkgoTB()
 			IsolatedEnv(t)
 
-			anchor = newMinisignKeypair(t)
-			signer = newMinisignKeypair(t)
-			repoDir = t.TempDir()
+			anchor := newMinisignKeypair(t)
+			signer := newMinisignKeypair(t)
+			repoDir := t.TempDir()
 
 			appPkg := minimalPkg("app", "1.0.0")
 			extrasPkg := minimalPkg("extras", "1.0.0")
@@ -101,20 +101,44 @@ var _ = Describe("forward weak dependencies", func() {
 			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", "", appPkg)
 			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", "", extrasPkg)
 
-			trustRoot = writeTrustRoot(t, anchor)
-			srv = httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+			trustRoot := writeTrustRoot(t, anchor)
+			srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 			DeferCleanup(srv.Close)
-			srvURL = srv.URL
+
+			// Step 1: select app.
+			profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+			Expect(os.WriteFile(profilePath, []byte(weakProfile(srv.URL, trustRoot, "app", "")), 0o644)).To(Succeed())
+			step1Out, step1Err = runApplyProfile(profilePath)
+
+			// Step 2: publish a neutral package 'base' so we have something to
+			// select without recommending extras. Bump to serial 2 (same
+			// anchor+signer) to avoid a rollback rejection.
+			basePkg := minimalPkg("base", "1.0.0")
+			publishTrustDoc(t, repoDir, "native", anchor, 2,
+				[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
+			publishIndex(t, repoDir, signer, 2,
+				indexPkg{
+					name:     "app",
+					version:  "1.0.0",
+					artifact: appPkg,
+					recommends: []schema.Relation{
+						{Name: "extras"},
+					},
+				},
+				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
+				indexPkg{name: "base", version: "1.0.0", artifact: basePkg},
+			)
+			writeArtifact(t, repoDir, signer, "base", "1.0.0", "", "", basePkg)
+
+			// Profile now selects 'base' only — extras has no recommender.
+			profilePath = filepath.Join(t.TempDir(), "profile.yaml")
+			Expect(os.WriteFile(profilePath, []byte(weakProfile(srv.URL, trustRoot, "base", "")), 0o644)).To(Succeed())
+			step2Out, step2Err = runApplyProfile(profilePath)
 		})
 
 		It("step 1: app pulls in extras as a weak dep", func() {
-			profile := weakProfile(srvURL, trustRoot, "app", "")
-			profilePath := filepath.Join(GinkgoT().TempDir(), "profile.yaml")
-			Expect(os.WriteFile(profilePath, []byte(profile), 0o644)).To(Succeed())
-
-			out, err := runApplyProfile(profilePath)
-			Expect(err).NotTo(HaveOccurred(), "apply err (output: %q)", out)
-			Expect(out).To(ContainSubstring("applied generation 1"), "apply output was: %q", out)
+			Expect(step1Err).NotTo(HaveOccurred(), "apply err (output: %q)", step1Out)
+			Expect(step1Out).To(ContainSubstring("applied generation 1"), "apply output was: %q", step1Out)
 
 			m := readManifest("1")
 
@@ -138,38 +162,8 @@ var _ = Describe("forward weak dependencies", func() {
 		})
 
 		It("step 2: dropping app from the profile makes extras fall out (declarative autoremove)", func() {
-			// Publish a neutral package 'base' so we have something to select
-			// without recommending extras. Bump to serial 2 (same anchor+signer) to
-			// avoid a rollback rejection.
-			t := GinkgoTB()
-			basePkg := minimalPkg("base", "1.0.0")
-			appPkg := minimalPkg("app", "1.0.0")
-			extrasPkg := minimalPkg("extras", "1.0.0")
-
-			publishTrustDoc(t, repoDir, "native", anchor, 2,
-				[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
-			publishIndex(t, repoDir, signer, 2,
-				indexPkg{
-					name:     "app",
-					version:  "1.0.0",
-					artifact: appPkg,
-					recommends: []schema.Relation{
-						{Name: "extras"},
-					},
-				},
-				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
-				indexPkg{name: "base", version: "1.0.0", artifact: basePkg},
-			)
-			writeArtifact(t, repoDir, signer, "base", "1.0.0", "", "", basePkg)
-
-			// Profile now selects 'base' only — extras has no recommender.
-			profile := weakProfile(srvURL, trustRoot, "base", "")
-			profilePath := filepath.Join(t.TempDir(), "profile.yaml")
-			Expect(os.WriteFile(profilePath, []byte(profile), 0o644)).To(Succeed())
-
-			out, err := runApplyProfile(profilePath)
-			Expect(err).NotTo(HaveOccurred(), "apply output: %s", out)
-			Expect(out).To(ContainSubstring("applied generation 2"))
+			Expect(step2Err).NotTo(HaveOccurred(), "apply output: %s", step2Out)
+			Expect(step2Out).To(ContainSubstring("applied generation 2"))
 
 			m := readManifest("2")
 			names := make([]string, 0, len(m.Entries))
@@ -184,34 +178,30 @@ var _ = Describe("forward weak dependencies", func() {
 		})
 	})
 
-	// Describe: weak set tracks the catalog (Q5)
-	//
-	// Decision Q5 states that the weak set is re-evaluated on every resolve
-	// against the current signed catalog, not pinned at first-apply time.
+	// The weak set is re-evaluated on every resolve against the current
+	// signed catalog, not pinned at first-apply time.
 	//
 	// Proof: a recommend that is UNSATISFIABLE at serial 1 (its target absent
 	// from the catalog) is skipped and NOT installed; after a catalog republish
 	// at serial 2 that ADDS the target, the SAME profile re-applied pulls the
 	// target in as a weak dep — no profile change required.
-	Describe("weak set tracks the catalog (Q5)", Ordered, func() {
+	Describe("weak set tracks the catalog", Ordered, func() {
+		// Each step's plan and apply are what its spec judges, so BeforeAll
+		// records the outcomes and the specs assert them.
 		var (
-			repoDir   string
-			anchor    minisignKeypair
-			signer    minisignKeypair
-			srvURL    string
-			trustRoot string
-			srv       *httptest.Server
-			// profilePath is shared across both steps so we confirm it is unchanged.
-			profilePath string
+			planOut, step1Out, step2Out string
+			planErr, step1Err, step2Err error
 		)
 
+		// The whole journey lives here, not in specs, so every spec below runs
+		// on its own (ginkgo --focus) as well as in sequence.
 		BeforeAll(func() {
 			t := GinkgoTB()
 			IsolatedEnv(t)
 
-			anchor = newMinisignKeypair(t)
-			signer = newMinisignKeypair(t)
-			repoDir = t.TempDir()
+			anchor := newMinisignKeypair(t)
+			signer := newMinisignKeypair(t)
+			repoDir := t.TempDir()
 
 			// Serial 1: publish only 'app' (recommends extras); 'extras' is absent
 			// from the index so the weak solve cannot satisfy the recommend.
@@ -231,28 +221,49 @@ var _ = Describe("forward weak dependencies", func() {
 			)
 			writeArtifact(t, repoDir, signer, "app", "1.0.0", "", "", appPkg)
 
-			trustRoot = writeTrustRoot(t, anchor)
-			srv = httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+			trustRoot := writeTrustRoot(t, anchor)
+			srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 			DeferCleanup(srv.Close)
-			srvURL = srv.URL
 
-			// Write the profile once; it must not change between steps.
-			profile := weakProfile(srvURL, trustRoot, "app", "")
-			profilePath = filepath.Join(t.TempDir(), "profile.yaml")
-			Expect(os.WriteFile(profilePath, []byte(profile), 0o644)).To(Succeed())
+			// Write the profile once; both steps apply it unchanged.
+			profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+			Expect(os.WriteFile(profilePath, []byte(weakProfile(srv.URL, trustRoot, "app", "")), 0o644)).To(Succeed())
+
+			// Step 1: plan first, before altering any state, then apply.
+			planOut, planErr = runPlanCmd("--format", "json", profilePath)
+			step1Out, step1Err = runApplyProfile(profilePath)
+
+			// Step 2: republish index with both app and extras now present.
+			// Same anchor+signer; bump serial to avoid rollback rejection.
+			extrasPkg := minimalPkg("extras", "1.0.0")
+			publishTrustDoc(t, repoDir, "native", anchor, 2,
+				[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
+			publishIndex(t, repoDir, signer, 2,
+				indexPkg{
+					name:     "app",
+					version:  "1.0.0",
+					artifact: appPkg,
+					recommends: []schema.Relation{
+						{Name: "extras"},
+					},
+				},
+				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
+			)
+			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", "", extrasPkg)
+
+			// Re-apply the SAME profile — no profile edit.
+			step2Out, step2Err = runApplyProfile(profilePath)
 		})
 
 		It("step 1: unsatisfiable recommend is skipped and not installed", func() {
-			// Use plan first to assert extras appears in skipped_recommends with the
-			// correct recommender attribution, before altering any state.
-			out, err := runPlanCmd("--format", "json", profilePath)
-			// plan exits non-zero (exit 2) when there are changes pending — that is
-			// expected for a first-run plan.  Any non-JSON output line means something
-			// truly broke.
-			if err != nil {
-				Expect(out).NotTo(BeEmpty(), "expected plan output on non-zero exit")
+			// The plan must list extras in skipped_recommends with the correct
+			// recommender attribution. plan exits non-zero (exit 2) when there
+			// are changes pending — that is expected for a first-run plan. Any
+			// non-JSON output line means something truly broke.
+			if planErr != nil {
+				Expect(planOut).NotTo(BeEmpty(), "expected plan output on non-zero exit")
 			}
-			lines := strings.Split(strings.TrimSpace(out), "\n")
+			lines := strings.Split(strings.TrimSpace(planOut), "\n")
 			last := lines[len(lines)-1]
 			pr, perr := schema.ParsePlanResult(strings.NewReader(last))
 			Expect(perr).NotTo(HaveOccurred(), "parse plan JSON: %s", last)
@@ -271,10 +282,9 @@ var _ = Describe("forward weak dependencies", func() {
 			Expect(foundSkip).To(BeTrue(),
 				"extras not found in skipped_recommends: %v", pr.SkippedRecommends)
 
-			// Now apply: must succeed (unmet recommends never abort an install).
-			applyOut, applyErr := runApplyProfile(profilePath)
-			Expect(applyErr).NotTo(HaveOccurred(), "apply output: %s", applyOut)
-			Expect(applyOut).To(ContainSubstring("applied generation 1"), "apply output: %s", applyOut)
+			// The apply must succeed (unmet recommends never abort an install).
+			Expect(step1Err).NotTo(HaveOccurred(), "apply output: %s", step1Out)
+			Expect(step1Out).To(ContainSubstring("applied generation 1"), "apply output: %s", step1Out)
 
 			// Manifest gen-1 must contain app but NOT extras.
 			m := readManifest("1")
@@ -288,31 +298,8 @@ var _ = Describe("forward weak dependencies", func() {
 		})
 
 		It("step 2: republish adds extras → same profile pulls it in as a weak dep", func() {
-			t := GinkgoTB()
-
-			// Serial 2: republish index with both app and extras now present.
-			// Same anchor+signer; bump serial to avoid rollback rejection.
-			appPkg := minimalPkg("app", "1.0.0")
-			extrasPkg := minimalPkg("extras", "1.0.0")
-			publishTrustDoc(t, repoDir, "native", anchor, 2,
-				[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
-			publishIndex(t, repoDir, signer, 2,
-				indexPkg{
-					name:     "app",
-					version:  "1.0.0",
-					artifact: appPkg,
-					recommends: []schema.Relation{
-						{Name: "extras"},
-					},
-				},
-				indexPkg{name: "extras", version: "1.0.0", artifact: extrasPkg},
-			)
-			writeArtifact(t, repoDir, signer, "extras", "1.0.0", "", "", extrasPkg)
-
-			// Re-apply the SAME profile — no profile edit.
-			applyOut, applyErr := runApplyProfile(profilePath)
-			Expect(applyErr).NotTo(HaveOccurred(), "apply output: %s", applyOut)
-			Expect(applyOut).To(ContainSubstring("applied generation 2"), "apply output: %s", applyOut)
+			Expect(step2Err).NotTo(HaveOccurred(), "apply output: %s", step2Out)
+			Expect(step2Out).To(ContainSubstring("applied generation 2"), "apply output: %s", step2Out)
 
 			// Manifest gen-2 must contain extras, marked as a weak dep of app.
 			m := readManifest("2")

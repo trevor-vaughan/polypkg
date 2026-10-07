@@ -87,7 +87,7 @@ type Profile struct {
 	Attestation *AttestationPolicy               `yaml:"attestation,omitempty" json:"attestation,omitempty"`
 }
 
-// AttestationPolicy is the consumer's attestation posture (D8). The static
+// AttestationPolicy is the consumer's attestation posture. The static
 // setting is the user's standing approval channel — apply is non-interactive.
 type AttestationPolicy struct {
 	Policy string `yaml:"policy" json:"policy"` // warn (default) | require | off
@@ -95,8 +95,7 @@ type AttestationPolicy struct {
 
 // Retention configures the retention thresholds the gc subsystem applies
 // opportunistically after each apply. Count and Age are independent
-// thresholds; a generation survives if either retains it. See
-// apply-semantics §4.3.
+// thresholds; a generation survives if either retains it.
 type Retention struct {
 	Count int    `yaml:"count" json:"count"`
 	Age   string `yaml:"age,omitempty" json:"age,omitempty"`
@@ -173,45 +172,49 @@ type SourceBackend struct {
 	// When set, it is used instead of fetching the document from the source
 	// (the airgap / out-of-band path); it is verified identically.
 	TrustDoc string `yaml:"trust_doc,omitempty" json:"trust_doc,omitempty"`
-	// AcceptExpiryUntil is an optional RFC3339 deadline (phase 2e-1, spec
-	// §10.9 E-3). When set, signed metadata for this source (index, trust
-	// document, trust bundle, revocation list) that has EXPIRED is still
-	// accepted as long as now is at or before this deadline — the freshness
-	// bound is relaxed for a frozen air-gap mirror. It relaxes WALL-CLOCK
-	// expiry ONLY: the monotonic anti-rollback serial floor is a separate gate
-	// that still refuses a stale-lower-serial document. Grace is loud (a
-	// SECURITY line on apply/plan + a metadata.expiry_graced audit event).
+	// AcceptExpiryUntil is an optional RFC3339 deadline. When set, signed
+	// metadata for this source (index, trust document, trust bundle, revocation
+	// list) that has EXPIRED is still accepted as long as now is at or before
+	// this deadline — the freshness bound is relaxed for a frozen air-gap
+	// mirror. It relaxes WALL-CLOCK expiry ONLY: the monotonic anti-rollback
+	// serial floor is a separate gate that still refuses a stale-lower-serial
+	// document. Grace is loud (a SECURITY line on apply/plan + a
+	// metadata.expiry_graced audit event).
 	AcceptExpiryUntil string `yaml:"accept_expiry_until,omitempty" json:"accept_expiry_until,omitempty"`
-	// Attestation is an optional per-source attestation gate (phase 2d-1,
-	// spec §8/§10.6). Additive to the global AttestationPolicy: the global
-	// policy gates ABSENCE of any attestation, this gates per-predicate
-	// PRESENCE and verification tier. Absent ⇒ the source is ungated.
+	// Attestation is an optional per-source attestation gate. Additive to the
+	// global AttestationPolicy: the global policy gates ABSENCE of any
+	// attestation, this gates per-predicate PRESENCE and verification tier.
+	// Absent ⇒ the source is ungated.
 	Attestation *SourceAttestationPolicy `yaml:"attestation,omitempty" json:"attestation,omitempty"`
-	// SigstoreRoot is an optional consumer-pinned sigstore trust root (phase
-	// 2e-5, spec §10.9 E-6). When set it is AUTHORITATIVE for this source's
-	// sigstore-format carried attestations: the planner selects trusted material
-	// from this pin (window-checked by the bundle's integrated time) and the
-	// source-mirrored root is NOT consulted, closing the D-4 G1 chain-degradation
-	// asymmetry. When absent, the mirrored root is used (today's behavior).
+	// SigstoreRoot is an optional consumer-pinned sigstore trust root. When set
+	// it is AUTHORITATIVE for this source's sigstore-format carried
+	// attestations: the planner selects trusted material from this pin
+	// (window-checked by the bundle's integrated time) and the source-mirrored
+	// root is NOT consulted. That gives a Sigstore allow-list entry the same
+	// protection against a source minting its own builder identity (threat G1)
+	// that a Key entry already has, no matter how many mirrors sit in between.
+	// When absent, the mirrored root is used.
 	SigstoreRoot *SigstoreRoot `yaml:"sigstore_root,omitempty" json:"sigstore_root,omitempty"`
 }
 
-// AttestationTierOff is the only per-source attestation tier value in v1
-// (phase 2d-3, spec §8.2/§10.8). It DISABLES the source's attestation gating:
-// an unattested package installs (the effective absence policy becomes "off")
-// and the require gate + posture floor are skipped — but a PRESENT attestation
-// is still hard-verified (D-C10), and every apply emits a loud, unsuppressible
-// warning and records the disabled gate distinctly (GateDisabled). It is the
-// OPPOSITE of the pre-existing global attestation.policy: off, which installs
-// unattested packages SILENTLY. full/offline-ok are the implicit default when
-// tier is absent; transport-ok is deferred (spec §10.8 G-3).
+// AttestationTierOff is the only per-source attestation tier value in v1. It
+// DISABLES the source's attestation gating: an unattested package installs (the
+// effective absence policy becomes "off") and the require gate + posture floor
+// are skipped — but a PRESENT attestation is still hard-verified, and every
+// apply emits a loud, unsuppressible warning and records the disabled gate
+// distinctly (GateDisabled). It is the OPPOSITE of the pre-existing global
+// attestation.policy: off, which installs unattested packages SILENTLY.
+// full/offline-ok are the implicit default when tier is absent. There is no
+// transport-ok tier: accepting weak tiers is already the default without
+// require, and letting a self-declared predicate satisfy require would defeat
+// the gate.
 const AttestationTierOff = "off"
 
-// SourceAttestationPolicy is a source's per-predicate attestation gate
-// (phase 2d-1). Each Require entry must be present and verified at an anchored
-// tier; Builders is the consumer-authoritative identity allow-list. Tier: off
-// (phase 2d-3) DISABLES the gate for the source (mutually exclusive with
-// Require/Builders — enforced by the schema); see AttestationTierOff.
+// SourceAttestationPolicy is a source's per-predicate attestation gate. Each
+// Require entry must be present and verified at an anchored tier; Builders is
+// the consumer-authoritative identity allow-list. Tier: off DISABLES the gate
+// for the source (mutually exclusive with Require/Builders — enforced by the
+// schema); see AttestationTierOff.
 type SourceAttestationPolicy struct {
 	Require  []string      `yaml:"require,omitempty"  json:"require,omitempty"`
 	Builders *BuilderAllow `yaml:"builders,omitempty" json:"builders,omitempty"`
@@ -219,7 +222,8 @@ type SourceAttestationPolicy struct {
 }
 
 // BuilderAllow is the consumer allow-list of trusted builder identities
-// (D-P3, threat G1). An empty allow-list trusts the source's anchored-bundle
+// (threat G1). The allow-list is authoritative over the publisher-distributed
+// builder keyring. An empty allow-list trusts the source's anchored-bundle
 // key governance — a weaker posture that does not mitigate G1.
 type BuilderAllow struct {
 	Allow []BuilderAllowEntry `yaml:"allow" json:"allow"`
@@ -232,8 +236,9 @@ type BuilderAllow struct {
 // key bytes (a publisher cannot forge a signature under a key it does not
 // hold), whereas Sigstore pins only issuer+SAN strings whose authenticity rests
 // on the source-mirrored Fulcio root — a source that controls its trust bundle
-// can mint a cert bearing any SAN. Prefer Key for hard G1 protection; a
-// consumer-pinned sigstore root is deferred hardening (spec §10.6/§12).
+// can mint a cert bearing any SAN. Prefer Key for hard G1 protection, or pin
+// the source's sigstore root (SourceBackend.SigstoreRoot) so Sigstore entries
+// no longer rest on the mirrored root.
 type BuilderAllowEntry struct {
 	Key      string         `yaml:"key,omitempty"      json:"key,omitempty"`
 	Sigstore *SigstoreAllow `yaml:"sigstore,omitempty" json:"sigstore,omitempty"`

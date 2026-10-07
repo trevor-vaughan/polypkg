@@ -58,7 +58,7 @@ mkdir -p "$DEMO_HOME" "$WORK/bin"
 
 # Build polypkg fresh into $WORK/bin — outside DEMO_HOME, so a tape that lists
 # the home directory shows only demo state and not the binary under test.
-(cd "$ROOT_DIR" && go build -o "$WORK/bin/polypkg" ./cmd/polypkg)
+(cd "$ROOT_DIR" && GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=readonly" go build -o "$WORK/bin/polypkg" ./cmd/polypkg)
 
 # The signing-key password for every repository the sandbox creates. Throwaway
 # by construction: the key it protects is generated inside $WORK and deleted
@@ -104,7 +104,7 @@ seed_repo() {
 seed_profile() {
 	"$PX" init --scope user --source-name "$2" \
 		--source-url "file://$1/public" \
-		--trust-root-file "$1/public/trust_root.pub" >/dev/null
+		--trust-root "$1/public/trust_root.pub" >/dev/null
 }
 
 case "$SCENARIO" in
@@ -119,7 +119,7 @@ trust)
 	# then visibly replaces that publisher's published tree with one re-signed
 	# under an attacker's key, and shows the next fetch refused.
 	#
-	# --trust-root-file deliberately points INSIDE the served directory, the
+	# --trust-root deliberately points INSIDE the served directory, the
 	# worst case an operator can pick and the one our Quickstart leads to. init
 	# copies the key into <config>/trust/demo.pub and anchors there, so the
 	# attacker's wholesale overwrite of public/ replaces the signatures but not

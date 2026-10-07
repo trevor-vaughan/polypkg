@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,7 +70,7 @@ var _ = Describe("planExecError source translation", func() {
 			Expect(ce.Hint).To(ContainSubstring("index lists this artifact but the server does not serve it"))
 		})
 
-		It("does not attach the artifact hint to a repo-metadata 404", func() {
+		It("names the source and the file it lacks for a repo-metadata 404, with a url hint", func() {
 			fe := &source.FetchError{
 				Source:  "native",
 				BaseURL: "http://host",
@@ -79,8 +80,23 @@ var _ = Describe("planExecError source translation", func() {
 			got := planExecError(fmt.Errorf("fetch index: %w", fe))
 			var ce *CLIError
 			Expect(errors.As(got, &ce)).To(BeTrue())
-			Expect(ce.Msg).To(ContainSubstring("status 404"))
-			Expect(ce.Hint).To(BeEmpty())
+			Expect(ce.Msg).To(Equal(`source "native" at http://host does not serve index.json`))
+			Expect(ce.Hint).To(ContainSubstring("check the source url in your profile"))
+			Expect(ce.Hint).NotTo(ContainSubstring("index lists this artifact"))
+		})
+
+		It("frames a file missing under a local source the same way, with no HTTP status", func() {
+			fe := &source.FetchError{
+				Source:  "y",
+				BaseURL: "/nonexistent/path",
+				URL:     "/nonexistent/path/trust.json",
+				Err:     fs.ErrNotExist,
+			}
+			got := planExecError(fmt.Errorf("fetch trust document: %w", fe))
+			var ce *CLIError
+			Expect(errors.As(got, &ce)).To(BeTrue())
+			Expect(ce.Msg).To(Equal(`source "y" at /nonexistent/path does not serve trust.json`))
+			Expect(ce.Msg).NotTo(ContainSubstring("status"))
 		})
 	})
 })

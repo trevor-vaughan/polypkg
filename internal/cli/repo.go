@@ -88,11 +88,12 @@ func defaultKeyDir() (string, error) {
 	return filepath.Join(dataHome, "repo-keys"), nil
 }
 
-// mapPublishError maps a repo.PublishError onto the shared CLIError contract.
+// mapPublishError maps a repo.PublishError onto the shared CLIError contract,
+// naming a filesystem cause the publisher can act on (see fsFailureMsg).
 func mapPublishError(err error) error {
 	var pe *repo.PublishError
 	if errors.As(err, &pe) {
-		return &CLIError{Msg: pe.Msg, Hint: pe.HintText(), Err: pe.Unwrap()}
+		return &CLIError{Msg: fsFailureMsg(pe.Msg, pe.Err), Hint: pe.HintText(), Err: pe.Unwrap()}
 	}
 	return err
 }
@@ -103,7 +104,7 @@ func newRepoInitCmd() *cobra.Command {
 		Use:   "init <dir>",
 		Short: "Scaffold a new repository (directory, signing key, manifest)",
 		Long:  "Creates <dir> with a polypkg-repo.yaml manifest, generates an encrypted signing key (stored outside <dir>), and exports the public trust root.",
-		Args:  cobra.ExactArgs(1),
+		Args:  needsArgs(1, 1, "<dir>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -116,7 +117,7 @@ func newRepoInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&keyDir, "key-dir", "", "Directory for the encrypted signing key (default: XDG data repo-keys)")
 	cmd.Flags().StringVar(&kdf, "kdf", "scrypt", "Key-encryption KDF: scrypt (default) or pbkdf2 (FIPS)")
 	cmd.Flags().String("key-password-file", "", "File containing the signing-key password")
-	_ = cmd.MarkFlagRequired("source")
+	requireFlags(cmd, "source")
 	return cmd
 }
 

@@ -48,24 +48,49 @@ three sets of results instead of the last scope overwriting the prior ones.
 
 ## Host requirements
 
-Rootless `podman` plus `podman-compose`. On a host whose kernel overlay driver
-rejects `userxattr`, the image build stops with:
+Rootless `podman` plus `podman-compose` (`pip install --user podman-compose`
+where the distribution does not package it).
+
+The image compiles `polypkg` from the working tree, so uncommitted changes are
+tested. `.containerignore` at the repository root keeps `.git` and the
+gitignored build and test output out of the build context. The image needs
+neither, and a copied `.git` stops the in-image `go build` with
+`error obtaining VCS status: exit status 128` whenever the checkout uses a
+repository extension the image's git does not know (newer git sets
+`extensions.relativeworktrees`, for example).
+
+If the image build stops with:
 
 ```
 Error: mounting an overlay over build context directory: ... userxattr: invalid argument
 ```
 
-Point podman at fuse-overlayfs to get past it — `~/.config/containers/storage.conf`:
+buildah could not mount its overlay over the build context. The overlay's
+scratch directories live under `TMPDIR` (default `/var/tmp`), and the kernel
+refuses the mount when that directory is itself on overlayfs, as it is when
+podman runs inside a container. `df -T "${TMPDIR:-/var/tmp}"` reporting
+`overlay` confirms it. Either fix works:
 
-```toml
-[storage]
-driver = "overlay"
+- Point `TMPDIR` at a directory on a non-overlay filesystem, outside the
+  checkout (inside it, the build context would pick up buildah's scratch
+  files):
 
-[storage.options.overlay]
-mount_program = "/usr/bin/fuse-overlayfs"
-```
+  ```bash
+  TMPDIR=/path/on/non-overlay/fs task integration:run DISTRO=centos
+  ```
 
-Confirm with `podman info | grep graphDriverName`.
+- Or have podman mount overlays through fuse-overlayfs —
+  `~/.config/containers/storage.conf`:
+
+  ```toml
+  [storage]
+  driver = "overlay"
+
+  [storage.options.overlay]
+  mount_program = "/usr/bin/fuse-overlayfs"
+  ```
+
+  Confirm with `podman info | grep graphDriverName`.
 
 `task integration:run` tears down before it builds, so on a machine that has
 never run the suite the first thing you see is a run of `Error: no container
@@ -111,7 +136,7 @@ fixtures/  ─┐                       (bind-mounted, ro)
 |-------|------------------|
 | `publish/00-publish` | `repo init/add/status/key show`; layout (content-addressed `pool/`), serial, fingerprint |
 | `publish/20-attestation-publish` | `.att.json`/`.minisig` pool blobs; v2 index with `attestations`/`expires`; republish persists the old blob and bumps `revision` |
-| `publish/30-mirror-verify` | `repo export-bundle` → `mirror verify` (2e-2 offline-mirror surface); a post-export content byte-flip (hash mismatch) and a smuggled un-listed file are both refused, then the pristine bundle is proven to still verify |
+| `publish/30-mirror-verify` | `repo export-bundle` → `mirror verify` (the offline-mirror surface); a post-export content byte-flip (hash mismatch) and a smuggled un-listed file are both refused, then the pristine bundle is proven to still verify |
 | `user/10-user-lifecycle` | `init`(explicit trust) → `source list` → `search` → `info` → `install` → `list` → `status` → `upgrade` → `remove` → `rollback` |
 | `user/15-user-tofu` | `init --trust-root-url` over `file://`: plain-http refusal, non-TTY refusal without a fingerprint, mismatched-fingerprint refusal, headless accept with `--trust-root-fingerprint` (key id from `repo key show`); `source set-trust-root`: unchanged key, mismatched-fingerprint refusal leaves the pin intact |
 | `system/20-system-lifecycle` | the lifecycle `--scope system` as real root in FHS paths; auto-bridge of exposed commands into `/usr/local/bin`; system-scope init regression |
@@ -123,12 +148,12 @@ fixtures/  ─┐                       (bind-mounted, ro)
 | `user/59-github-import` | `pkg import` against `github-fake`: one lint-clean source per platform with its provenance carried and the release attestation noted and skipped, the Windows asset skipped, a second import into the same directory refused as "already exists" with the tree unchanged; one multi-directory `repo add` plus `sigstore_roots` publishes both platforms and a `trust-bundle.json`; `init` → `install` runs the imported binary, `status -vv` shows `[carried: verified-offline]`, and `info --format json` records the workflow identity; a `builders.allow` sigstore entry naming the building workflow installs under `require` while one naming another repository's workflow is refused |
 | `user/60-gc-pin` | `generation pin`, `gc --count`, pinned generation survives |
 | `user/70-edge-cases` | missing package; unsatisfiable constraint; `plan` dry-run; `generation list` wart; idempotent install; `purge` (remove-then-purge, non-TTY abort); `config reset` |
-| `user/80-attestation` | install verifies + records attestation (`info`/`status -vv`); tampered `.att.json` refused; `require` refuses / `warn` warns on an unattested (`--skip-attestations`) repo. Expired-metadata refusal is NOT here — D13's 5-minute skew tolerance makes it unobservable without sleeping out the window; it lives in `tests/integration/e2e_freshness_test.go` (full CLI, deterministic clock) |
-| `user/85-downgrade` | withdrawal-only anti-downgrade: re-adding an older version withdraws the top → plan refused; exact pin accepts; repo restored |
-| `user/96-mirror-pull` | `mirror pull` (2e-4 offline mirror): fetch an attested upstream over `file://` → re-publish under a local key → export + `mirror verify` a bundle → install from the mirror with upstream provenance preserved; `--fresh` re-anchor drops provenance so a downstream `policy: require` fails closed, while the same policy installs from the non-fresh mirror |
+| `user/80-attestation` | install verifies + records attestation (`info`/`status -vv`); tampered `.att.json` refused; `require` refuses / `warn` warns on an unattested (`--skip-attestations`) repo. Expired-metadata refusal is NOT here — the 5-minute clock-skew tolerance on metadata expiry (`trust.ExpirySkew`) makes it unobservable without sleeping out the window; it lives in `tests/integration/e2e_freshness_test.go` (full CLI, deterministic clock) |
+| `user/85-downgrade` | withdrawal-only anti-downgrade: `repo remove hello@1.1.0` withdraws the installed top → plan refused; exact pin accepts; repo restored |
+| `user/96-mirror-pull` | `mirror pull` (offline mirror): fetch an attested upstream over `file://` → re-publish under a local key → export + `mirror verify` a bundle → install from the mirror with upstream provenance preserved; `--fresh` re-anchor drops provenance so a downstream `policy: require` fails closed, while the same policy installs from the non-fresh mirror |
 | `user/97-attestation-gate-off` | G8: a source with `attestation: tier: off` disables the gate — `apply` emits an unsuppressible `SECURITY` warning, records an `attestation.gate_off` audit event, and `status`/`info` surface `[attestation gate OFF]` |
-| `user/98-provenance-genuine` | genuine carried-SLSA install (2f-4): a builder-signed attestation installs `builder-verified` when the builder key is allow-listed (`info`/`status -vv`); an empty allow-list still installs under source-governance trust (spec §10.7); **G4** a carried subject offering agreeing sha256+sha512 installs `builder-verified` (multi-algo "all-overlap-must-agree" accepted); **G6** a genuine offline sigstore bundle whose `SigstoreRoot` is published in the trust bundle installs `verified-offline` with recorded Fulcio identity under `require` |
-| `user/99-provenance-adversarial` | the fail-closed carried-provenance acceptance matrix, one case per threat (spec §11): **G1** rogue builder key absent from `builders.allow` refused; **G2** carried SLSA stripped from a re-signed index refused under `require`; **G4** a carried subject with a mismatched second digest, an only-`sha1` (forbidden weak) digest, or an only-uncomputable-algorithm digest is hard-refused by the install-time digest re-bind; **G5** selection is by digest not advisory name — relabeled subject still binds the correct file, a digest matching nothing is refused; **G7** a post-publish content substitution that re-packs and re-signs the artifact and strips the anchor-signed native artifact-bindings (transport + index hash still verify) is hard-refused by the builder-signed carried attestation's install-time re-bind; **G6** a sigstore bundle with its transparency-log inclusion proof stripped fails closed to `verified-transport-only` — installs under DEFAULT (no identity) but refused under `require`; **G9** index `predicate_type` disagreeing with the signed payload hard-refused; **G10** duplicate-JSON-key DSSE downgrades to `verified-transport-only`, refused under `require` |
+| `user/98-provenance-genuine` | genuine carried-SLSA install: a builder-signed attestation installs `builder-verified` when the builder key is allow-listed (`info`/`status -vv`); an empty allow-list still installs under source-governance trust; **G4** a carried subject offering agreeing sha256+sha512 installs `builder-verified` (multi-algo "all-overlap-must-agree" accepted); **G6** a genuine offline sigstore bundle whose `SigstoreRoot` is published in the trust bundle installs `verified-offline` with recorded Fulcio identity under `require` |
+| `user/99-provenance-adversarial` | the fail-closed carried-provenance acceptance matrix, one case per threat (G-numbers, see below): **G1** rogue builder key absent from `builders.allow` refused; **G2** carried SLSA stripped from a re-signed index refused under `require`; **G4** a carried subject with a mismatched second digest, an only-`sha1` (forbidden weak) digest, or an only-uncomputable-algorithm digest is hard-refused by the install-time digest re-bind; **G5** selection is by digest not advisory name — relabeled subject still binds the correct file, a digest matching nothing is refused; **G7** a post-publish content substitution that re-packs and re-signs the artifact and strips the anchor-signed native artifact-bindings (transport + index hash still verify) is hard-refused by the builder-signed carried attestation's install-time re-bind; **G6** a sigstore bundle with its transparency-log inclusion proof stripped fails closed to `verified-transport-only` — installs under DEFAULT (no identity) but refused under `require`; **G9** index `predicate_type` disagreeing with the signed payload hard-refused; **G10** duplicate-JSON-key DSSE downgrades to `verified-transport-only`, refused under `require` |
 
 Every top-level verb from `internal/cli/root.go` is invoked by a suite, **except
 `eval-starlark`** — a hidden internal self-re-exec (the starlark sandbox child),
@@ -164,7 +189,7 @@ for rootless-podman read access) as a pre-step before `compose up`;
 
 | Variant | Used by | Proves |
 |---------|---------|--------|
-| `genuine` | `user/98-provenance-genuine` | builder-signed carried SLSA installs `builder-verified`; also the empty-allow-list edge (spec §10.7) |
+| `genuine` | `user/98-provenance-genuine` | builder-signed carried SLSA installs `builder-verified`; also the empty-allow-list edge |
 | `g1-rogue` | `user/99-provenance-adversarial` (G1) | a builder key registered in the trust bundle but absent from the consumer's `builders.allow` is refused |
 | `g2-strip` | `user/99-provenance-adversarial` (G2) | carried SLSA stripped from a re-signed index is refused under `require:[slsa]` |
 | `g4-multialgo` | `user/98-provenance-genuine` (G4) | a carried subject offering agreeing `sha256`+`sha512` binds and installs `builder-verified` (multi-algo "all-overlap-must-agree" positive) |
@@ -179,7 +204,7 @@ for rootless-podman read access) as a pre-step before `compose up`;
 | `g9-predicate` | `user/99-provenance-adversarial` (G9) | an index `predicate_type` that disagrees with the signed payload is hard-refused |
 | `g10-dupkeys` | `user/99-provenance-adversarial` (G10) | a duplicate-JSON-key DSSE envelope downgrades to `verified-transport-only`, refused under `require` |
 
-G-numbers are the umbrella spec's §11 acceptance-matrix threat IDs.
+G-numbers label the threats in the carried-provenance acceptance matrix. The same label starts the matching venom test-case name (`G7 - …`), so `grep -rn "name: 'G7" tests/e2e/venom/` finds the case for a row above.
 
 ## LSM scope — what the matrix proves, honestly
 
@@ -194,8 +219,8 @@ disabled — as on the current build host — the containers are not LSM-confine
 and rootless podman cannot load a new AppArmor profile regardless. The harness
 is written to work *when* an LSM enforces (`:z` relabels, no LSM-specific
 `security_opt`), but confirming real enforcement requires an enforcing host.
-That is the job of the future VM tier (see the design spec). Read the
-`LSM:` line in a run's log before claiming enforcement was exercised.
+That is the job of the VM tier (`task test:vm`; see
+[Test tiers](../../docs/dev/README.md#test-tiers)). Read the `LSM:` line in a run's log before claiming enforcement was exercised.
 
 ## Notes for the curious
 

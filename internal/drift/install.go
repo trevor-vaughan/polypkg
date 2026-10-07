@@ -13,10 +13,10 @@ import (
 	"lukechampine.com/blake3"
 )
 
-// inspectInstall checks an install entry per apply-semantics §6.1: missing,
-// filetype changed, or content hash differs. Incremental hashing (§6.4): if the
-// live lstat equals the recorded Stat, the content is assumed unchanged — but
-// only for regular files. A symlink install's lstat describes the link, which
+// inspectInstall checks an install entry for drift: missing, filetype changed,
+// or content hash differs. Incremental hashing: if the live lstat equals the
+// recorded Stat, the content is assumed unchanged — but only for regular
+// files. A symlink install's lstat describes the link, which
 // does not change when the extract-cache file it points to is edited, so its
 // target is re-hashed on every inspection; a target that no longer exists is
 // reported as missing.

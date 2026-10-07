@@ -12,7 +12,6 @@ import (
 	"os"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/ulikunitz/xz"
 )
 
 // tarBlockSize is the size of a tar header block. Every tar stream, even an
@@ -134,7 +133,7 @@ func extractTarFormat(r io.Reader, root *os.Root, opts Options) ([]Placed, error
 		defer dec.Close()
 		stream, compression = dec, "zstd"
 	case FormatTarXz:
-		xr, err := xz.NewReader(r)
+		xr, err := newXZReader(r)
 		if err != nil {
 			return nil, fmt.Errorf("read xz stream: %w", err)
 		}

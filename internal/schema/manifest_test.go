@@ -252,7 +252,7 @@ var _ = Describe("ParseManifest", func() {
 		Expect(err).To(HaveOccurred(), "unknown attestation status must be rejected")
 	})
 
-	It("round-trips a per-source gate-disabled attestation marker (2d-3)", func() {
+	It("round-trips a per-source gate-disabled attestation marker", func() {
 		m := &Manifest{
 			Schema:     "polypkg.manifest/v2",
 			Generation: 1,

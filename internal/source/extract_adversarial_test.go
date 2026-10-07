@@ -102,7 +102,7 @@ var _ = Describe("ExtractTarZst adversarial inputs", func() {
 		archive := buildArchive(tarEntry{name: "link", typeflag: tar.TypeSymlink, linkname: "/etc"})
 		err := ExtractTarZst(bytes.NewReader(archive), dest)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("traversal"))
+		Expect(err.Error()).To(ContainSubstring("has the absolute target"))
 		_, statErr := os.Lstat(filepath.Join(dest, "link"))
 		Expect(statErr).To(HaveOccurred(), "the escaping link must not be created")
 	})
@@ -112,7 +112,7 @@ var _ = Describe("ExtractTarZst adversarial inputs", func() {
 		archive := buildArchive(tarEntry{name: "sub/link", typeflag: tar.TypeSymlink, linkname: "../../../../outside"})
 		err := ExtractTarZst(bytes.NewReader(archive), dest)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("traversal"))
+		Expect(err.Error()).To(ContainSubstring("escapes the extraction root"))
 	})
 
 	// SymlinkThenWriteThrough: the classic two-step attack inside one archive — a

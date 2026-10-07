@@ -38,7 +38,7 @@ func TestMintSLSAVerifiesUnderBuilderKey(t *testing.T) {
 // TestBuildGenuineIsBuilderVerified proves BuildGenuine mints a real signed
 // served repo whose carried SLSA attestation the consumer planner records as
 // builder-verified — the positive fixture the acceptance matrix installs
-// against (2f-4's "genuine" row).
+// against (the "genuine" row).
 func TestBuildGenuineIsBuilderVerified(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildGenuine(dir)
@@ -55,17 +55,17 @@ func TestBuildGenuineIsBuilderVerified(t *testing.T) {
 		t.Fatalf("carried binding predicate type = %q, want %q", b[0].PredicateType, gen.SLSAPredicate)
 	}
 
-	// Spec §10.7: an empty allow-list trusts the source's anchored-bundle key
-	// governance and still installs (a weaker posture, not a refusal).
+	// An empty allow-list trusts the source's anchored-bundle key governance
+	// and still installs (a weaker posture, not a refusal).
 	gen.PlanForTest(t, tree, gen.PlanPolicy{Require: []string{gen.SLSAPredicate}})
 }
 
-// TestG1RogueBuilderRefusedByAllowList proves the G1 defense (spec §11): a
-// publisher-minted builder key that IS registered in the (anchor-signed)
-// trust bundle — so it genuinely resolves to builder-verified TIER — is still
-// refused by planner.Plan when the consumer's NON-EMPTY builders.allow does
-// not name that key. The allow-list is the independent anchor a malicious
-// publisher cannot forge by minting keys and self-registering them.
+// TestG1RogueBuilderRefusedByAllowList proves the G1 defense: a
+// publisher-minted builder key that IS registered in the (anchor-signed) trust
+// bundle — so it genuinely resolves to builder-verified TIER — is still refused
+// by planner.Plan when the consumer's NON-EMPTY builders.allow does not name
+// that key. The allow-list is the independent anchor a malicious publisher
+// cannot forge by minting keys and self-registering them.
 func TestG1RogueBuilderRefusedByAllowList(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG1Rogue(dir)
@@ -101,14 +101,13 @@ func TestG1RogueBuilderRefusedByAllowList(t *testing.T) {
 	}
 }
 
-// TestG2StripSLSARefusedUnderRequire proves the G2 defense (spec §11): a
-// malicious mirror strips the carried SLSA attestation from a repo that HAD
-// it (the native SARIF ref is left intact) and re-signs the index under the
-// same anchor key. A consumer that requires the SLSA predicate must REFUSE
-// (the required predicate is genuinely absent, not merely unverified). The
-// control assertion proves the strip produced a valid, installable,
-// re-signed index — not a broken one — so the refusal above is attributable
-// to the require gate and nothing else.
+// TestG2StripSLSARefusedUnderRequire proves the G2 defense: a malicious mirror
+// strips the carried SLSA attestation from a repo that HAD it (the native SARIF
+// ref is left intact) and re-signs the index under the same anchor key. A
+// consumer that requires the SLSA predicate must REFUSE (the required predicate
+// is genuinely absent, not merely unverified). The control assertion proves the
+// strip produced a valid, installable, re-signed index — not a broken one — so
+// the refusal above is attributable to the require gate and nothing else.
 func TestG2StripSLSARefusedUnderRequire(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG2StripSLSA(dir)
@@ -126,14 +125,14 @@ func TestG2StripSLSARefusedUnderRequire(t *testing.T) {
 	}
 }
 
-// TestG5RelabelBindsByDigestNotAdvisoryLabel proves the G5 relabel defense
-// (spec §11): a carried SLSA attestation whose advisory subject name lies
-// ("bin/app") but whose digest actually matches a DIFFERENT packed file
-// (bin/other) is bound BY DIGEST, not by the advisory label — both at
-// publish time (repo build accepts it without tampering, since the digest
-// genuinely matches something packed) and at install time, where the
-// consumer's recorded carried binding names the REAL bound scope,
-// content:bin/other, never the misleading advisory name bin/app.
+// TestG5RelabelBindsByDigestNotAdvisoryLabel proves the G5 relabel defense: a
+// carried SLSA attestation whose advisory subject name lies ("bin/app") but
+// whose digest actually matches a DIFFERENT packed file (bin/other) is bound BY
+// DIGEST, not by the advisory label — both at publish time (repo build accepts
+// it without tampering, since the digest genuinely matches something packed)
+// and at install time, where the consumer's recorded carried binding names the
+// REAL bound scope, content:bin/other, never the misleading advisory name
+// bin/app.
 func TestG5RelabelBindsByDigestNotAdvisoryLabel(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG5Relabel(dir)
@@ -151,13 +150,13 @@ func TestG5RelabelBindsByDigestNotAdvisoryLabel(t *testing.T) {
 	}
 }
 
-// TestG5MismatchRefused proves the G5 mismatch defense (spec §11): a carried
-// SLSA attestation whose subject digest matches NO packed file is refused at
-// install time by the digest re-bind (internal/planner/planner.go's
-// bindCarriedRefs) — not by a broken transport signature or a content-hash
-// error. BuildG5Mismatch's swapPoolBlob re-signs the swapped blob's transport
-// signature, so the refusal asserted below is attributable only to the
-// binding check itself.
+// TestG5MismatchRefused proves the G5 mismatch defense: a carried SLSA
+// attestation whose subject digest matches NO packed file is refused at install
+// time by the digest re-bind (internal/planner/planner.go's bindCarriedRefs) —
+// not by a broken transport signature or a content-hash error.
+// BuildG5Mismatch's swapPoolBlob re-signs the swapped blob's transport
+// signature, so the refusal asserted below is attributable only to the binding
+// check itself.
 func TestG5MismatchRefused(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG5Mismatch(dir)
@@ -177,13 +176,13 @@ func TestG5MismatchRefused(t *testing.T) {
 	}
 }
 
-// TestG9PredicateMismatchRefused proves the G9 defense (spec §11 / §10.3 F2):
-// the index ref for the carried SLSA attestation positively claims a
-// predicate_type that disagrees with the signed payload's authoritative
-// predicateType. This is tampering-class, not a missing-predicate gap: the
-// consumer's bindCarriedRefs cross-check (internal/planner/planner.go) hard
-// refuses the install under the DEFAULT policy — no require and no
-// builders.allow needed, unlike G1/G2's require-gated refusals.
+// TestG9PredicateMismatchRefused proves the G9 defense: the index ref for the
+// carried SLSA attestation positively claims a predicate_type that disagrees
+// with the signed payload's authoritative predicateType. This is
+// tampering-class, not a missing-predicate gap: the consumer's bindCarriedRefs
+// cross-check (internal/planner/planner.go) hard refuses the install under the
+// DEFAULT policy — no require and no builders.allow needed, unlike G1/G2's
+// require-gated refusals.
 func TestG9PredicateMismatchRefused(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG9PredicateMismatch(dir)
@@ -204,26 +203,26 @@ func TestG9PredicateMismatchRefused(t *testing.T) {
 	}
 }
 
-// TestG10DupKeysRefusedUnderRequire proves the G10 defense (spec §11 / §7 /
-// dsse.go): a carried SLSA envelope whose JSON is byte-identical to a genuine,
-// builder-signed attestation except for a spliced-in duplicate top-level
-// "payloadType" key is a parser-differential vector polypkg refuses to guess
-// through (attest.VerifyBuilderSignature's rejectDuplicateKeys). The
-// planner's install-time cross-check (bindCarriedRefs,
-// internal/planner/planner.go) treats that structural-invalidity error the
-// same as an unverifiable signature and fails the binding CLOSED to
-// verified-transport-only rather than hard-erroring itself — refusing an
-// install on a weak tier is a separate policy decision (phase 2d). So, like
-// G1/G2, the duplicate-key envelope alone does not refuse a DEFAULT
-// (unrequired) install; a source that REQUIRES the SLSA predicate does
-// refuse, because verified-transport-only is not an anchored tier the require
-// gate accepts. The control assertions below prove the refusal is
-// attributable to the duplicate-key downgrade and nothing else: without
-// require the tree still installs, and the installed binding records
-// verified-transport-only with NO verifying key id — proving the duplicate
-// key defeated builder-signature verification specifically, not the digest
-// binding (which would refuse outright, like G5 mismatch) or the transport
-// signature (swapPoolBlob re-signs it).
+// TestG10DupKeysRefusedUnderRequire proves the G10 defense (see
+// internal/attest/dsse.go): a carried SLSA envelope whose JSON is
+// byte-identical to a genuine, builder-signed attestation except for a
+// spliced-in duplicate top-level "payloadType" key is a parser-differential
+// vector polypkg refuses to guess through (attest.VerifyBuilderSignature's
+// rejectDuplicateKeys). The planner's install-time cross-check
+// (bindCarriedRefs, internal/planner/planner.go) treats that
+// structural-invalidity error the same as an unverifiable signature and fails
+// the binding CLOSED to verified-transport-only rather than hard-erroring
+// itself — refusing an install on a weak tier is a separate policy decision
+// (the source's attestation gate). So, like G1/G2, the duplicate-key envelope
+// alone does not refuse a DEFAULT (unrequired) install; a source that REQUIRES
+// the SLSA predicate does refuse, because verified-transport-only is not an
+// anchored tier the require gate accepts. The control assertions below prove
+// the refusal is attributable to the duplicate-key downgrade and nothing else:
+// without require the tree still installs, and the installed binding records
+// verified-transport-only with NO verifying key id — proving the duplicate key
+// defeated builder-signature verification specifically, not the digest binding
+// (which would refuse outright, like G5 mismatch) or the transport signature
+// (swapPoolBlob re-signs it).
 func TestG10DupKeysRefusedUnderRequire(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG10DupKeys(dir)
@@ -278,10 +277,9 @@ func TestG4DigestsTriggerTheirBindingBranch(t *testing.T) {
 }
 
 // TestG4MultiAlgoInstallsBuilderVerified proves the G4 positive/selection half
-// (spec §5.3 "all-overlap-must-agree"): a carried SLSA subject offering sha256
-// AND sha512 that BOTH match the installed bytes binds and installs
-// builder-verified — the multi-algo agreement path does not spuriously fail
-// closed.
+// ("all-overlap-must-agree"): a carried SLSA subject offering sha256 AND sha512
+// that BOTH match the installed bytes binds and installs builder-verified — the
+// multi-algo agreement path does not spuriously fail closed.
 func TestG4MultiAlgoInstallsBuilderVerified(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG4MultiAlgo(dir)
@@ -295,13 +293,12 @@ func TestG4MultiAlgoInstallsBuilderVerified(t *testing.T) {
 	}
 }
 
-// TestG4MismatchAlgoRefused proves the G4 refusal (spec §11): a carried SLSA
-// subject whose sha256 matches the installed bytes but whose sha512 is the hash
-// of DIFFERENT bytes is refused at install by the digest re-bind
-// (bindCarriedRefs) under the DEFAULT policy — MatchSubjectDigests rejects the
-// sha512 disagreement, so no subject binds. buildSwappedSLSA re-signs the swapped
-// blob's transport signature, so the refusal is the binding, not a transport
-// error.
+// TestG4MismatchAlgoRefused proves the G4 refusal: a carried SLSA subject whose
+// sha256 matches the installed bytes but whose sha512 is the hash of DIFFERENT
+// bytes is refused at install by the digest re-bind (bindCarriedRefs) under the
+// DEFAULT policy — MatchSubjectDigests rejects the sha512 disagreement, so no
+// subject binds. buildSwappedSLSA re-signs the swapped blob's transport
+// signature, so the refusal is the binding, not a transport error.
 func TestG4MismatchAlgoRefused(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG4MismatchAlgo(dir)
@@ -320,11 +317,11 @@ func TestG4MismatchAlgoRefused(t *testing.T) {
 	}
 }
 
-// TestG4Sha1OnlyRefused proves the G4 downgrade refusal (spec §11): a carried
-// SLSA subject offering ONLY sha1 — a forbidden weak algorithm — is refused at
-// install by the digest re-bind. MatchSubjectDigests rejects sha1 on presence,
-// so no subject binds. The refusal is the binding failure, not a transport
-// error (buildSwappedSLSA re-signs transport).
+// TestG4Sha1OnlyRefused proves the G4 downgrade refusal: a carried SLSA subject
+// offering ONLY sha1 — a forbidden weak algorithm — is refused at install by
+// the digest re-bind. MatchSubjectDigests rejects sha1 on presence, so no
+// subject binds. The refusal is the binding failure, not a transport error
+// (buildSwappedSLSA re-signs transport).
 func TestG4Sha1OnlyRefused(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG4Sha1Only(dir)
@@ -343,9 +340,9 @@ func TestG4Sha1OnlyRefused(t *testing.T) {
 	}
 }
 
-// TestG4NoOverlapRefused proves the G4 no-overlap refusal (spec §11): a carried
-// SLSA subject offering ONLY an algorithm polypkg cannot recompute (sha3-512)
-// has nothing at or above the sha256 floor, so it is unbindable and refused at
+// TestG4NoOverlapRefused proves the G4 no-overlap refusal: a carried SLSA
+// subject offering ONLY an algorithm polypkg cannot recompute (sha3-512) has
+// nothing at or above the sha256 floor, so it is unbindable and refused at
 // install by the digest re-bind under the DEFAULT policy.
 func TestG4NoOverlapRefused(t *testing.T) {
 	dir := t.TempDir()
@@ -366,22 +363,23 @@ func TestG4NoOverlapRefused(t *testing.T) {
 }
 
 // TestG7PostPublishSubstitutionRefused proves the G7 consumer-side defense
-// (spec §11 / P6 two-point binding): an attacker holding the publisher/anchor
+// (two-point binding, install half): an attacker holding the publisher/anchor
 // key publishes a genuine tree, then substitutes the packed content/bin/app
 // bytes, re-packs the artifact tarball, recomputes its blake3, re-signs the
-// artifact transport signature, STRIPS the anchor-signed native artifact-binding
-// attestations (SARIF + polypkg-link — which the attacker can forge or remove),
-// retargets the index's package artifact ref, and re-signs the index — so the
-// artifact transport signature and index content-hash BOTH still verify. The
-// builder-signed carried SLSA (subject minted over the ORIGINAL bytes) cannot be
-// forged and remains, so the consumer's install-time re-bind (bindCarriedRefs)
-// re-derives its subject digest against the actually-extracted substituted
-// bytes, matches nothing, and hard refuses under the DEFAULT policy. The
-// specificity of the "does not bind the installed bytes" message is the
-// transport-verified control: that error is only reachable AFTER verifyArtifact
-// (transport signature + content hash) succeeds. The final assertion is the
-// layer control: it proves the refusal is the CARRIED re-bind, not the native
-// artifact-binding (which the strip removed) that would otherwise fire first.
+// artifact transport signature, STRIPS the anchor-signed native
+// artifact-binding attestations (SARIF + polypkg-link — which the attacker can
+// forge or remove), retargets the index's package artifact ref, and re-signs
+// the index — so the artifact transport signature and index content-hash BOTH
+// still verify. The builder-signed carried SLSA (subject minted over the
+// ORIGINAL bytes) cannot be forged and remains, so the consumer's install-time
+// re-bind (bindCarriedRefs) re-derives its subject digest against the
+// actually-extracted substituted bytes, matches nothing, and hard refuses under
+// the DEFAULT policy. The specificity of the "does not bind the installed
+// bytes" message is the transport-verified control: that error is only
+// reachable AFTER verifyArtifact (transport signature + content hash) succeeds.
+// The final assertion is the layer control: it proves the refusal is the
+// CARRIED re-bind, not the native artifact-binding (which the strip removed)
+// that would otherwise fire first.
 func TestG7PostPublishSubstitutionRefused(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG7InstallRefused(dir)
@@ -403,14 +401,15 @@ func TestG7PostPublishSubstitutionRefused(t *testing.T) {
 	}
 }
 
-// TestG7PrePackContentRefusedAtBuild proves the G7 producer-side defense (spec
-// §11 / P6 two-point binding, pack half): when a repo tries to publish a carried
-// SLSA attestation whose subject digest covers bytes DIFFERENT from the
+// TestG7PrePackContentRefusedAtBuild proves the G7 producer-side defense
+// (two-point binding, pack half): when a repo tries to publish a carried SLSA
+// attestation whose subject digest covers bytes DIFFERENT from the
 // content/bin/app it actually packs, repo build's pack-time bindCarried
 // (internal/repo/carried.go) re-derives the packed artifact/content digests and
 // refuses to publish an attestation that binds nothing it packed. Nothing is
-// served, so this half has no venom row — it is a Go-only build-error assertion,
-// the mirror image of TestG7PostPublishSubstitutionRefused's install-time refusal.
+// served, so this half has no venom row — it is a Go-only build-error
+// assertion, the mirror image of TestG7PostPublishSubstitutionRefused's
+// install-time refusal.
 func TestG7PrePackContentRefusedAtBuild(t *testing.T) {
 	dir := t.TempDir()
 	err := gen.BuildG7PackRefusedErr(dir)
@@ -430,14 +429,14 @@ const (
 	g6CertIssuer   = "https://token.actions.githubusercontent.com"
 )
 
-// TestG6SigstoreGenuineVerifiedOffline proves the G6 positive control (spec §11
-// / §5.5 / §7): a genuine offline sigstore bundle carried as
-// attestations/sigstore.json, whose SigstoreRoot is published in the served
-// trust bundle, verifies offline (inclusion proof + Fulcio chain + Rekor key all
-// present) and binds at CarriedTierVerifiedOffline with the recorded Fulcio SAN
-// and issuer — and installs under require:[SLSA] because verified-offline is an
-// anchored tier. The Format assertion proves it reached the sigstore tier path
-// (not the DSSE/builder path).
+// TestG6SigstoreGenuineVerifiedOffline proves the G6 positive control: a
+// genuine offline sigstore bundle carried as attestations/sigstore.json, whose
+// SigstoreRoot is published in the served trust bundle, verifies offline
+// (inclusion proof + Fulcio chain + Rekor key all present) and binds at
+// CarriedTierVerifiedOffline with the recorded Fulcio SAN and issuer — and
+// installs under require:[SLSA] because verified-offline is an anchored tier.
+// The Format assertion proves it reached the sigstore tier path (not the
+// DSSE/builder path).
 func TestG6SigstoreGenuineVerifiedOffline(t *testing.T) {
 	dir := t.TempDir()
 	tree, err := gen.BuildG6SigstoreGenuine(dir)
@@ -487,15 +486,15 @@ func TestG6EmbeddedFixturesMatchCommittedSource(t *testing.T) {
 	}
 }
 
-// TestG6NoInclusionProofDowngradesAndRefuses proves the G6 refusal (spec §11 /
-// §5.5): a carried sigstore bundle whose transparency-log inclusion proof has
-// been stripped can no longer be verified offline (sigstore-go's strict bundle
-// parse rejects a v0.2+ bundle missing its inclusion proof), so the consumer
-// fails closed to CarriedTierVerifiedTransportOnly with NO recorded identity.
-// Under the DEFAULT policy it still installs (a downgrade, not a hard refusal);
-// under require:[SLSA] it refuses, because verified-transport-only is not an
-// anchored tier. The Format assertion proves the stripped bundle still reached
-// the sigstore tier path (InspectCarried's lenient probe keeps classifying it
+// TestG6NoInclusionProofDowngradesAndRefuses proves the G6 refusal: a carried
+// sigstore bundle whose transparency-log inclusion proof has been stripped can
+// no longer be verified offline (sigstore-go's strict bundle parse rejects a
+// v0.2+ bundle missing its inclusion proof), so the consumer fails closed to
+// CarriedTierVerifiedTransportOnly with NO recorded identity. Under the DEFAULT
+// policy it still installs (a downgrade, not a hard refusal); under
+// require:[SLSA] it refuses, because verified-transport-only is not an anchored
+// tier. The Format assertion proves the stripped bundle still reached the
+// sigstore tier path (InspectCarried's lenient probe keeps classifying it
 // sigstore-bundle), so the downgrade is the inclusion-proof gate, not a
 // reclassification.
 func TestG6NoInclusionProofDowngradesAndRefuses(t *testing.T) {

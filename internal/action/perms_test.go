@@ -49,8 +49,8 @@ var _ = Describe("Perms", func() {
 		Expect(res.Stat.Inode).NotTo(BeZero())
 	})
 
-	DescribeTable("rejects unsupported ownership keys (M1 supports mode only)",
-		func(key string) {
+	DescribeTable("rejects ownership keys, since perms sets the mode only",
+		func(key, want string) {
 			dir := GinkgoT().TempDir()
 			scope := Scope{ActiveRoot: filepath.Join(dir, "active"), PackageName: "hello"}
 			target := filepath.Join(scope.ActiveRoot, "hello", "f")
@@ -62,15 +62,15 @@ var _ = Describe("Perms", func() {
 				key:    "root",
 			}}
 			res, err := Perms(inv, scope)
-			// M1 perms supports mode only. An unsupported ownership param must
-			// be a loud error, never a silent success that misleads the author
-			// into believing ownership was applied.
-			Expect(err).To(HaveOccurred(), "perms must reject %q in M1", key)
-			Expect(err.Error()).To(ContainSubstring(key))
+			// An unsupported ownership param must be a loud error, never a
+			// silent success that misleads the author into believing
+			// ownership was applied.
+			Expect(err).To(HaveOccurred(), "perms must reject %q", key)
+			Expect(err.Error()).To(Equal(want))
 			Expect(res.Outcome).To(Equal("error"))
 		},
-		Entry("owner", "owner"),
-		Entry("group", "group"),
+		Entry("owner", "owner", "perms: setting an owner is not supported; only mode can be set"),
+		Entry("group", "group", "perms: setting a group is not supported; only mode can be set"),
 	)
 
 	DescribeTable("refuses a mode outside 0755 and leaves the file untouched",

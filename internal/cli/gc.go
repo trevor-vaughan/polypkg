@@ -142,9 +142,9 @@ func writePrunedList(w *bytes.Buffer, names []string) {
 }
 
 // newGCCmd is the standalone `polypkg gc` command. Defaults match the
-// user-scope retention defaults from apply-semantics §4.3 (5 generations,
-// 30 days). --force-pin <id> may be specified multiple times to unpin and
-// then evict otherwise-pinned generations in the same pass.
+// user-scope retention defaults (5 generations, 30 days). --force-pin <id> may
+// be specified multiple times to unpin and then evict otherwise-pinned
+// generations in the same pass.
 func newGCCmd() *cobra.Command {
 	var (
 		count     int

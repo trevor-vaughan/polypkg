@@ -2,8 +2,10 @@ package repo
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +123,9 @@ func TestPackArtifactRejectsSymlinkInContent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for symlink in content/, got nil")
 	}
+	if !strings.Contains(err.Error(), `"content/link.txt" is not a regular file`) || strings.Contains(err.Error(), "content/content/") {
+		t.Fatalf("error = %q, want it to name content/link.txt once", err)
+	}
 }
 
 func TestPackArtifactRefusesAMemberOverTheLimit(t *testing.T) {
@@ -146,5 +151,85 @@ func TestPackArtifactRefusesAMemberOverTheLimit(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+}
+
+// TestPackArtifactRefusesAMemberTooDeepToExtract pins that PackArtifact
+// refuses a member name extraction would refuse, at the same bound: a member
+// at exactly archive.MaxMemberDepth path segments packs, one deeper does not.
+func TestPackArtifactRefusesAMemberTooDeepToExtract(t *testing.T) {
+	for _, tc := range []struct {
+		segments int
+		wantErr  bool
+	}{{archive.MaxMemberDepth, false}, {archive.MaxMemberDepth + 1, true}} {
+		dir := t.TempDir()
+		writePkgSrc(t, dir)
+		// "content", then the nested directories, then the file.
+		parent := filepath.Join(append([]string{dir, "content"}, slices.Repeat([]string{"d"}, tc.segments-2)...)...)
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(parent, "f"), []byte("deep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := PackArtifact(dir)
+		if !tc.wantErr {
+			if err != nil {
+				t.Fatalf("%d segments: PackArtifact = %v, want success", tc.segments, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "more than 64 path segments") {
+			t.Fatalf("%d segments: PackArtifact = %v, want the depth refusal", tc.segments, err)
+		}
+	}
+}
+
+// TestExtractedEntriesCountsImplicitParents pins the count PackArtifact holds
+// against the extraction entry limit: each member plus each distinct parent
+// directory, since extraction counts the directories it creates.
+func TestExtractedEntriesCountsImplicitParents(t *testing.T) {
+	names := []string{"content/bin/a", "content/bin/b", "content/lib/x/y", "polypkg.yaml"}
+	// Four members, plus content, content/bin, content/lib and content/lib/x.
+	if got := extractedEntries(names); got != 8 {
+		t.Fatalf("extractedEntries(%q) = %d, want 8", names, got)
+	}
+	if got := extractedEntries([]string{"polypkg.yaml"}); got != 1 {
+		t.Fatalf("extractedEntries([polypkg.yaml]) = %d, want 1", got)
+	}
+}
+
+// TestPackArtifactRefusesSpecialModeBits pins that a content file carrying
+// setuid, setgid or sticky fails the build with the bits named, instead of
+// being packed without them.
+func TestPackArtifactRefusesSpecialModeBits(t *testing.T) {
+	for _, tc := range []struct {
+		mode fs.FileMode
+		want string
+	}{
+		{0o755 | fs.ModeSetuid, `"content/bin/hello" is setuid;`},
+		{0o755 | fs.ModeSetgid, `"content/bin/hello" is setgid;`},
+		{0o755 | fs.ModeSticky, `"content/bin/hello" is sticky;`},
+		{0o755 | fs.ModeSetuid | fs.ModeSetgid, `"content/bin/hello" is setuid and setgid;`},
+	} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			writePkgSrc(t, dir)
+			bin := filepath.Join(dir, "content", "bin", "hello")
+			if err := os.Chmod(bin, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode() != tc.mode {
+				t.Skipf("this filesystem does not keep mode %v (got %v)", tc.mode, info.Mode())
+			}
+			_, _, err = PackArtifact(dir)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "chmod u-s,g-s,-t") {
+				t.Fatalf("PackArtifact = %v, want a refusal containing %q", err, tc.want)
+			}
+		})
 	}
 }

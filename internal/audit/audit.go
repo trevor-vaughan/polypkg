@@ -1,5 +1,5 @@
 // Package audit provides polypkg's audit log writer (JSON Lines file
-// sink). M2 will add the journald sink alongside this one.
+// sink).
 package audit
 
 import (

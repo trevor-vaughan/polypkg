@@ -218,7 +218,7 @@ func TestEnforcePostureFloor(t *testing.T) {
 	}
 }
 
-// Finding 5: the posture floor is right to refuse a mirror hop that downgrades
+// The posture floor is right to refuse a mirror hop that downgrades
 // a natively-attested predicate to carried-opaque, but the refusal used to offer
 // only "pin the exact version", which permanently waives anti-downgrade for the
 // package. When the regression has the shape of a source change — natively
@@ -310,7 +310,7 @@ func TestPostureFloorCarriedTierDropIsNotSourceChangeShaped(t *testing.T) {
 	}
 }
 
-// Finding 14: a revoked builder key produced the generic "not present and
+// A revoked builder key used to produce the generic "not present and
 // verified" policy error, which tells the operator the predicate is missing when
 // it is present, signed, correct — and revoked.
 func TestAttestationPolicyErrorNamesRevokedBuilderKey(t *testing.T) {

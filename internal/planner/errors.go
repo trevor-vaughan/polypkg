@@ -65,7 +65,7 @@ func (e *ArtifactIdentityError) Error() string {
 }
 
 // AttestationPolicyError reports that a source's per-predicate attestation gate
-// (spec §10.6) refused an install because Predicate is not satisfied at an
+// refused an install because Predicate is not satisfied at an
 // anchored tier from an allowed builder.
 //
 // RevokedBuilderKeys is the reason the gate is unsatisfiable in the one case
@@ -89,7 +89,7 @@ func (e *AttestationPolicyError) Error() string {
 	return msg
 }
 
-// PostureFloorError reports that the TOFU posture floor (spec §10.7, threat G3)
+// PostureFloorError reports that the TOFU posture floor
 // refused an install: Predicate was verified in the prior generation and is not
 // verified now.
 //

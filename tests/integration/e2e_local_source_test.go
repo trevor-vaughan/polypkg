@@ -99,7 +99,7 @@ var _ = Describe("local-filesystem source", func() {
 
 			// Pass the bare absolute path to init so it canonicalises to file://.
 			// init writes a bootstrapped profile (no packages) to XDG_CONFIG_HOME.
-			out, err := runCmd("init", "--source-url", publicDir, "--trust-root-file", trustRoot)
+			out, err := runCmd("init", "--source-url", publicDir, "--trust-root", trustRoot)
 			Expect(err).NotTo(HaveOccurred(), "init with bare path: %s", out)
 
 			// Verify init stored a file:// URI, not the bare path.

@@ -18,6 +18,7 @@ var _ = Describe("FetchError", func() {
 			// whose String() embeds the redundant Get "<url>": prefix.
 			b := NewNativeBackend(NativeBackendOpts{
 				URL:      "http://127.0.0.1:9",
+				Source:   "zeta",
 				CacheDir: GinkgoT().TempDir(),
 			})
 			_, _, err := b.FetchTrustDoc(context.Background())
@@ -25,7 +26,7 @@ var _ = Describe("FetchError", func() {
 
 			var fe *FetchError
 			Expect(errors.As(err, &fe)).To(BeTrue(), "expected *FetchError, got %T: %v", err, err)
-			Expect(fe.Source).To(Equal("native"))
+			Expect(fe.Source).To(Equal("zeta"), "the error names the source it was fetched for")
 			Expect(fe.BaseURL).To(Equal("http://127.0.0.1:9"))
 			Expect(fe.Status).To(Equal(0))
 			Expect(fe.Network).To(BeTrue())
@@ -53,6 +54,7 @@ var _ = Describe("FetchError", func() {
 			var fe *FetchError
 			Expect(errors.As(err, &fe)).To(BeTrue(), "expected *FetchError, got %T: %v", err, err)
 			Expect(fe.Status).To(Equal(http.StatusNotFound))
+			Expect(fe.NotFound()).To(BeTrue())
 			Expect(fe.Network).To(BeFalse())
 			Expect(fe.Error()).To(ContainSubstring("status 404"))
 			Expect(fe.Error()).To(ContainSubstring(srv.URL + "/hello-1.0.0.tar.zst"))
@@ -121,6 +123,16 @@ var _ = Describe("RedactURL", func() {
 		Entry("opaque, no scheme separator", "user:secret@host/%zz", "<redacted>", "user", "secret"),
 		Entry("unparseable escape in the password", "https://user:p%zzw@host/r", "https://<redacted>", "user", "p%zzw"),
 		Entry("scheme-less token", "ghp_TOKEN@host/r", "<redacted>", "ghp_TOKEN"),
+		Entry("a query token", "https://host/r?token=abc123", "https://host/r?token=xxxxx", "abc123"),
+		Entry("an access_token among other parameters", "https://host/r?page=2&access_token=abc123",
+			"https://host/r?page=xxxxx&access_token=xxxxx", "abc123"),
+		Entry("a presigned URL", "https://bucket.s3.example/key?X-Amz-Credential=AKIA1&X-Amz-Signature=deadbeef&sig=c2ln",
+			"https://bucket.s3.example/key?X-Amz-Credential=xxxxx&X-Amz-Signature=xxxxx&sig=xxxxx", "AKIA1", "deadbeef", "c2ln"),
+		Entry("a bare query value", "https://host/r?SECRETVALUE", "https://host/r?xxxxx", "SECRETVALUE"),
+		Entry("userinfo and a query", "https://user:secret@host/r?token=abc123", "https://xxxxx@host/r?token=xxxxx", "user", "secret", "abc123"),
+		Entry("a query on a local path", "/srv/repo?token=abc123", "/srv/repo?token=xxxxx", "abc123"),
+		Entry("a fragment token", "https://host/r#access_token=abc123", "https://host/r#xxxxx", "access_token", "abc123"),
+		Entry("a query and a fragment", "https://host/r?sig=c2ln#tok", "https://host/r?sig=xxxxx#xxxxx", "c2ln", "tok"),
 	)
 
 	It("leaves a URL without credentials, or a plain path, alone", func() {

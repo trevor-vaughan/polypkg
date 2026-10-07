@@ -49,13 +49,17 @@ var _ = Describe("localTransport", func() {
 			Expect(got).To(Equal(content))
 		})
 
-		It("returns a FetchError wrapping 404 for a missing file", func() {
+		It("reports a missing file as not found, naming the source, without a made-up HTTP status", func() {
+			lt.source = "zeta"
 			_, err := lt.get(ctx, "nonexistent.json", maxIndexBytes, metadataFetch)
 			Expect(err).To(HaveOccurred())
 
 			var fe *FetchError
 			Expect(errors.As(err, &fe)).To(BeTrue(), "expected *FetchError, got %T: %v", err, err)
-			Expect(fe.Status).To(Equal(404))
+			Expect(fe.NotFound()).To(BeTrue())
+			Expect(fe.Status).To(Equal(0))
+			Expect(fe.Source).To(Equal("zeta"))
+			Expect(fe.Error()).To(Equal("fetch " + filepath.Join(root, "nonexistent.json") + ": file does not exist"))
 		})
 
 		It("blocks path traversal that would escape root", func() {

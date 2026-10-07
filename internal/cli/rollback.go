@@ -32,7 +32,11 @@ to target a specific generation by id. Run 'polypkg status -v' to list the
 generation ids retained in the store and choose one.
 
 After rollback, alternatives and host-integration links (bin, completions,
-desktop entries, MIME types) are reconciled to match the activated generation.`,
+desktop entries, MIME types) are reconciled to match the activated generation.
+
+rollback does not edit your profile. If the profile still asks for the state
+you rolled back from, 'polypkg plan' reports it as pending and the next
+'polypkg apply' re-applies it; edit the profile to keep the rolled-back state.`,
 		Example: "  # Roll back to the generation before the current one\n" +
 			"  polypkg rollback\n\n" +
 			"  # List retained generations, then roll back to a specific one\n" +

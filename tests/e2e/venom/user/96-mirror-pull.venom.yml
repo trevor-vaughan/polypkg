@@ -78,11 +78,13 @@ testcases:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "OK:"
           - result.systemout ShouldContainSubstring "verified"
+          # no --trust-root: the OK line must say what it did not check
+          - result.systemout ShouldContainSubstring "self-consistency only"
 
   - name: a consumer installs from the mirror and the upstream provenance survives
     steps:
       - type: exec
-        script: '{{.pxc}} init --source-url file://{{.mirror}} --trust-root-file {{.mirror}}/trust_root.pub --source-name mirror --scope user'
+        script: '{{.pxc}} init --source-url file://{{.mirror}} --trust-root {{.mirror}}/trust_root.pub --source-name mirror --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -114,7 +116,7 @@ testcases:
   - name: policy require fails closed against the fresh (provenance-stripped) mirror
     steps:
       - type: exec
-        script: '{{.pxf}} init --source-url file://{{.fresh}} --trust-root-file {{.fresh}}/trust_root.pub --source-name mirror --scope user'
+        script: '{{.pxf}} init --source-url file://{{.fresh}} --trust-root {{.fresh}}/trust_root.pub --source-name mirror --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -135,7 +137,7 @@ testcases:
   - name: the SAME require policy INSTALLS from the non-fresh mirror (proves --fresh caused the refusal)
     steps:
       - type: exec
-        script: '{{.pxr}} init --source-url file://{{.mirror}} --trust-root-file {{.mirror}}/trust_root.pub --source-name mirror --scope user'
+        script: '{{.pxr}} init --source-url file://{{.mirror}} --trust-root {{.mirror}}/trust_root.pub --source-name mirror --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

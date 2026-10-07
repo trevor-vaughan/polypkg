@@ -19,8 +19,9 @@ import (
 // ParamSpec kinds. PKG010: src must name a file under $PKG/ and dest a
 // directory strictly below $ACTIVE/<package name>/ (the only places apply
 // lets the action read and write), dest must not be created by an action that
-// runs before it, strip_components must pass action.CheckStripComponents, and
-// include must be a non-empty list whose patterns pass
+// runs before it nor sit below a file such an action places, strip_components
+// must pass action.CheckStripComponents, and include must be a non-empty list
+// whose patterns pass
 // action.CheckIncludePattern; the action runs the same two validators at
 // apply time. Values of the wrong kind (a fractional strip_components, a
 // non-string include entry) are checkValue's finding and are not reported
@@ -65,13 +66,19 @@ func checkExtract(pkg *schema.Package, idx *docIndex, dir string) []Finding {
 				prefix := "$ACTIVE/" + pkg.Name + "/"
 				if rel, ok := underPrefix(s, prefix); !ok {
 					add("PKG010", "dest", fmt.Sprintf("value %q must name a directory below $ACTIVE/%s/", s, pkg.Name))
-				} else if j, created := createdBefore(pkg, i, prefix+rel); j >= 0 {
-					where := fmt.Sprintf("actions[%d]", j)
-					if line := loc(idx.actionNode(j)).Line; line > 0 {
+				} else if c, found := earlierCollision(pkg, i, prefix+rel); found {
+					where := fmt.Sprintf("actions[%d]", c.at)
+					if line := loc(idx.actionNode(c.at)).Line; line > 0 {
 						where = fmt.Sprintf("line %d", line)
 					}
-					add("PKG010", "dest", fmt.Sprintf("value %q already exists when extract runs: the %q action at %s creates %q first, and extract refuses an existing dest",
-						s, pkg.Actions[j].Action, where, created))
+					earlier := pkg.Actions[c.at].Action
+					if c.parent {
+						add("PKG010", "dest", fmt.Sprintf("value %q cannot be created when extract runs: the %q action at %s first places %q, a file or a link out of the package directory, and extract cannot create a directory below it",
+							s, earlier, where, c.created))
+					} else {
+						add("PKG010", "dest", fmt.Sprintf("value %q already exists when extract runs: the %q action at %s creates %q first, and extract refuses an existing dest",
+							s, earlier, where, c.created))
+					}
 				}
 			default:
 				add("PKG010", "dest", fmt.Sprintf("value %v must be a string", raw))
@@ -188,36 +195,50 @@ func archiveProblem(dir, rel string) string {
 	return ""
 }
 
-// creatingParam names, per action, the param whose path the action creates
-// in the generation (parents included). perms and unmanaged create nothing,
-// and the remaining file-placing actions place outside the package directory.
-var creatingParam = map[string]string{
-	"install": "dest", "symlink": "dest", "config": "dest",
-	"dir": "path", "state": "path", "extract": "dest",
+// collision is an earlier action whose placement stops extract from creating
+// its dest.
+type collision struct {
+	at      int    // the earlier action's index in pkg.Actions
+	created string // the path it names, as written in the manifest
+	// parent reports that created is a leaf (action.CreatesLeaf) at a strict
+	// ancestor of dest; otherwise created is dest itself or a path below it.
+	parent bool
 }
 
-// createdBefore returns the index of the first action that runs before
-// pkg.Actions[i] and creates dest (a cleaned "$ACTIVE/<name>/<rel>" path) or a
-// path below it, together with the path it creates; it returns -1 when none
-// does. Actions run in action.PhaseRank order, then declaration order within
-// a phase. Only literal values are compared.
-func createdBefore(pkg *schema.Package, i int, dest string) (at int, created string) {
+// earlierCollision returns the action that runs first among those that run
+// before pkg.Actions[i] and either create dest (a cleaned
+// "$ACTIVE/<name>/<rel>" path) or a path below it, or create a leaf at an
+// ancestor of dest; found is false when none does. What each action creates
+// comes from its registry ParamSpec.Creates. Actions run in action.PhaseRank
+// order, then declaration order within a phase, so an action declared later
+// but in an earlier phase wins. Only literal values are compared.
+func earlierCollision(pkg *schema.Package, i int, dest string) (c collision, found bool) {
 	rank, ok := action.PhaseRank(pkg.Actions[i].Phase)
 	if !ok {
-		return -1, ""
+		return collision{}, false
 	}
+	bestRank := 0
 	for j, a := range pkg.Actions {
 		r, ok := action.PhaseRank(a.Phase)
-		if j == i || !ok || r > rank || (r == rank && j > i) {
+		if j == i || !ok || r > rank || (r == rank && j > i) || (found && r >= bestRank) {
 			continue
 		}
-		s, ok := a.Params[creatingParam[a.Action]].(string)
-		if !ok {
-			continue
-		}
-		if p := path.Clean(s); p == dest || strings.HasPrefix(p, dest+"/") {
-			return j, s
+		for _, ps := range action.Registry[a.Action].Params {
+			if ps.Creates == action.CreatesNothing {
+				continue
+			}
+			s, ok := a.Params[ps.Name].(string)
+			if !ok {
+				continue
+			}
+			p := path.Clean(s)
+			atOrBelow := p == dest || strings.HasPrefix(p, dest+"/")
+			leafAbove := ps.Creates == action.CreatesLeaf && strings.HasPrefix(dest, p+"/")
+			if atOrBelow || leafAbove {
+				c, found, bestRank = collision{at: j, created: s, parent: !atOrBelow}, true, r
+				break
+			}
 		}
 	}
-	return -1, ""
+	return c, found
 }

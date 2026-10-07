@@ -697,6 +697,54 @@ func TestRunRefusesAnExistingTargetBeforeDownloading(t *testing.T) {
 	}
 }
 
+func TestRunRefusesACaseVariantBeforeDownloading(t *testing.T) {
+	for _, tc := range []struct {
+		name, tag, existing string
+		want                CaseVariantError // Dir is relative to the out-dir
+		wantMsg             string
+	}{
+		{
+			"package", "v1.2.3", filepath.Join("Tool", "0.9.0", "linux-amd64"),
+			CaseVariantError{Dir: ".", Existing: "Tool", Want: "tool", What: "package"},
+			`already holds "Tool", which differs from the package "tool" only in letter case`,
+		},
+		{
+			"version", "v1.2.3-rc1", filepath.Join("tool", "1.2.3-RC1", "linux-amd64"),
+			CaseVariantError{Dir: "tool", Existing: "1.2.3-RC1", Want: "1.2.3-rc1", What: "version"},
+			`already holds "1.2.3-RC1", which differs from the version "1.2.3-rc1" only in letter case`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sandboxHome(t)
+			f := newFakeGitHub(t, tc.tag, digested("tool_1.2.3_linux_amd64.tar.gz", toolArchive(t)))
+			out := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(out, tc.existing), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshot(t, out)
+			_, err := Run(context.Background(), testOptions(t, f, out))
+			var cv *CaseVariantError
+			if !errors.As(err, &cv) {
+				t.Fatalf("error = %v, want a *CaseVariantError", err)
+			}
+			want := tc.want
+			want.Dir = filepath.Join(out, want.Dir)
+			if *cv != want {
+				t.Fatalf("error = %+v, want %+v", *cv, want)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.wantMsg)
+			}
+			if n := f.downloads(); n != 0 {
+				t.Fatalf("%d downloads before refusing, want none", n)
+			}
+			if after := snapshot(t, out); !reflect.DeepEqual(after, before) {
+				t.Fatalf("out-dir changed:\nbefore %v\nafter  %v", before, after)
+			}
+		})
+	}
+}
+
 func TestRunRefusesANonSemverTag(t *testing.T) {
 	sandboxHome(t)
 	f := newFakeGitHub(t, "nightly", digested("tool_linux_amd64.tar.gz", toolArchive(t)))

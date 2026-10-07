@@ -28,7 +28,7 @@ type ingestHit struct {
 // .tar.zst, cache-keys it on the artifact content-hash (a hit short-circuits),
 // extracts the tar into a scratch dir under the confinement guards of
 // source.ExtractTarZst, parses the inner polypkg.yaml, and RE-BINDS every carried
-// attestation against the extracted bytes (independent proof of the P6
+// attestation against the extracted bytes (independent proof of the
 // two-point binding). It never runs pkglint — a prebuilt package carries the
 // upstream's attestations verbatim; there is no source tree to lint.
 func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPrebuilt, cache *BuildCache) (packageWork, ingestHit, error) {
@@ -203,7 +203,7 @@ func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey,
 // nativeAttestationRef reads a publisher-supplied native SARIF attestation preview,
 // validates it is a JCS-canonical in-toto SARIF statement whose subject binds the
 // artifact content-hash, and returns the AttestationRef + pool blob to sign and publish
-// VERBATIM (Phase C: the signed attestation is byte-identical to the publisher's preview).
+// VERBATIM (the signed attestation is byte-identical to the publisher's preview).
 func (b *Builder) nativeAttestationRef(path, name, version, ch string) (schema.AttestationRef, poolBlob, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-declared prebuilt.native_attestation
 	if err != nil {

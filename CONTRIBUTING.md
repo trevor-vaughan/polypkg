@@ -69,6 +69,15 @@ task vuln             # scan dependencies with govulncheck
 task check            # lint + test together (the gate CI enforces)
 ```
 
+Every `go`-invoking task appends `-mod=readonly` to your `GOFLAGS` (the last
+`-mod` wins), and `.golangci.yml` pins golangci-lint's package loading the
+same way, so no task rewrites `go.mod` or `go.sum`. Commands you run yourself
+follow your `GOFLAGS`. With `GOFLAGS=-mod=mod` exported, any command that
+loads the whole module graph, such as `go doc` (even `go doc fmt.Println`) or
+`go list -m all`, writes about 180 `/go.mod` checksum lines into `go.sum`.
+Go's default, `-mod=readonly`, never writes them, so unset `GOFLAGS` or
+prefix such commands with `GOFLAGS=-mod=readonly`.
+
 Heavier, opt-in tiers (not part of `task check`):
 
 ```
@@ -94,12 +103,14 @@ platforms or when `script` is not on `PATH`.
 
 Both container and VM tiers need host setup that `task check` does not:
 
-- `test:integration` needs rootless `podman` **and** `podman-compose`. Where the
-  kernel's native overlay rejects `userxattr`, the image build fails with
-  `mounting an overlay over build context directory ... invalid argument`; write
-  `~/.config/containers/storage.conf` with `[storage] driver="overlay"` and
-  `[storage.options.overlay] mount_program="/usr/bin/fuse-overlayfs"` to get past
-  it.
+- `test:integration` needs rootless `podman` **and** `podman-compose`. If the
+  image build fails with `mounting an overlay over build context directory ...
+  invalid argument`, buildah's scratch directory (`TMPDIR`, default `/var/tmp`)
+  is on overlayfs, as it is when podman runs inside a container. Run with
+  `TMPDIR` set to a directory on a non-overlay filesystem outside the checkout,
+  or write `~/.config/containers/storage.conf` with `[storage] driver="overlay"`
+  and `[storage.options.overlay] mount_program="/usr/bin/fuse-overlayfs"`.
+  `tests/e2e/README.md` has the details.
 - `test:vm` needs more than QEMU: `vm:deps` installs the whole `DEP_PKGS` set
   from `.taskfiles/vm.yml` (`qemu-kvm-core qemu-img xorriso edk2-ovmf
   openssh-clients selinux-policy-devel checkpolicy`) via `sudo dnf`, so it

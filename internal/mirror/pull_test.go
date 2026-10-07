@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trevor-vaughan/polypkg/internal/repo"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -1001,7 +1002,7 @@ func buildLocalRepoCarriedWithBundle(t *testing.T) (outDir, trustRoot string) {
 }
 
 // TestPullRoundTripsThroughRepoBuild proves the network pull's staged output
-// (2e-3b) is a valid input to `repo build`'s prebuilt ingest (2e-3a): pull →
+// is a valid input to `repo build`'s prebuilt ingest: pull →
 // WritePrebuiltManifest → repo build re-publishes a repo that (a) re-binds the
 // carried attestation, (b) carries the artifact byte-identically, and (c) carries
 // the trust bundle forward under the LOCAL key.
@@ -1016,7 +1017,8 @@ func TestPullRoundTripsThroughRepoBuild(t *testing.T) {
 		t.Fatal("expected the upstream trust bundle to be staged for carry-forward")
 	}
 
-	// Re-publish locally: fresh key + output, generate manifest, build (2e-3a ingest).
+	// Re-publish locally: fresh key + output, generate manifest, build
+	// (prebuilt ingest).
 	keyDir := t.TempDir()
 	kp, err := repo.GenerateKeypair()
 	if err != nil {
@@ -2068,6 +2070,46 @@ func TestResolvePullSelectionRefusesDuplicatePlatformBuild(t *testing.T) {
 	}
 }
 
+// TestResolvePullSelectionRefusesCaseFoldCollisions proves that an upstream
+// index whose names, or whose versions of one name, differ only in letter
+// case is refused on every selection path, before anything is staged: the
+// staging layout <name>/<version>/ would merge them on a case-insensitive
+// filesystem.
+func TestResolvePullSelectionRefusesCaseFoldCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		packages  map[string][]schema.IndexEntry
+		wantInErr string
+	}{
+		{
+			map[string][]schema.IndexEntry{
+				"hello": {{Version: "1.0.0", ContentHash: "blake3:h1"}},
+				"Hello": {{Version: "1.0.0", ContentHash: "blake3:h2"}},
+			},
+			`upstream index: package names "Hello" and "hello" differ only in letter case`,
+		},
+		{
+			map[string][]schema.IndexEntry{
+				"hello": {
+					{Version: "1.0.0-rc1", ContentHash: "blake3:h1"},
+					{Version: "1.0.0-RC1", ContentHash: "blake3:h2"},
+				},
+			},
+			`upstream index: package "hello" versions "1.0.0-rc1" and "1.0.0-RC1" differ only in letter case`,
+		},
+	} {
+		idx := &schema.Index{Packages: tc.packages}
+		for _, sel := range []struct {
+			selectors   []string
+			allVersions bool
+		}{{nil, false}, {nil, true}, {[]string{"hello"}, false}, {[]string{"hello@1.0.0-rc1"}, false}} {
+			_, _, err := resolvePullSelection(idx, sel.selectors, sel.allVersions)
+			if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Fatalf("selectors %v, all=%v: error = %v, want it to contain %q", sel.selectors, sel.allVersions, err, tc.wantInErr)
+			}
+		}
+	}
+}
+
 // buildLocalRepoMultiPlatform builds an upstream publishing hello 1.0.0 for
 // linux/amd64 and darwin/arm64, plus a platform-agnostic greet 1.0.0, and
 // returns its public dir and trust root. Mirrors buildLocalRepoTwoVersions.
@@ -2350,45 +2392,55 @@ func TestPullErrorNamesPlatformBuild(t *testing.T) {
 	}
 }
 
-// TestResolvePullSelectionLatestSemverTieIsDeterministic proves that when two
-// spellings of one semver version share a platform group (build metadata, or a
-// "v" prefix), "latest" keeps the lexically smaller spelling whichever the
-// index lists first, matching --all-versions' tie-break. The other spelling is
-// a distinct published build that was not mirrored, so the note names it, and
-// names it the same way in either index order.
-func TestResolvePullSelectionLatestSemverTieIsDeterministic(t *testing.T) {
-	for _, tc := range []struct {
-		a, b, want, skipped string
-	}{
-		{"1.0.0+b", "1.0.0+a", "1.0.0+a", "1.0.0+b"},
-		{"v1.0.0", "1.0.0", "1.0.0", "v1.0.0"},
-	} {
-		for _, plat := range []string{"", "linux/amd64"} {
-			label := "hello"
-			if plat != "" {
-				label = "hello (" + plat + ")"
-			}
-			wantNote := []string{fmt.Sprintf("%s: mirrored %s, did not mirror %s (select it with --package hello@%s)",
-				label, tc.want, tc.skipped, tc.skipped)}
-			for _, order := range [][2]string{{tc.a, tc.b}, {tc.b, tc.a}} {
+// TestResolvePullSelectionRefusesSemverEqualSpellings proves that an
+// upstream index listing two spellings of one semver version (build metadata,
+// a "v" prefix, a missing patch) for one platform group is refused on every
+// selection path, in either index order: per-platform "latest" could keep
+// only one of them, and repo build would refuse to publish both.
+func TestResolvePullSelectionRefusesSemverEqualSpellings(t *testing.T) {
+	for _, pair := range [][2]string{{"1.0.0+a", "1.0.0+b"}, {"v1.0.0", "1.0.0"}, {"1.0", "1.0.0"}} {
+		for _, plat := range []struct{ name, shown string }{{"", "any"}, {"linux/amd64", "linux/amd64"}} {
+			for _, order := range [][2]string{{pair[0], pair[1]}, {pair[1], pair[0]}} {
 				idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
 					"hello": {
-						{Version: order[0], Platform: plat, ContentHash: "blake3:" + order[0]},
-						{Version: order[1], Platform: plat, ContentHash: "blake3:" + order[1]},
+						{Version: order[0], Platform: plat.name, ContentHash: "blake3:" + order[0]},
+						{Version: order[1], Platform: plat.name, ContentHash: "blake3:" + order[1]},
 					},
 				}}
-				got, notes, err := resolvePullSelection(idx, nil, false)
-				if err != nil {
-					t.Fatalf("order %v, platform %q: %v", order, plat, err)
-				}
-				if len(got) != 1 || got[0].version != tc.want {
-					t.Fatalf("order %v, platform %q: selected %+v, want only %s", order, plat, got, tc.want)
-				}
-				if !reflect.DeepEqual(notes, wantNote) {
-					t.Fatalf("order %v, platform %q: notes = %q, want %q", order, plat, notes, wantNote)
+				want := fmt.Sprintf("upstream index lists %q %q for platform %q more than once (also as %q)",
+					"hello", order[1], plat.shown, order[0])
+				for _, sel := range []struct {
+					selectors   []string
+					allVersions bool
+				}{{nil, false}, {nil, true}, {[]string{"hello@" + order[0]}, false}} {
+					_, _, err := resolvePullSelection(idx, sel.selectors, sel.allVersions)
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("order %v, platform %q, selectors %v: error = %v, want it to contain %q",
+							order, plat.name, sel.selectors, err, want)
+					}
 				}
 			}
 		}
+	}
+}
+
+// TestResolvePullSelectionKeepsSemverEqualSpellingsOnDistinctPlatforms
+// proves the duplicate check is per platform group: "1.0" for one platform
+// and "1.0.0" for another are two builds of one version, and both are
+// selected.
+func TestResolvePullSelectionKeepsSemverEqualSpellingsOnDistinctPlatforms(t *testing.T) {
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
+		"hello": {
+			{Version: "1.0", Platform: "linux/amd64", ContentHash: "blake3:linux"},
+			{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:darwin"},
+		},
+	}}
+	got, _, err := resolvePullSelection(idx, nil, false)
+	if err != nil {
+		t.Fatalf("resolvePullSelection: %v", err)
+	}
+	if want := []string{"blake3:darwin", "blake3:linux"}; !reflect.DeepEqual(selectedHashes(got), want) {
+		t.Fatalf("selected %v, want %v", selectedHashes(got), want)
 	}
 }
 
@@ -2422,13 +2474,12 @@ func TestResolvePullSelectionLatestIgnoresIndexOrder(t *testing.T) {
 
 // TestResolvePullSelectionNoteOrdersSkippedBySemver proves that the narrowing
 // note lists skipped versions in semver order, not text order (1.10.0 after
-// 1.9.0), with semver-equal spellings ordered by spelling.
+// 1.9.0), each in its published spelling.
 func TestResolvePullSelectionNoteOrdersSkippedBySemver(t *testing.T) {
 	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{
 		"hello": {
 			{Version: "1.10.0", ContentHash: "blake3:1100"},
 			{Version: "2.0.0", ContentHash: "blake3:200"},
-			{Version: "1.9.0+b", ContentHash: "blake3:190b"},
 			{Version: "1.2.0", ContentHash: "blake3:120"},
 			{Version: "1.9.0+a", ContentHash: "blake3:190a"},
 		},
@@ -2437,8 +2488,31 @@ func TestResolvePullSelectionNoteOrdersSkippedBySemver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePullSelection: %v", err)
 	}
-	want := []string{"hello: mirrored 2.0.0, did not mirror 1.2.0, 1.9.0+a, 1.9.0+b, 1.10.0 (select each with --package hello@<version>)"}
+	want := []string{"hello: mirrored 2.0.0, did not mirror 1.2.0, 1.9.0+a, 1.10.0 (select each with --package hello@<version>)"}
 	if !reflect.DeepEqual(notes, want) {
 		t.Fatalf("notes = %q, want %q", notes, want)
+	}
+}
+
+// TestRefuseDuplicateBuildsIsLinear pins that the duplicate check does not
+// compare every pair of entries: 100 000 versions take well under a second,
+// where a pairwise check takes minutes.
+func TestRefuseDuplicateBuildsIsLinear(t *testing.T) {
+	entries := make([]schema.IndexEntry, 0, 100_001)
+	for i := range 100_000 {
+		entries = append(entries, schema.IndexEntry{Version: fmt.Sprintf("1.%d.0", i), Platform: "linux/amd64"})
+	}
+	idx := &schema.Index{Packages: map[string][]schema.IndexEntry{"hello": entries}}
+	start := time.Now()
+	if err := refuseDuplicateBuilds(idx); err != nil {
+		t.Fatalf("refuseDuplicateBuilds: %v", err)
+	}
+	idx.Packages["hello"] = append(entries, schema.IndexEntry{Version: "1.0", Platform: "linux/amd64"})
+	want := `upstream index lists "hello" "1.0" for platform "linux/amd64" more than once (also as "1.0.0")`
+	if err := refuseDuplicateBuilds(idx); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("refuseDuplicateBuilds = %v, want it to contain %q", err, want)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("checking 100 000 versions took %v", elapsed)
 	}
 }

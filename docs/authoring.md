@@ -53,9 +53,22 @@ SLSA provenance statement, an upstream signature bundle. Rules:
 `attestations/` does not change your artifact's digest.
 
 `content/` may hold only regular files and directories: `pkg build` refuses a
-symlink or any other special file there. If you assemble an artifact by hand
-instead, polypkg refuses at install time any archive with an entry that passes
-through, or replaces, a symlink earlier in the same archive. When polypkg
+symlink or any other special file there. It also refuses, because no install
+could unpack the result:
+
+- a file whose mode carries setuid, setgid or sticky bits (clear them with
+  `chmod u-s,g-s,-t`; polypkg never installs a privileged file);
+- a path, counted from the package directory (`content/bin/hello` is three
+  segments), longer than 4096 bytes or of more than 64 segments;
+- a file larger than 1 GiB;
+- more than 100 000 entries, counting the directories that hold the files.
+
+`repo build` packs a `source:` entry by the same rules. If you assemble an
+artifact by hand instead, polypkg refuses it at install time for the same
+reasons, and refuses any archive with an entry that passes through, or
+replaces, a symlink earlier in the same archive, or a symlink whose target
+leaves the package, including one that climbs out through another symlink
+(`up -> .`, then `x -> up/..`). When polypkg
 unpacks an artifact, every file stays readable by its owner and every
 directory stays readable, writable and searchable by its owner, whatever mode
 the archive records.
@@ -90,9 +103,12 @@ polypkg pkg import github:OWNER/REPO[@TAG] <out-dir> [flags]
 ```
 
 Without `@TAG` it imports the repository's latest release that is not a
-prerelease. A failed import leaves `<out-dir>` as it was, and an import into a
-directory that already holds a target `<os>-<arch>` directory is refused
-before anything is downloaded.
+prerelease. A failed import leaves `<out-dir>` as it was. An import is refused
+before anything is downloaded when `<out-dir>` already holds a target
+`<os>-<arch>` directory, or holds the package, or this version of it, under a
+spelling that differs only in letter case (`Tool` beside `tool`, `1.2.3-RC1`
+beside `1.2.3-rc1`): a case-insensitive filesystem would merge the two, and
+`repo build` refuses to publish both.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -316,7 +332,7 @@ the build rather than being silently dropped:
 ```
 $ polypkg pkg lint ./jot
 error PKG000: yaml decode: yaml: unmarshal errors:
-  line 4: field dependencies not found in type schema.Package
+  line 4: unknown field "dependencies"
 error: lint found error-severity issues
 ```
 
@@ -596,7 +612,8 @@ it, if:
   the archive has more than 100 000 entries (members, plus the directories
   created to hold them). Sizes are counted from the data actually unpacked,
   not from the sizes the archive declares;
-- it is a `.tar.zst` that needs a decompression window larger than 64 MiB.
+- it is a `.tar.zst` that needs a decompression window larger than 64 MiB,
+  or a `.tar.xz` with a block that declares a dictionary larger than 64 MiB.
 
 File modes are normalized: a file with any execute bit becomes `0755`, every
 other file `0644`. Setuid, setgid, sticky, and group or other write bits are
@@ -617,8 +634,9 @@ pieces, but the package would then carry a tree you assembled rather than
 upstream's file. The cost of `extract` is disk: the archive sits packed in the
 extract cache and unpacked in the generation.
 
-`polypkg pkg lint` checks the parameter values and that no earlier action
-creates `dest` (`PKG010`), and that a `src` present in the source is a
+`polypkg pkg lint` checks the parameter values, that no earlier action
+creates `dest`, and that none places a file at a directory above it
+(`PKG010`), and that a `src` present in the source is a
 regular file of at most 1 GiB, not a symlink, that starts like an archive
 `apply` can unpack (`PKG012`). It does not decompress the archive,
 so a damaged or non-tar payload inside a valid compressed stream is caught by
@@ -670,8 +688,9 @@ clean: no findings
 
 `pkg lint` exits non-zero if any error-severity finding fires. Human output is
 the default; `--sarif` emits canonical SARIF 2.1.0 instead. `-o <file>` writes
-that SARIF to a file rather than stdout — it applies **only** with `--sarif`,
-and is ignored in human mode.
+that SARIF to a file rather than stdout. It applies **only** with `--sarif`:
+`-o` without `--sarif` is an error (`-o/--output needs --sarif`), because the
+human report always goes to stdout.
 
 ## Pack: `polypkg pkg build <dir>`
 
@@ -692,9 +711,16 @@ error-severity finding fires. The `.tar.zst` is deterministic: sorted paths,
 zeroed mtime/uid/gid, so an unchanged source rebuilds to the same digest.
 `-o <dir>` chooses the output directory (default: the current directory).
 
-`<name>-<version>.att.json` is a **preview, not a build input.** Nothing
-consumes it — `polypkg repo build` re-lints the source and re-assembles the
-statement itself. Both paths feed the same assembler the same three inputs (the
-artifact filename, its BLAKE3 digest, and the lint SARIF), so for an unchanged
-source the preview is byte-identical to what the publisher signs. Read it to
-see what you are about to have signed; do not ship it.
+`<name>-<version>.att.json` is a **preview** of the native attestation. When
+you publish the package source itself (a `source:` entry), nothing reads the
+file: `polypkg repo build` re-lints the source and re-assembles the statement.
+Both paths feed the same assembler the same three inputs (the artifact
+filename, its BLAKE3 digest, and the lint SARIF), so for an unchanged source
+the preview is byte-identical to what the publisher signs. Read it to see what
+you are about to have signed, and do not ship it beside the source.
+
+The one consumer is a `prebuilt:` entry, which publishes an artifact you built
+ahead of time. Its `native_attestation:` field takes this file, unchanged, to
+give the prebuilt the same native attestation a `source:` entry gets; see
+"Native attestation for a prebuilt" in
+[Publishing a repository](publishing.md).

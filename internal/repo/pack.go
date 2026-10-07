@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"time"
@@ -34,6 +35,16 @@ func ReadPackageSource(dir string) (*schema.Package, error) {
 	}
 	return pkg, nil
 }
+
+// PackRefusal is PackArtifact refusing a package source for what it holds
+// rather than for an I/O failure: Msg says which file and why, as a sentence
+// for the author, with untrusted names quoted; Hint says what to change.
+type PackRefusal struct {
+	Msg  string
+	Hint string
+}
+
+func (e *PackRefusal) Error() string { return e.Msg + "; " + e.Hint }
 
 // PackArtifact packs polypkg.yaml + content/** from dir into a deterministic
 // tar.zst (sorted paths, zeroed mtime/uid/gid) and returns the bytes plus the
@@ -67,18 +78,39 @@ func PackArtifact(dir string) (artifact []byte, pkg *schema.Package, err error) 
 			if relErr != nil {
 				return relErr
 			}
+			if err := archive.CheckNameBounds(filepath.ToSlash(rel)); err != nil {
+				return &PackRefusal{
+					Msg:  fmt.Sprintf("%v, so no install could extract it", err),
+					Hint: "shorten the path under content/ (fewer or shorter directory names) and build again",
+				}
+			}
 			if d.Type()&fs.ModeType != 0 {
-				return fmt.Errorf("content/%s is not a regular file (symlinks and special files are not supported)", filepath.ToSlash(rel))
+				return &PackRefusal{
+					Msg:  fmt.Sprintf("%q is not a regular file (symlinks and special files are not supported)", filepath.ToSlash(rel)),
+					Hint: "replace it with a regular file, or remove it from content/, and build again",
+				}
 			}
 			info, infoErr := d.Info()
 			if infoErr != nil {
 				return infoErr
 			}
+			// Perm() below would silently drop these bits, and install would
+			// refuse an artifact that kept them (a prebuilt one, say), so a
+			// package never carries them.
+			if special := archive.SpecialBits(info.Mode()); special != "" {
+				return &PackRefusal{
+					Msg:  fmt.Sprintf("%q is %s; a package cannot carry setuid, setgid or sticky bits", filepath.ToSlash(rel), special),
+					Hint: "clear them (chmod u-s,g-s,-t) and build again",
+				}
+			}
 			// Every install unpacks the artifact under this per-member limit,
 			// so a larger file would publish a package that can never install.
 			if limit := archive.DefaultLimits().MaxFileBytes; info.Size() > limit {
-				return fmt.Errorf("%s is %d bytes; package members are limited to %d GiB, so the package could never install",
-					filepath.ToSlash(rel), info.Size(), limit>>30)
+				return &PackRefusal{
+					Msg: fmt.Sprintf("%q is %d bytes; package members are limited to %d GiB, so the package could never install",
+						filepath.ToSlash(rel), info.Size(), limit>>30),
+					Hint: "remove the file from content/ or make it smaller, and build again",
+				}
 			}
 			entries = append(entries, entry{arcName: filepath.ToSlash(rel), abs: p, mode: int64(info.Mode().Perm())})
 			return nil
@@ -88,6 +120,16 @@ func PackArtifact(dir string) (artifact []byte, pkg *schema.Package, err error) 
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].arcName < entries[j].arcName })
+	names := make([]string, len(entries))
+	for i, en := range entries {
+		names[i] = en.arcName
+	}
+	if n, limit := extractedEntries(names), archive.DefaultLimits().MaxEntries; n > limit {
+		return nil, nil, &PackRefusal{
+			Msg:  fmt.Sprintf("the package holds %d entries (files and the directories that hold them); packages are limited to %d, so the package could never install", n, limit),
+			Hint: "reduce the number of files and directories under content/ and build again",
+		}
+	}
 
 	var raw bytes.Buffer
 	tw := tar.NewWriter(&raw)
@@ -131,4 +173,18 @@ func PackArtifact(dir string) (artifact []byte, pkg *schema.Package, err error) 
 		return nil, nil, err
 	}
 	return z.Bytes(), pkg, nil
+}
+
+// extractedEntries is how many entries extracting a package whose members
+// are names counts against archive.Limits.MaxEntries: every member, plus every
+// directory extraction creates as an implicit parent. PackArtifact writes no
+// directory members, so each parent directory is one implicit entry.
+func extractedEntries(names []string) int {
+	dirs := map[string]bool{}
+	for _, n := range names {
+		for d := path.Dir(n); d != "."; d = path.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	return len(names) + len(dirs)
 }

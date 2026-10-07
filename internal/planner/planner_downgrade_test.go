@@ -173,7 +173,7 @@ func profileWithConstraints(name, url, trustRoot string, pkgs map[string]string)
 	}
 }
 
-var _ = Describe("Plan per-package anti-downgrade (D15)", func() {
+var _ = Describe("Plan per-package anti-downgrade", func() {
 	planOpts := func(stateHome string) planner.Options {
 		return planner.Options{Scope: "user", DataHome: GinkgoT().TempDir(), StateHome: stateHome}
 	}
@@ -202,6 +202,45 @@ var _ = Describe("Plan per-package anti-downgrade (D15)", func() {
 			Expect(err).NotTo(HaveOccurred(), "pin %q must accept the downgrade", pin)
 			Expect(res.Manifest.Entries[0].Version).To(Equal("1.9.0"))
 		}
+	})
+
+	// A damaged anti-rollback record must stop the plan. Reading it as
+	// "no state" would be trust-on-first-use again: every serial and
+	// high-water mark forgotten, so the downgrade below would be accepted.
+	It("refuses to plan when the stored trust state is corrupt, rather than falling back to first use", func() {
+		r := newSignedRepo(GinkgoTB(), "repo")
+		r.Publish(repo.BuildOptions{}, map[string]fixturePkg{"hello": {Version: "2.0.0"}})
+		stateHome := GinkgoT().TempDir()
+		p := profileWithConstraints("repo", r.OutputDir, r.TrustRoot, map[string]string{"hello": ">=1.0.0"})
+		_, err := planner.Plan(GinkgoT().Context(), p, planOpts(stateHome))
+		Expect(err).NotTo(HaveOccurred())
+
+		seenPath := trust.SeenPath(stateHome, "repo")
+		damaged := []byte(`{"trust_serial":`) // a torn write
+		Expect(os.WriteFile(seenPath, damaged, 0o600)).To(Succeed())
+
+		r.Publish(repo.BuildOptions{}, map[string]fixturePkg{"hello": {Version: "1.9.0"}})
+		_, err = planner.Plan(GinkgoT().Context(), p, planOpts(stateHome))
+		Expect(err).To(MatchError(ContainSubstring("load trust state")))
+		Expect(err).To(MatchError(ContainSubstring("parse trust state")))
+
+		after, rerr := os.ReadFile(seenPath)
+		Expect(rerr).NotTo(HaveOccurred())
+		Expect(after).To(Equal(damaged), "a refused plan must not overwrite the damaged record with a fresh baseline")
+	})
+
+	It("refuses to plan when the stored trust state cannot be read", func() {
+		r := newSignedRepo(GinkgoTB(), "repo")
+		r.Publish(repo.BuildOptions{}, map[string]fixturePkg{"hello": {Version: "1.0.0"}})
+		stateHome := GinkgoT().TempDir()
+		// A directory where the record belongs: reading it fails with EISDIR,
+		// which is not "missing", for root and non-root alike.
+		Expect(os.MkdirAll(trust.SeenPath(stateHome, "repo"), 0o700)).To(Succeed())
+
+		p := profileWithConstraints("repo", r.OutputDir, r.TrustRoot, map[string]string{"hello": ">=1.0.0"})
+		_, err := planner.Plan(GinkgoT().Context(), p, planOpts(stateHome))
+		Expect(err).To(MatchError(ContainSubstring("load trust state")))
+		Expect(err).To(MatchError(ContainSubstring("read trust state")))
 	})
 
 	It("allows the lower version against a fresh state home (no HWM recorded)", func() {
@@ -252,13 +291,16 @@ var _ = Describe("Plan per-package anti-downgrade (D15)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(before.IndexSerial).To(BeNumerically(">", 0))
 
-		// Republish with a non-semver version. Signing and serial bumping are
-		// publisher-side mechanics that do not parse versions, so the index is
-		// validly signed at a higher serial — but BuildCatalog refuses it. The
-		// refusal must not persist the higher serials: otherwise the consumer
-		// is wedged rejecting every replayed good index as a rollback until
-		// the publisher reaches an even higher serial.
-		r.Publish(repo.BuildOptions{}, map[string]fixturePkg{"hello": {Version: "not-semver"}})
+		// Republish with a dependency whose name is not a package-name slug.
+		// Only pkg lint checks relation names, and a --skip-attestations build
+		// never lints, so the index is validly signed at a higher serial — but
+		// BuildCatalog refuses it. The refusal must not persist the higher
+		// serials: otherwise the consumer is wedged rejecting every replayed
+		// good index as a rollback until the publisher reaches an even higher
+		// serial.
+		r.Publish(repo.BuildOptions{SkipAttestations: true}, map[string]fixturePkg{
+			"hello": {Version: "1.0.1", DependsName: "not/a-slug", DependsRange: ">=1.0.0"},
+		})
 		_, err = planner.Plan(GinkgoT().Context(), p, planOpts(stateHome))
 		Expect(err).To(MatchError(ContainSubstring("build catalog")))
 

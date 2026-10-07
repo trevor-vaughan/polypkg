@@ -74,14 +74,10 @@ func makeStatusAttestState(storeRoot string) {
 
 var _ = Describe("status command", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 	setupWithStore := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -288,7 +284,7 @@ var _ = Describe("status command", func() {
 		root := NewRootCmd()
 		root.SetArgs([]string{"status", "-vv"})
 		root.SetOut(&out)
-		_ = root.Execute()
+		Expect(ExitCode(root.Execute())).To(Equal(3))
 		Expect(out.String()).To(ContainSubstring("[builder revoked: builder-a]"))
 	})
 
@@ -499,7 +495,7 @@ func TestCollectRevokedAttestationsEmptyHashGuardAndNilAttestation(t *testing.T)
 	}
 }
 
-// Finding 16: `status --format json` reported "0001-01-01T00:00:00Z" for the
+// `status --format json` used to report "0001-01-01T00:00:00Z" for the
 // current generation even though the retained[] row for the same generation
 // carried the real commit time. The two must agree.
 func TestEmitStatusJSONCurrentCarriesAppliedAt(t *testing.T) {
@@ -643,13 +639,7 @@ var _ = Describe("status platform reporting", func() {
 	// builder-verified binding by builder-a, which the trust state marks
 	// revoked, so both also appear in revoked_builders.
 	setupPlatformState := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", dir)
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
+		dir := sandboxUserEnv(GinkgoTB())
 		storeRoot := filepath.Join(dir, "data", "polypkg")
 		Expect(os.MkdirAll(filepath.Join(storeRoot, "generations", "1", "active"), 0o700)).To(Succeed())
 		Expect(os.Symlink(filepath.Join("generations", "1", "active"), filepath.Join(storeRoot, "active"))).To(Succeed())

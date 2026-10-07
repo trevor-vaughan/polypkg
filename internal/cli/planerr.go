@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/trevor-vaughan/polypkg/internal/planner"
@@ -102,9 +103,12 @@ func attestationPolicyCLIError(err error, ape *planner.AttestationPolicyError) *
 // own hint. Any other network failure becomes a single-line
 // unreachable-source message (the http client and the planner together
 // printed the URL three times; here it appears once, with the transport reason
-// reduced to its most specific tail). A status failure keeps the already-clean
-// `fetch <url>: status N` message; only a 404 on a listed artifact gets the
-// mid-update hint.
+// reduced to its most specific tail).
+// A file the source does not have (an HTTP 404, or a missing file under a
+// local source) is framed by what it is: a listed artifact gets the
+// mid-update hint; a repository file (index, trust document, signatures)
+// names the source and the file and points at the source url. Any other
+// status keeps the already-clean `fetch <url>: status N` message.
 func fetchCLIError(fe *source.FetchError) *CLIError {
 	var se *source.StallError
 	if errors.As(fe, &se) {
@@ -128,10 +132,17 @@ func fetchCLIError(fe *source.FetchError) *CLIError {
 			Err:  fe,
 		}
 	}
-	if fe.Status == 404 && fe.IsArtifact() {
+	if fe.NotFound() && fe.IsArtifact() {
 		return &CLIError{
 			Msg:  fe.Error(),
 			Hint: "the source's index lists this artifact but the server does not serve it; the repository may be mid-update",
+			Err:  fe,
+		}
+	}
+	if fe.NotFound() {
+		return &CLIError{
+			Msg:  fmt.Sprintf("source %q at %s does not serve %s", fe.Source, source.RedactURL(fe.BaseURL), path.Base(fe.URL)),
+			Hint: "check the source url in your profile: it must name the directory `polypkg repo build` publishes, the one holding index.json and trust.json",
 			Err:  fe,
 		}
 	}

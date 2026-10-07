@@ -495,8 +495,12 @@ func bundleWithRoots(t *testing.T, keyID, pubB64 string, roots ...schema.Sigstor
 
 func TestBuildMergesSigstoreRootsDeduped(t *testing.T) {
 	root := t.TempDir()
-	shared := schema.SigstoreRoot{ValidFrom: "2020-01-01T00:00:00Z", FulcioCA: []string{"Q0Ex"}, RekorKeys: []string{"UjE="}}
-	distinct := schema.SigstoreRoot{ValidFrom: "2021-01-01T00:00:00Z", FulcioCA: []string{"Q0Ey"}, RekorKeys: []string{"UjI="}}
+	// Real chains, so the build can fingerprint their roots; the windows
+	// alone tell the two roots apart.
+	shared := publicGoodRoots(t)[0]
+	shared.ValidFrom = "2020-01-01T00:00:00Z"
+	distinct := publicGoodRoots(t)[0]
+	distinct.ValidFrom = "2021-01-01T00:00:00Z"
 	h := stageOnePrebuilt(t, root, "hello", bundleWithRoots(t, "1111111111111111", "QUFB", shared))
 	w := stageOnePrebuilt(t, root, "world", bundleWithRoots(t, "2222222222222222", "QkJC", shared, distinct))
 	mPath, keyDir := writePrebuiltManifest(t, root, h, w)

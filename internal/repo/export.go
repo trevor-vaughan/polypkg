@@ -24,12 +24,11 @@ type ExportResult struct {
 }
 
 // ExportBundle writes a single, self-contained, signed tarball mirror of the
-// already-built repository (spec §10.9 E-1/E-2). selectors chooses what to
-// export: empty = the whole repository; "name" = every version of that package;
-// "name@version" = one version (repeatable). The carried index/trust documents
-// are copied verbatim (their existing signatures still validate); a new
-// completeness manifest listing every bundled file is signed with the same key
-// that signs the index.
+// already-built repository. selectors chooses what to export: empty = the whole
+// repository; "name" = every version of that package; "name@version" = one
+// version (repeatable). The carried index/trust documents are copied verbatim
+// (their existing signatures still validate); a new completeness manifest
+// listing every bundled file is signed with the same key that signs the index.
 func (b *Builder) ExportBundle(selectors []string, bundlePath string) (ExportResult, error) {
 	outDir := b.insp.layout.outputDir
 	source := b.insp.layout.manifest.Source
@@ -127,7 +126,11 @@ func (b *Builder) ExportBundle(selectors []string, bundlePath string) (ExportRes
 		return ExportResult{}, fmt.Errorf("write bundle tar: %w", err)
 	}
 	if err := os.WriteFile(bundlePath, buf.Bytes(), 0o644); err != nil { //nolint:gosec // G306: a mirror tarball is public, redistributable data
-		return ExportResult{}, &PublishError{Msg: "write bundle", Err: err}
+		return ExportResult{}, &PublishError{
+			Msg:  "cannot write bundle " + bundlePath,
+			Hint: "pass -o with a path in a directory you can write to",
+			Err:  err,
+		}
 	}
 	return ExportResult{BundlePath: bundlePath, Entries: len(manifestEntries), Serial: td.Serial, Expires: idx.Expires, Source: source}, nil
 }

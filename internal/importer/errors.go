@@ -32,6 +32,22 @@ func (e *TargetExistsError) Error() string {
 	return fmt.Sprintf("%s already exists; refusing to overwrite it (remove it to import again)", e.Dir)
 }
 
+// CaseVariantError refuses an import because Dir already holds Existing, a
+// directory whose name differs from Want only in letter case. What is
+// "package" when Want is the package name (Dir is Options.OutDir) and
+// "version" when Want is the version (Dir is OutDir/<name>). On a
+// case-insensitive filesystem the two would share a directory, and repo build
+// refuses to publish both.
+type CaseVariantError struct {
+	Dir, Existing, Want, What string
+}
+
+func (e *CaseVariantError) Error() string {
+	return fmt.Sprintf("%q already holds %q, which differs from the %s %q only in letter case; "+
+		"a case-insensitive filesystem would merge them, and repo build refuses to publish both",
+		e.Dir, e.Existing, e.What, e.Want)
+}
+
 // ProvenanceError refuses an import because SLSA provenance GitHub returned
 // for an asset does not verify against the Sigstore trusted root. Index and
 // Total place the attestation among those returned for Asset; Reason is

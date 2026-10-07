@@ -84,7 +84,7 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 
 	// Drift detection runs under the lock and BEFORE apply.start, so a refused
 	// apply has zero side effects — no transaction, no swap, no orphaned start
-	// event in the audit log. (apply-semantics §5.3 step 4.)
+	// event in the audit log.
 	st, err := r.checkDrift(txID)
 	if err != nil {
 		return 0, err
@@ -288,9 +288,8 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 	}
 
 	// Opportunistic GC runs under the still-held apply lock after
-	// apply.complete (apply-semantics §5.3 step 9). Best-effort: failures
-	// emit service.warning but do NOT fail the apply -- the swap has
-	// already committed.
+	// apply.complete. Best-effort: failures emit service.warning but do NOT
+	// fail the apply -- the swap has already committed.
 	if r.opts.GCPolicy != nil {
 		r.runOpportunisticGC(txID)
 	}

@@ -39,10 +39,11 @@ type PoolEntry struct {
 }
 
 // PoolManifest (polypkg.pool-manifest/v1) is the signed completeness manifest —
-// a bill of materials — for a `polypkg repo export-bundle` tarball. It is signed
-// by the SAME key that signs the repository's index (spec §10.9 E-2). Serial and
-// IssuedAt are inherited from the repo's trust document and Expires from its
-// index, so a bundle's freshness tracks the repo snapshot it mirrors.
+// a bill of materials — for a `polypkg repo export-bundle` tarball. It is
+// signed by the SAME key that signs the repository's index, so it is trusted
+// exactly when that index is. Serial and IssuedAt are inherited from the repo's
+// trust document and Expires from its index, so a bundle's freshness tracks the
+// repo snapshot it mirrors.
 type PoolManifest struct {
 	Schema   string      `json:"schema"`
 	Source   string      `json:"source"`

@@ -43,9 +43,7 @@ func makeConfigGen1State(storeRoot string) {
 
 var _ = Describe("config reset command errors", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("returns CLIError when no path or --package is supplied", func() {
@@ -117,9 +115,7 @@ var _ = Describe("config reset", func() {
 
 var _ = Describe("config reset non-interactive", func() {
 	setup := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}

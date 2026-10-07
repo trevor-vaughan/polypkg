@@ -81,7 +81,7 @@ func dsseSLSAEnvelope(subjectName, sha256hex string) []byte {
 
 // buildSignedCarriageRepo builds a signed local repo whose hello package carries
 // an external DSSE-wrapped SLSA attestation binding the bin/hello content file by
-// digest. Used to prove the consumer install-time binding (phase 2b-3).
+// digest. Used to prove the consumer install-time binding.
 func buildSignedCarriageRepo(t testing.TB, sourceName string) (outputDir, trustRoot string) {
 	t.Helper()
 	return buildSignedLocalRepoDecorated(t, sourceName, repo.BuildOptions{}, func(t testing.TB, pkgDir string) {
@@ -116,7 +116,7 @@ func paeTest(payloadType string, body []byte) []byte {
 }
 
 // signedSLSAEnvelope is dsseSLSAEnvelope but with a real ed25519 signature over
-// the DSSE PAE, labelled keyID — the builder-verified fixture for 2c-1a.
+// the DSSE PAE, labelled keyID — the builder-verified fixture.
 func signedSLSAEnvelope(subjectName, sha256hex, keyID string, priv ed25519.PrivateKey) []byte {
 	st := map[string]any{
 		"_type":         "https://in-toto.io/Statement/v1",
@@ -159,7 +159,8 @@ func buildSignedCarriageRepoWith(t testing.TB, sourceName string, envFor func(sh
 }
 
 // builderKeyFixture generates an ed25519 builder key and the schema.BuilderKey
-// entry (open-ended window; 2c-1a does not check the window) a bundle carries.
+// entry (open-ended window, so the build-timestamp gate never fires) a bundle
+// carries.
 func builderKeyFixture(keyID string) (priv ed25519.PrivateKey, entry schema.BuilderKey) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	Expect(err).NotTo(HaveOccurred())
@@ -172,7 +173,7 @@ func builderKeyFixture(keyID string) (priv ed25519.PrivateKey, entry schema.Buil
 }
 
 // builderKeyFixtureWindow is builderKeyFixture with an explicit validity window,
-// so the 2c-1b build-timestamp gate can be exercised in-window vs out-of-window.
+// so the build-timestamp gate can be exercised in-window vs out-of-window.
 func builderKeyFixtureWindow(keyID, validFrom, validUntil string) (priv ed25519.PrivateKey, entry schema.BuilderKey) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	Expect(err).NotTo(HaveOccurred())
@@ -187,7 +188,7 @@ func builderKeyFixtureWindow(keyID, validFrom, validUntil string) (priv ed25519.
 
 // signedSLSAEnvelopeMeta is signedSLSAEnvelope but embeds a real SLSA predicate
 // carrying builderID + finishedOn at the version-specific path for predicateType,
-// and signs the DSSE PAE with priv under keyID — the 2c-1b fixture proving
+// and signs the DSSE PAE with priv under keyID — the fixture proving
 // builder_identity extraction and the build-timestamp window gate.
 func signedSLSAEnvelopeMeta(subjectName, sha256hex, keyID string, priv ed25519.PrivateKey, predicateType, builderID, finishedOn string) []byte {
 	var predicate map[string]any
@@ -356,7 +357,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 			Expect(att.Status).To(Equal("verified"))
 			// The carried envelope is DSSE-wrapped but no trust bundle is published,
 			// so its builder signature cannot be verified: honest transport-only
-			// state (2c-1a), digest-bound but builder-unverified — NOT builder-verified.
+			// state, digest-bound but builder-unverified — NOT builder-verified.
 			Expect(att.CarriedBindings).To(HaveLen(1))
 			Expect(att.CarriedBindings[0].Tier).To(Equal(schema.CarriedTierVerifiedTransportOnly))
 			Expect(att.CarriedBindings[0].Format).To(Equal(schema.FormatSLSAProvenance))
@@ -367,7 +368,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		It("records the carried attestation's content-hash on the binding", func() {
 			out, tr := buildSignedCarriageRepo(GinkgoTB(), "repo")
 			// Find the carried ref's published content-hash so we can assert the
-			// binding records exactly that value (the offline revocation key, 2c-0).
+			// binding records exactly that value (the key a revocation list names).
 			var carriedHash string
 			for _, ref := range readPublishedIndex(GinkgoTB(), out).Packages["hello"][0].Attestations {
 				if ref.Kind == schema.KindCarriedOpaque {
@@ -495,7 +496,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 			Expect(b[0].BuilderIdentity).To(Equal("https://ci/v02"))
 		})
 
-		It("stays builder-verified with a bounded-window key when the envelope carries no build timestamp (F1)", func() {
+		It("stays builder-verified with a bounded-window key when the envelope carries no build timestamp", func() {
 			priv, keyEntry := builderKeyFixtureWindow("builder-a", "2020-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
 			out, tr, kp := buildSignedCarriageRepoWith(GinkgoTB(), "repo", func(sha string) []byte {
 				return signedSLSAEnvelope("bin/hello", sha, "builder-a", priv)
@@ -512,7 +513,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	Context("SBOM carriage (2c-2)", func() {
+	Context("SBOM carriage", func() {
 		far := "2099-01-01T00:00:00Z"
 
 		It("reaches builder-verified for a DSSE-wrapped, builder-signed SPDX SBOM", func() {
@@ -585,7 +586,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	Context("revoked attestation (2c-0)", func() {
+	Context("revoked attestation", func() {
 		far := "2099-01-01T00:00:00Z"
 
 		It("refuses to install a package whose attestation content-hash is revoked", func() {
@@ -609,7 +610,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	Context("present-but-tampered attestation (D-C10)", func() {
+	Context("present-but-tampered attestation", func() {
 		// A present attestation must hard-verify in EVERY policy mode — the
 		// policy setting only governs absence.
 		for _, policy := range []string{"warn", "require", "off"} {
@@ -631,7 +632,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		}
 	})
 
-	Context("per-source require gate (2d-1)", func() {
+	Context("per-source require gate", func() {
 		// profileForLocalSource builds a native-source profile; we set the new
 		// per-source Attestation block directly on the source struct.
 		withRequire := func(out, tr string, pol *schema.SourceAttestationPolicy) *schema.Profile {
@@ -661,7 +662,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	Context("posture floor (2d-2)", func() {
+	Context("posture floor", func() {
 		It("refuses when a previously-verified predicate regresses, and the exact-version pin accepts it", func() {
 			// apply1: an attested repo records the native SARIF predicate.
 			out1, tr1 := buildSignedLocalRepo(GinkgoTB(), "repo", repo.BuildOptions{})
@@ -695,7 +696,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	Context("per-source off (2d-3, G8)", func() {
+	Context("per-source off (G8)", func() {
 		withTier := func(out, tr, tier string) *schema.Profile {
 			p := profileForLocalSource("repo", out, tr)
 			sb := p.Sources.Sources["repo"]
@@ -720,7 +721,7 @@ var _ = Describe("Plan attestation policy gate", func() {
 			Expect(res.Manifest.Entries[0].Attestation.Status).To(Equal("unattested"))
 		})
 
-		It("still hard-verifies a PRESENT attestation from an off source (D-C10 not bypassed)", func() {
+		It("still hard-verifies a PRESENT attestation from an off source (off waives only an absent attestation)", func() {
 			out, tr := buildSignedLocalRepo(GinkgoTB(), "repo", repo.BuildOptions{})
 			tamperAttestation(GinkgoTB(), out)
 			p := withTier(out, tr, schema.AttestationTierOff)
@@ -737,7 +738,8 @@ var _ = Describe("Plan attestation policy gate", func() {
 			Expect(res1.Manifest.Entries[0].Attestation.PredicateTypes).To(ContainElement(attest.PredicateTypeSARIF))
 
 			// apply2: unattested via an OFF source + the prior manifest. Without
-			// off the floor would refuse (see the 2d-2 test); off waives it, loudly.
+			// off the floor would refuse (see the posture floor tests); off waives
+			// it, loudly.
 			out2, tr2 := buildSignedLocalRepo(GinkgoTB(), "repo", repo.BuildOptions{SkipAttestations: true})
 			p2 := withTier(out2, tr2, schema.AttestationTierOff)
 			opts := planOpts("")
@@ -750,10 +752,10 @@ var _ = Describe("Plan attestation policy gate", func() {
 
 		It("still refuses a REVOKED present attestation from an off source (revocation not bypassed)", func() {
 			// off is a policy relaxation, not a verification bypass: a revoked
-			// attestation content-hash refuses in every mode (2c-0), before the
-			// present/absent policy split, so tier: off never reaches it. Closes the
-			// spec §10.8 #7 / §11 G8 matrix row (previously covered only by code
-			// structure — see the 2d-3 holistic review follow-up).
+			// attestation content-hash refuses in every mode, before the
+			// present/absent policy split, so tier: off never reaches it. Covers the
+			// G8 revoked-attestation case, which was previously covered only by code
+			// structure.
 			out, tr, kp := buildSignedLocalRepoWithKeypair(GinkgoTB(), "repo", repo.BuildOptions{}, nil)
 			hash := readPublishedIndex(GinkgoTB(), out).Packages["hello"][0].Attestations[0].ContentHash
 			writeRevocations(out, kp, "repo", 1, "2099-01-01T00:00:00Z", []string{hash})
@@ -765,12 +767,12 @@ var _ = Describe("Plan attestation policy gate", func() {
 		})
 	})
 
-	// The consumer-pinned sigstore root (2e-5) is unit-tested at the bindCarriedRefs
-	// half (planner_attest_whitebox_test.go) and at trust.SelectSigstoreRoot, but the
+	// The consumer-pinned sigstore root is unit-tested at the bindCarriedRefs
+	// half (planner_attest_whitebox_test.go) and at trust.SelectSigstoreRoots, but the
 	// production wiring in Plan that READS profile SourceBackend.SigstoreRoot and threads
 	// it into bindCarriedRefs (planner.go: `pinnedSigstoreRoot = sb.SigstoreRoot`) was
 	// never exercised end to end: deleting it left every test green. This closes that gap.
-	Context("consumer-pinned sigstore root (2e-5 profile→Plan wiring)", func() {
+	Context("consumer-pinned sigstore root wired from the profile into Plan", func() {
 		readAttestFixture := func(name string) []byte {
 			b, err := os.ReadFile(filepath.Join("..", "attest", "testdata", name))
 			Expect(err).NotTo(HaveOccurred())

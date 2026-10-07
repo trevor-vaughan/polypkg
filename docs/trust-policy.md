@@ -15,7 +15,7 @@ the next fetch is refused while the installed package keeps working:
 <sub>Rendered from [`.taskfiles/demo/trust.tape`](../.taskfiles/demo/trust.tape); regenerate with `task demo:render SCENARIO=trust`.</sub>
 
 > **The trust root is pinned by content, not by path.** Whichever way you
-> supply it — `init --trust-root-file`, `init --trust-root-url`, the wizard,
+> supply it — `init --trust-root`, `init --trust-root-url`, the wizard,
 > `source add --trust-root`, or `source set-trust-root` — polypkg copies the key into
 > `<config>/trust/<source>.pub` and records *that* path in the profile. Your own
 > copy is read once and never referenced again, so it does not matter if you
@@ -31,7 +31,7 @@ Everything a source serves is verified before it installs:
 
 1. **Signed, fresh metadata.** A source's trust document and index are minisign-signed and carry a monotonic serial plus an `expires` bound. Metadata past its `expires` (with a small clock-skew tolerance) is refused; the error names the document and its expiry, then spells out the two ways forward — `set accept_expiry_until to grace a frozen mirror, or the publisher must re-sign`. A mirror cannot pin you to an old-but-validly-signed catalog.
 2. **Artifact signatures.** Every downloaded artifact is verified against the source's signing key and its BLAKE3 content hash from the signed index.
-3. **Attestations.** Publishers sign a per-package [in-toto](https://in-toto.io/) lint attestation and reference it from the signed index (so it cannot be stripped without invalidating the index signature). When an index entry carries attestations, polypkg verifies the whole chain — the attestation signature under the dedicated `attestation` key role, the content-addressed hash bindings, and that the statement's subject digest matches the artifact — in **every** policy mode.
+3. **Attestations.** Publishers sign a per-package [in-toto](https://in-toto.io/) lint attestation and reference it from the signed index (so it cannot be stripped without invalidating the index signature). When an index entry carries attestations, polypkg verifies the whole chain — the attestation signature under the dedicated `attestation` key role, the content-addressed hash bindings, and that the statement's subject digest matches the artifact — in **every** policy mode. The lint attestation's predicate type is `https://polypkg.dev/attestation/sarif/v1`. A package published with carried external provenance (such as the GitHub build attestations `pkg import` keeps) also gets a link attestation, predicate type `https://polypkg.dev/attestation/link/v1`, which the publisher signs to bind the shipped artifact to the digests that provenance covers. `info` names the verified predicate types after `verified`.
 
 **What an attestation proves: provenance, not benignity.** A verified attestation means the package was lint-checked and published by the holder of the source's signing key and has not been substituted or tampered with since. It does not mean the package is safe to run — vet your sources.
 
@@ -192,7 +192,7 @@ polypkg remembers, per package, which provenance predicate types were verified a
 
 This is a trust-on-first-use ratchet against a silent provenance downgrade (a compromised or swapped source quietly dropping its SLSA provenance), and it is keyed by package name across sources, so moving a package to a lower-provenance source is caught too.
 
-To accept a legitimate drop (a publisher genuinely stopped shipping a predicate), pin the exact version in the profile — the same escape hatch the version anti-downgrade guard takes ([§ "Downgrade guard"](#downgrade-guard)). Note that `upgrade` and `install <pkg>@<version>` write exact pins, so they also waive the floor for the packages they touch.
+To accept a legitimate drop (a publisher genuinely stopped shipping a predicate), pin the exact version in the profile — the same escape hatch the version anti-downgrade guard takes ([§ "Downgrade guard"](#downgrade-guard)). Only an exact pin waives the floor, and only two commands write one: `install <pkg>@<version>` writes `=<version>`, and `upgrade <pkg>` moves a pin that is already exact to `=<newest>`. Bare `install <pkg>` writes a `>=` floor, bare `upgrade` edits nothing, and `upgrade <pkg>` leaves a range constraint unchanged, so none of those waives it.
 
 Moving an already-installed package onto a re-publishing mirror trips this floor
 for a specific, expected reason; [Mirroring a repository](mirroring.md) covers

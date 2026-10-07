@@ -381,7 +381,7 @@ packages:
 		})
 	})
 
-	Describe("malformed packages node (I1)", func() {
+	Describe("malformed packages node", func() {
 		It("returns a typed error when packages is not a map", func() {
 			const malformed = `schema: polypkg.spec/v1
 name: bad

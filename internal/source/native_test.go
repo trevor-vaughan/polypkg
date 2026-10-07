@@ -233,6 +233,12 @@ var _ = Describe("NativeBackend", func() {
 			Expect(errors.Is(err, ErrMetadataAbsent)).To(BeTrue(), "err = %v", err)
 		})
 
+		It("returns ErrMetadataAbsent when a local source publishes no bundle", func() {
+			b := NewNativeBackend(NativeBackendOpts{URL: GinkgoT().TempDir(), CacheDir: GinkgoT().TempDir()})
+			_, _, err := b.FetchTrustBundle(context.Background())
+			Expect(errors.Is(err, ErrMetadataAbsent)).To(BeTrue(), "err = %v", err)
+		})
+
 		It("returns a hard error, not ErrMetadataAbsent, when the document is present but its signature is missing", func() {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/trust-bundle.json", func(w http.ResponseWriter, r *http.Request) {

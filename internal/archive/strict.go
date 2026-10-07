@@ -13,13 +13,28 @@ import (
 	"unicode"
 )
 
-// Member-name bounds. A name is refused beyond them, which also bounds the
-// work of creating its ancestors. maxMemberName matches Linux's PATH_MAX.
-// MaxMemberDepth is exported so callers can bound strip_components by it.
+// Member-name bounds. Both policies refuse a name beyond them, which also
+// bounds the work of creating its ancestors. maxMemberName matches Linux's
+// PATH_MAX. MaxMemberDepth is exported so callers can bound strip_components
+// by it.
 const (
 	maxMemberName  = 4096
 	MaxMemberDepth = 64
 )
+
+// CheckNameBounds refuses a member name longer than 4096 bytes or with more
+// than MaxMemberDepth path segments, as both extraction policies do. It is
+// exported so an archive writer can refuse such a name before it ships an
+// archive no extraction would accept.
+func CheckNameBounds(name string) error {
+	if len(name) > maxMemberName {
+		return fmt.Errorf("member name %q... is longer than %d bytes", name[:64], maxMemberName)
+	}
+	if len(memberSegments(name)) > MaxMemberDepth {
+		return fmt.Errorf("member name %q has more than %d path segments", name, MaxMemberDepth)
+	}
+	return nil
+}
 
 // strictMember is one archive member as PolicyStrict sees it, independent of
 // whether it came from a tar stream or a zip central directory.
@@ -195,12 +210,13 @@ func (x *strictExtractor) countEntry() error {
 // ("C:evil"); that check runs after strip and cleaning, so neither a
 // leading "./" nor a stripped prefix hides it.
 func memberPath(name string, strip int) (rel string, ok bool, err error) {
-	switch {
-	case name == "":
+	if name == "" {
 		return "", false, errors.New("extraction rejected: archive member with an empty name")
-	case len(name) > maxMemberName:
-		return "", false, fmt.Errorf("extraction rejected: member name %q... is longer than %d bytes", name[:64], maxMemberName)
-	case strings.ContainsRune(name, 0):
+	}
+	if err := CheckNameBounds(name); err != nil {
+		return "", false, fmt.Errorf("extraction rejected: %w", err)
+	}
+	if strings.ContainsRune(name, 0) {
 		return "", false, fmt.Errorf("extraction rejected: member name %q contains a NUL byte", name)
 	}
 	if err := checkNameRunes(name); err != nil {
@@ -217,9 +233,6 @@ func memberPath(name string, strip int) (rel string, ok bool, err error) {
 		if s == ".." {
 			return "", false, fmt.Errorf("extraction rejected: member name %q contains a '..' segment", name)
 		}
-	}
-	if len(segs) > MaxMemberDepth {
-		return "", false, fmt.Errorf("extraction rejected: member name %q has more than %d path segments", name, MaxMemberDepth)
 	}
 	if len(segs) <= strip {
 		return "", false, nil

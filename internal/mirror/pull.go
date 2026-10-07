@@ -31,7 +31,7 @@ type PullOptions struct {
 	TrustRoot         string   // path to the source's trust_root.pub anchor
 	SourceType        string   // trust type; "" defaults to "polypkg-native"
 	SourceName        string   // logical name (verifier context)
-	AcceptExpiryUntil string   // optional 2e-1 freshness grace deadline (RFC3339)
+	AcceptExpiryUntil string   // optional freshness grace deadline for expired metadata (RFC3339)
 	Selectors         []string // empty ⇒ latest of every package; "name" ⇒ latest of name; "name@version" ⇒ that one
 	// AllVersions widens what an unpinned selection means, from "latest" to
 	// "every published version": with no selectors, every version of every
@@ -47,19 +47,19 @@ type PullOptions struct {
 	StateHome string
 }
 
-// PulledPackage records one verified (and, from Task 2, staged) package.
+// PulledPackage records one verified and staged package.
 type PulledPackage struct {
 	Name         string
 	Version      string
 	ContentHash  string // blake3: of the artifact (from the verified index)
-	ArtifactPath string // staged .tar.zst (absolute) — set by Task 2
-	AttDir       string // staged attestations dir (absolute) — set by Task 2
+	ArtifactPath string // staged .tar.zst (absolute)
+	AttDir       string // staged attestations dir (absolute)
 }
 
 // PullResult reports a completed pull.
 type PullResult struct {
 	Packages        []PulledPackage
-	TrustBundlePath string   // staged trust-bundle.json — set by Task 3
+	TrustBundlePath string   // staged trust-bundle.json
 	Graced          []string // freshness-graced doc notes (surfaced loudly by callers)
 	// Narrowed lists the packages for which this pull mirrored only the
 	// latest upstream version even though the upstream published more than
@@ -88,7 +88,7 @@ type PullResult struct {
 }
 
 // PrebuiltManifestParams are the local re-publish settings for the generated
-// manifest (used by WritePrebuiltManifest in Task 3).
+// manifest (used by WritePrebuiltManifest).
 type PrebuiltManifestParams struct {
 	Source  string
 	Output  string
@@ -100,7 +100,7 @@ type PrebuiltManifestParams struct {
 // index, resolves the selection to one entry per package name, and stages each
 // verified artifact, its attestation blobs, and the trust bundle. It reuses the
 // trust crypto kernel (state.Verify). The digest re-binding is repo build's
-// ingest job (2e-3a), not done here.
+// prebuilt ingest job, not done here.
 //
 // Anti-rollback: the mirror re-signs what it pulls, so its clients can only be
 // as current as the mirror. Pull therefore enforces the upstream's serial
@@ -209,6 +209,7 @@ func pull(ctx context.Context, opts PullOptions) (*PullResult, string, error) {
 	}
 	backend := source.NewNativeBackend(source.NativeBackendOpts{
 		URL:      opts.URL,
+		Source:   opts.SourceName,
 		CacheDir: filepath.Join(opts.StageDir, ".cache"),
 	})
 
@@ -348,8 +349,8 @@ func pull(ctx context.Context, opts PullOptions) (*PullResult, string, error) {
 	}
 
 	// Optional upstream trust bundle. Stage it verbatim (verified) for
-	// carry-forward by `repo build` (2e-3a). The same absence rules as the
-	// revocation list apply: absent and never seen means nothing to carry, and
+	// carry-forward by `repo build`'s prebuilt ingest. The same absence rules as
+	// the revocation list apply: absent and never seen means nothing to carry, and
 	// absent after one was seen is a strip.
 	bundleSerial := seen.BundleSerial
 	bDoc, bSig, berr := backend.FetchTrustBundle(ctx)
@@ -716,8 +717,9 @@ type pullSelection struct {
 // platform build of that version. Selections are ordered by name, then (for
 // latest and pins) by platform; the agnostic group sorts first.
 //
-// An index that lists one (name, version, platform) more than once is
-// refused before anything is selected, whichever packages are selected:
+// An index that lists one (name, version, platform) more than once, or that
+// holds two names or two versions of one name differing only in letter case,
+// is refused before anything is selected, whichever packages are selected:
 // repo build never publishes one, so the signed document is malformed.
 //
 // It also returns narrowing notes: whenever a "latest" resolution (empty
@@ -735,6 +737,11 @@ type pullSelection struct {
 func resolvePullSelection(index *schema.Index, selectors []string, allVersions bool) ([]pullSelection, []string, error) {
 	if err := refuseDuplicateBuilds(index); err != nil {
 		return nil, nil, err
+	}
+	// Staging lays builds out as <name>/<version>/, so names or versions that
+	// differ only in case would share a directory on macOS or Windows.
+	if err := schema.CaseFoldCollision(index); err != nil {
+		return nil, nil, fmt.Errorf("upstream index: %w", err)
 	}
 	// pick resolves name to "latest": the newest version within each
 	// platform group (platform-agnostic entries are the "" group), ordered by
@@ -760,10 +767,9 @@ func resolvePullSelection(index *schema.Index, selectors []string, allVersions b
 				best[p], bestV[p] = i, v
 				continue
 			}
-			// Compare ignores build metadata and a "v" prefix, so 1.0.0+a and
-			// 1.0.0+b tie; keep the lexically smaller spelling, as pickAll
-			// orders them, so the pick does not depend on index order.
-			if c := v.Compare(cur); c > 0 || c == 0 && entries[i].Version < entries[best[p]].Version {
+			// refuseDuplicateBuilds left one entry per semver version in a
+			// platform group, so two versions here never compare equal.
+			if v.GreaterThan(cur) {
 				best[p], bestV[p] = i, v
 			}
 		}
@@ -906,28 +912,42 @@ func resolvePullSelection(index *schema.Index, selectors []string, allVersions b
 }
 
 // refuseDuplicateBuilds fails when the index lists one (name, version,
-// platform) more than once. repo build never publishes such an index, so a
-// signed one is malformed. Per-platform "latest" would keep one copy and
-// silently drop the other; a pin or --all-versions would stage both copies to
-// one directory and hand repo build two prebuilt entries for a single
-// artifact. Names are checked in sorted order so the error is deterministic.
+// platform) more than once, comparing versions as semantic versions, so "1.0"
+// and "1.0.0", or "1.0.0+a" and "1.0.0+b", for one platform are a duplicate.
+// repo build never publishes such an index, so a signed one is malformed.
+// Per-platform "latest" would keep one copy and silently drop the other; a pin
+// or --all-versions would stage both copies and hand repo build two prebuilt
+// entries for a single version. A version that is not semver fails too, as it
+// does on every other path. Names are checked in sorted order so the error is
+// deterministic.
 func refuseDuplicateBuilds(index *schema.Index) error {
 	names := make([]string, 0, len(index.Packages))
 	for name := range index.Packages {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	type build struct{ version, platform string }
+	type build struct {
+		version  schema.VersionKey
+		platform string
+	}
 	for _, name := range names {
-		seen := map[build]bool{}
+		seen := map[build]string{} // -> the entry's spelling of the version
 		entries := index.Packages[name]
 		for i := range entries {
-			k := build{entries[i].Version, entries[i].Platform}
-			if seen[k] {
-				return fmt.Errorf("upstream index lists %q %q for platform %q more than once",
-					name, k.version, platform.Display(k.platform))
+			v, err := semver.NewVersion(entries[i].Version)
+			if err != nil {
+				return fmt.Errorf("package %q version %q is not semver", name, entries[i].Version)
 			}
-			seen[k] = true
+			k := build{schema.VersionKeyOf(v), entries[i].Platform}
+			if prev, dup := seen[k]; dup {
+				also := ""
+				if prev != entries[i].Version {
+					also = fmt.Sprintf(" (also as %q)", prev)
+				}
+				return fmt.Errorf("upstream index lists %q %q for platform %q more than once%s",
+					name, entries[i].Version, platform.Display(entries[i].Platform), also)
+			}
+			seen[k] = entries[i].Version
 		}
 	}
 	return nil
@@ -942,7 +962,8 @@ func refuseDuplicateBuilds(index *schema.Index) error {
 // group's only version. The agnostic group keeps the unqualified "name:"
 // prefix; a platform group is named "name (os/arch):". versions holds each
 // entry's parsed version; skipped versions are listed in semver order (1.9.0
-// before 1.10.0), with semver-equal spellings ordered by spelling.
+// before 1.10.0). refuseDuplicateBuilds left no two semver-equal versions in
+// one group, so the order is total.
 func narrowingNote(name, plat string, entries []schema.IndexEntry, versions []*semver.Version, picked string) string {
 	var skippedIdx []int
 	for i := range entries {
@@ -954,11 +975,7 @@ func narrowingNote(name, plat string, entries []schema.IndexEntry, versions []*s
 		return ""
 	}
 	sort.Slice(skippedIdx, func(i, j int) bool {
-		a, b := skippedIdx[i], skippedIdx[j]
-		if c := versions[a].Compare(versions[b]); c != 0 {
-			return c < 0
-		}
-		return entries[a].Version < entries[b].Version
+		return versions[skippedIdx[i]].LessThan(versions[skippedIdx[j]])
 	})
 	skipped := make([]string, len(skippedIdx))
 	for i, idx := range skippedIdx {

@@ -47,7 +47,7 @@ type TrustBundle struct {
 	Source        string         `json:"source"`
 	Serial        uint64         `json:"serial"`
 	IssuedAt      string         `json:"issued_at,omitempty"`
-	Expires       string         `json:"expires"` // RFC3339; consumer rejects stale (D13)
+	Expires       string         `json:"expires"` // RFC3339; consumer rejects stale
 	BuilderKeys   []BuilderKey   `json:"builder_keys,omitempty"`
 	SigstoreRoots []SigstoreRoot `json:"sigstore_roots,omitempty"`
 }

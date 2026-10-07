@@ -56,7 +56,7 @@ tasks:
 
   provenance:fixtures:
     desc: 'Generate carried-provenance fixtures (host-side) for the e2e matrix'
-    cmd: 'go run {{.ROOT_DIR}}/tests/e2e/provenancegen -o {{.OUT_DIR}}/provenance-fixtures && chmod -R a+rX {{.OUT_DIR}}/provenance-fixtures'
+    cmd: '{{.GO_READONLY}} go run {{.ROOT_DIR}}/tests/e2e/provenancegen -o {{.OUT_DIR}}/provenance-fixtures && chmod -R a+rX {{.OUT_DIR}}/provenance-fixtures'
 
   up:
     desc: 'Start the repo-server and the fake GitHub, and wait until both serve'

@@ -1,5 +1,6 @@
 // Package action implements polypkg's declarative install-time actions
-// (install, symlink, dir, perms in M1) with scope enforcement.
+// (install, dir, path, symlink, alternatives, perms, ...) with scope
+// enforcement.
 package action
 
 import (

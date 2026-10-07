@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -42,7 +43,7 @@ completeness manifest checks out against the trust root, the manifest is fresh
 (or within --accept-expiry-until grace), and every listed blob is present and
 byte-identical with no un-listed file smuggled in. Any failure names the
 offending file and exits non-zero.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<bundle.tar>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -60,16 +61,34 @@ func runMirrorVerify(cmd *cobra.Command, bundlePath string, format Format) error
 	trustRoot, _ := cmd.Flags().GetString("trust-root")
 	acceptUntil, _ := cmd.Flags().GetString("accept-expiry-until")
 	res, err := mirror.VerifyBundle(bundlePath, mirror.VerifyOptions{TrustRootPath: trustRoot, AcceptExpiryUntil: acceptUntil})
+	var be *mirror.BundleReadError
+	if errors.As(err, &be) {
+		const what = "a bundle is the tar file `polypkg repo export-bundle` or `polypkg mirror pull --bundle` writes"
+		switch {
+		case be.NotTar:
+			return &CLIError{Msg: be.Path + " is not a polypkg bundle", Hint: what + "; if this is one, it is truncated or damaged: copy it again", Err: err}
+		case errors.Is(be.Err, fs.ErrNotExist):
+			return &CLIError{Msg: "bundle " + be.Path + " does not exist", Hint: "check the path; " + what, Err: err}
+		default:
+			return &CLIError{Msg: fsFailureMsg("cannot read bundle "+be.Path, be.Err), Hint: "check that you can read the bundle file", Err: err}
+		}
+	}
 	if err != nil {
 		return err
 	}
 	if res.Graced {
 		fmt.Fprintf(cmd.ErrOrStderr(), "SECURITY: bundle manifest expired — accepted under grace until %s (freshness relaxed; completeness still enforced)\n", acceptUntil)
 	}
+	pinned := trustRoot != ""
 	EmitResult(cmd, format, "mirror verify",
-		map[string]any{"source": res.Source, "serial": res.Serial, "expires": res.Expires, "entries": res.EntriesChecked, "graced": res.Graced},
+		map[string]any{"source": res.Source, "serial": res.Serial, "expires": res.Expires, "entries": res.EntriesChecked, "graced": res.Graced, "pinned": pinned},
 		func(w *bytes.Buffer, d map[string]any) {
-			fmt.Fprintf(w, "OK: %v (serial %v), %v files verified\n", d["source"], d["serial"], d["entries"])
+			if pinned {
+				fmt.Fprintf(w, "OK: %v (serial %v), %v files verified\n", d["source"], d["serial"], d["entries"])
+				return
+			}
+			fmt.Fprintf(w, "OK: %v (serial %v), %v files verified (self-consistency only: checked against the trust root inside the bundle; pass --trust-root to check who signed it)\n",
+				d["source"], d["serial"], d["entries"])
 		})
 	return nil
 }
@@ -151,9 +170,7 @@ it has published before. See docs/mirroring.md before resetting that state.`,
 	// Strip
 	cmd.Flags().Bool("fresh", false, "Drop upstream attestations and builder keys/roots; re-anchor on the local key alone")
 
-	_ = cmd.MarkFlagRequired("repo-source")
-	_ = cmd.MarkFlagRequired("output-dir")
-	_ = cmd.MarkFlagRequired("key")
+	requireFlags(cmd, "repo-source", "output-dir", "key")
 	return cmd
 }
 
@@ -526,10 +543,21 @@ func stripFresh(stageRoot string, results []*mirror.PullResult) error {
 // resetSection is where docs/mirroring.md explains resetting a floor record.
 const resetSection = `docs/mirroring.md, "Resetting after an upstream is re-created"`
 
-// mirrorPullError frames a refusal that comes from an upstream's anti-rollback
-// record as a CLIError: one sentence naming the upstream, and a hint naming the
-// record file. The full chain stays in Err. Any other error passes through.
+// mirrorPullError frames an upstream refusal as a CLIError. A trust document
+// bound to another source name gets the mirror-side remedy (--source-name),
+// not the client-side one withRecoveryHint would give. A refusal that comes
+// from an upstream's anti-rollback record gets one sentence naming the
+// upstream and a hint naming the record file. The full chain stays in Err.
+// Any other error passes through.
 func mirrorPullError(perr error) error {
+	var mm *trust.SourceNameMismatchError
+	if errors.As(perr, &mm) {
+		return &CLIError{
+			Msg:  perr.Error(),
+			Hint: fmt.Sprintf("this upstream publishes source %q; pass --source-name %s, or set source_name: %s on its --sources-file entry", mm.Doc, mm.Doc, mm.Doc),
+			Err:  perr,
+		}
+	}
 	var ue *mirror.UpstreamError
 	if !errors.As(perr, &ue) || ue.FloorRecord == "" {
 		return perr

@@ -1,5 +1,5 @@
 name: Attestation gate off (G8 - per-source tier off is loud and recorded)
-# G8 (spec §11): a source configured `attestation: { tier: off }` disables the
+# G8: a source configured `attestation: { tier: off }` disables the
 # attestation gate for its packages. apply/install MUST emit an unsuppressible
 # SECURITY warning, RECORD the gate-off in the audit log, and surface it in
 # status/info — so an operator can never silently ship with the gate down.

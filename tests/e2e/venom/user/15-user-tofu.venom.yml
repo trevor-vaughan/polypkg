@@ -23,13 +23,13 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
 
-  - name: TOFU without a fingerprint is not confirmed on a non-interactive stdin
+  - name: TOFU without a fingerprint is refused on a non-interactive stdin
     steps:
       - type: exec
         script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --scope user </dev/null'
         assertions:
           - result.code ShouldNotEqual 0
-          - result.systemerr ShouldContainSubstring "not confirmed"
+          - result.systemerr ShouldContainSubstring "stdin is not a terminal"
 
   - name: TOFU refuses a fingerprint that does not match the downloaded key
     steps:

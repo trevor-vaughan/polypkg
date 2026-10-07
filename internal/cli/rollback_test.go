@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/alternatives"
 	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/substrate"
@@ -19,9 +20,7 @@ import (
 
 var _ = Describe("rollback command errors", func() {
 	setup := func() (string, string) {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		return dir, filepath.Join(dir, "data", "polypkg")
 	}
 
@@ -88,14 +87,7 @@ var _ = Describe("rollback and incomplete generations", func() {
 	var storeRoot, stateRoot string
 
 	BeforeEach(func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", filepath.Join(dir, "home"))
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
-		GinkgoT().Setenv("XDG_DATA_DIRS", filepath.Join(dir, "share"))
+		dir := sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		stateRoot = filepath.Join(dir, "state", "polypkg")
 	})
@@ -243,6 +235,35 @@ var _ = Describe("rollback and incomplete generations", func() {
 		Expect(activeTarget()).To(Equal(filepath.Join("generations", "2", "active")))
 	})
 
+	// The swap commits before rollback reads the activated generation's
+	// ownership and reconciles alternatives. A failure there must say the
+	// rollback itself happened, so the user re-runs a reconcile instead of
+	// assuming the old generation is still live.
+	It("reports a post-swap ownership read failure as a succeeded rollback", func() {
+		commit("tx-1")
+		commit("tx-2")
+		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "ownership.json"), []byte("not json"), 0o600)).To(Succeed())
+
+		_, err := runRollbackCmd()
+		Expect(err).To(MatchError(ContainSubstring("rollback to generation 1 succeeded but reading its ownership failed")))
+		Expect(activeTarget()).To(Equal(filepath.Join("generations", "1", "active")),
+			"the swap committed before the ownership read, so generation 1 is live")
+	})
+
+	It("reports a post-swap alternatives reconcile failure as a succeeded rollback", func() {
+		commit("tx-1")
+		commit("tx-2")
+		selections := alternatives.SelectionsPath(filepath.Join(storeRoot, "state"))
+		Expect(os.MkdirAll(filepath.Dir(selections), 0o700)).To(Succeed())
+		Expect(os.WriteFile(selections, []byte("not json"), 0o600)).To(Succeed())
+
+		_, err := runRollbackCmd()
+		Expect(err).To(MatchError(ContainSubstring("rollback to generation 1 succeeded but reconciling alternatives failed")))
+		Expect(err).To(MatchError(ContainSubstring("re-run apply or rollback to reconcile")))
+		Expect(activeTarget()).To(Equal(filepath.Join("generations", "1", "active")),
+			"the swap committed before the reconcile, so generation 1 is live")
+	})
+
 	It("fails fast naming the holder while another command holds the apply lock", func() {
 		if os.Getuid() == 0 {
 			Skip("flock EWOULDBLOCK tests do not apply when running as root")
@@ -267,5 +288,11 @@ var _ = Describe("rollback and incomplete generations", func() {
 		Expect(cliErr.Msg).To(ContainSubstring("polypkg apply"))
 		Expect(activeTarget()).To(Equal(filepath.Join("generations", "2", "active")),
 			"rollback must not switch generations without the lock")
+	})
+})
+
+var _ = Describe("rollback help", func() {
+	It("says that rollback leaves the profile as it is", func() {
+		Expect(newRollbackCmd().Long).To(ContainSubstring("rollback does not edit your profile"))
 	})
 })

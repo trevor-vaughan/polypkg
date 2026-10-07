@@ -27,7 +27,7 @@ import (
 type Limits struct {
 	MaxFileBytes  int64 // largest single regular file
 	MaxTotalBytes int64 // all regular files together
-	MaxEntries    int   // members of any type, skipped ones included; under PolicyStrict every directory created, implicit parents included, counts too
+	MaxEntries    int   // members of any type, skipped ones included, plus every directory created as a member's implicit parent
 }
 
 // DefaultLimits returns the limits polypkg extracts with: 1 GiB per file,
@@ -45,12 +45,14 @@ const (
 	_ Policy = iota
 
 	// PolicyPackage is how polypkg unpacks its own package artifacts.
-	// Directories, regular files and symlinks whose target stays inside the
-	// root are created; hardlinks, devices, FIFOs and every other member type
-	// are skipped without error. A file keeps its archive permission bits plus
-	// owner-read, an explicit directory its bits plus owner rwx; a mode that
-	// carries setuid, setgid or sticky is refused. A later regular file at the
-	// same path rewrites the earlier one's content and keeps its mode.
+	// Directories, regular files and symlinks are created; hardlinks, devices,
+	// FIFOs and every other member type are skipped without error. A symlink
+	// target must pass the same check as under PolicyStrict: not absolute, not
+	// escaping the root, and no ".." after a named segment. A file keeps its
+	// archive permission bits plus owner-read, an explicit directory its bits
+	// plus owner rwx; a mode that carries setuid, setgid or sticky is refused.
+	// A later regular file at the same path rewrites the earlier one's content
+	// and keeps its mode.
 	PolicyPackage
 	// PolicyStrict extracts third-party archives: it refuses every entry type
 	// other than regular files, directories and in-root symlinks, refuses
@@ -122,9 +124,8 @@ func ExtractTar(r io.Reader, root *os.Root, opts Options) ([]Placed, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
-	x := extraction{root: root, opts: opts, seen: map[string]bool{}}
+	x := extraction{root: root, opts: opts, dirs: map[string]bool{".": true}, seen: map[string]bool{}}
 	tr := tar.NewReader(r)
-	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -133,22 +134,15 @@ func ExtractTar(r io.Reader, root *os.Root, opts Options) ([]Placed, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tar next: %w", err)
 		}
-
-		entries++
-		if entries > opts.Limits.MaxEntries {
-			return nil, fmt.Errorf("extraction rejected: archive exceeds %d entries", opts.Limits.MaxEntries)
+		if err := x.countEntry(); err != nil {
+			return nil, err
 		}
-
+		if err := CheckNameBounds(hdr.Name); err != nil {
+			return nil, fmt.Errorf("extraction rejected: %w", err)
+		}
 		name := filepath.Clean(hdr.Name)
 		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("path traversal rejected: %s", hdr.Name)
-		}
-
-		switch hdr.Typeflag {
-		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink:
-			if err := refuseSymlinkRoute(root, name); err != nil {
-				return nil, err
-			}
 		}
 
 		switch hdr.Typeflag {
@@ -182,41 +176,60 @@ func (o Options) validate() error {
 
 // extraction is the state of one ExtractTar call.
 type extraction struct {
-	root   *os.Root
-	opts   Options
-	total  int64           // regular-file bytes written so far
-	seen   map[string]bool // paths already in placed
-	placed []Placed
+	root    *os.Root
+	opts    Options
+	entries int             // members read plus directories created as implicit parents
+	total   int64           // regular-file bytes written so far
+	dirs    map[string]bool // paths known to be real directories: created by this extraction, or found by one Lstat
+	seen    map[string]bool // paths already in placed
+	placed  []Placed
 }
 
-func (x *extraction) dir(hdr *tar.Header, name string) error {
-	// Mask to the 12 POSIX mode bits: strips non-permission bits and keeps the
-	// int64->FileMode conversion provably in range. The owner always keeps
-	// rwx, so the tree stays readable and verifiable. Setuid, setgid and
-	// sticky survive the mask as raw 0o7000 bits, not fs.ModeSetuid and
-	// friends; os.Root refuses any perm above 0o777 with "unsupported file
-	// mode", and that refusal is what rejects them.
-	if err := x.mkdirAll(name, os.FileMode(hdr.Mode&0o7777)|0o700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", hdr.Name, err)
+// countEntry counts one member, or one directory created implicitly as a
+// member's parent, against Limits.MaxEntries, so a single deep member cannot
+// place more entries than the limit.
+func (x *extraction) countEntry() error {
+	x.entries++
+	if x.entries > x.opts.Limits.MaxEntries {
+		return fmt.Errorf("extraction rejected: archive exceeds %d entries", x.opts.Limits.MaxEntries)
 	}
 	return nil
 }
 
+func (x *extraction) dir(hdr *tar.Header, name string) error {
+	if err := refuseSpecialBits(hdr); err != nil {
+		return err
+	}
+	// Mask to the nine permission bits, which also keeps the int64->FileMode
+	// conversion provably in range. The owner always keeps rwx, so the tree
+	// stays readable and verifiable. The member's missing ancestors take its
+	// mode too.
+	perm := os.FileMode(hdr.Mode&0o777) | 0o700
+	if err := x.mkParents(name, perm); err != nil {
+		return err
+	}
+	return x.mkdir(name, name, perm, false)
+}
+
 func (x *extraction) file(hdr *tar.Header, name string, r io.Reader) error {
 	lim := x.opts.Limits
+	if err := refuseSpecialBits(hdr); err != nil {
+		return err
+	}
 	if hdr.Size > lim.MaxFileBytes {
 		return fmt.Errorf("extraction rejected: %s declares %d bytes, exceeds limit %d", hdr.Name, hdr.Size, lim.MaxFileBytes)
 	}
 	if x.total+hdr.Size > lim.MaxTotalBytes {
 		return fmt.Errorf("extraction rejected: total size would exceed limit %d", lim.MaxTotalBytes)
 	}
-	if err := x.mkdirParent(hdr.Name, name); err != nil {
+	if err := x.mkParents(name, x.opts.DirPerm); err != nil {
 		return err
 	}
-	// The owner always keeps read, so the file stays verifiable. As in dir,
-	// setuid, setgid and sticky survive as raw 0o7000 bits, which os.Root
-	// refuses as "unsupported file mode".
-	mode := os.FileMode(hdr.Mode&0o7777) | 0o400
+	if err := x.refuseLinkAt(name); err != nil {
+		return err
+	}
+	// The owner always keeps read, so the file stays verifiable.
+	mode := os.FileMode(hdr.Mode&0o777) | 0o400
 	f, err := x.root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", hdr.Name, err)
@@ -236,18 +249,16 @@ func (x *extraction) file(hdr *tar.Header, name string, r io.Reader) error {
 
 func (x *extraction) symlink(hdr *tar.Header, name string) error {
 	// os.Root confines the link's placement and refuses to traverse it out of
-	// the root later. We additionally refuse to even create a link whose
-	// target escapes the tree, so a package never ships one.
-	if filepath.IsAbs(hdr.Linkname) {
-		return fmt.Errorf("path traversal rejected (absolute symlink target): %s -> %s", hdr.Name, hdr.Linkname)
+	// the root later. A link whose target leaves the tree is refused anyway,
+	// under the same rule as PolicyStrict, so a later reader that follows it
+	// stays inside too.
+	if err := checkLinkTarget(filepath.ToSlash(name), hdr.Linkname); err != nil {
+		return err
 	}
-	// G305: resolved is used only to reject escaping links; the link is
-	// created through os.Root below, which confines it regardless.
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(name), hdr.Linkname)) //nolint:gosec // G305: validation-only; os.Root performs the confined creation
-	if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path traversal rejected (symlink target escapes): %s -> %s", hdr.Name, hdr.Linkname)
+	if err := x.mkParents(name, x.opts.DirPerm); err != nil {
+		return err
 	}
-	if err := x.mkdirParent(hdr.Name, name); err != nil {
+	if err := x.refuseLinkAt(name); err != nil {
 		return err
 	}
 	if err := x.root.Symlink(hdr.Linkname, name); err != nil {
@@ -257,51 +268,96 @@ func (x *extraction) symlink(hdr *tar.Header, name string) error {
 	return nil
 }
 
-// mkdirParent creates the missing parents of the member at name with
-// Options.DirPerm. entry is the member's name as the archive spells it, for
-// the error.
-func (x *extraction) mkdirParent(entry, name string) error {
-	dir := filepath.Dir(name)
-	if dir == "." {
+// refuseSpecialBits refuses a member whose mode sets setuid, setgid or
+// sticky, naming the bits. polypkg never installs such a file (the dir and
+// perms actions refuse the same bits), so a package holding one was built
+// wrong. Without this check os.Root would refuse it with an opaque
+// "unsupported file mode".
+func refuseSpecialBits(hdr *tar.Header) error {
+	bits := SpecialBits(hdr.FileInfo().Mode())
+	if bits == "" {
 		return nil
 	}
-	if err := x.mkdirAll(dir, x.opts.DirPerm); err != nil {
-		return fmt.Errorf("mkdir parent of %s: %w", entry, err)
+	return fmt.Errorf("extraction rejected: %q has mode %#o, which is %s; a package cannot carry setuid, setgid or sticky bits, so clear them in the package source and rebuild it",
+		hdr.Name, hdr.Mode&0o7777, bits)
+}
+
+// SpecialBits names the setuid, setgid and sticky bits set in m, joined with
+// " and " ("setuid and setgid"), or returns "" when none is set. Package
+// extraction and the package builder both refuse a mode that has any.
+func SpecialBits(m fs.FileMode) string {
+	var bits []string
+	for _, b := range []struct {
+		bit  fs.FileMode
+		name string
+	}{{fs.ModeSetuid, "setuid"}, {fs.ModeSetgid, "setgid"}, {fs.ModeSticky, "sticky"}} {
+		if m&b.bit != 0 {
+			bits = append(bits, b.name)
+		}
+	}
+	return strings.Join(bits, " and ")
+}
+
+// mkParents makes the missing ancestors of the member at name directories
+// with perm, each counted as an entry.
+func (x *extraction) mkParents(name string, perm fs.FileMode) error {
+	for i := range len(name) {
+		if name[i] == filepath.Separator {
+			if err := x.mkdir(name, name[:i], perm, true); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-// mkdirAll is root.MkdirAll that records each directory it created.
-func (x *extraction) mkdirAll(name string, perm fs.FileMode) error {
-	missing := x.missingDirs(name)
-	if err := x.root.MkdirAll(name, perm); err != nil {
-		return err
+// mkdir makes dir, which the member at name needs, a directory with perm
+// unless it already is one, and records it when it creates it. implicit
+// counts a created dir against MaxEntries; an explicit directory member was
+// counted when it was read. A path already known to be a directory costs a
+// map lookup, any other one Lstat, so a member costs one filesystem lookup
+// per ancestor that is new to this extraction rather than one per prefix.
+// A dir that is a symlink is refused: os.Root would keep a write through it
+// inside the root, but not at the member's own path, so the extracted tree
+// would not be the one the archive lists, and no package needs that. This
+// covers symlinks the archive created and any already under the root.
+func (x *extraction) mkdir(name, dir string, perm fs.FileMode, implicit bool) error {
+	if x.dirs[dir] {
+		return nil
 	}
-	for _, d := range missing {
-		x.record(Placed{Path: filepath.ToSlash(d), Kind: KindDir, Mode: perm})
+	info, err := x.root.Lstat(dir)
+	switch {
+	case err == nil && info.Mode()&fs.ModeSymlink != 0:
+		return fmt.Errorf("extraction rejected: %q passes through or replaces the symlink %q", name, dir)
+	case err == nil && !info.IsDir():
+		return fmt.Errorf("mkdir %q: %q exists and is not a directory", name, dir)
+	case err == nil:
+		x.dirs[dir] = true
+		return nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("inspect %s: %w", dir, err)
 	}
+	if implicit {
+		if err := x.countEntry(); err != nil {
+			return err
+		}
+	}
+	if err := x.root.Mkdir(dir, perm); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	x.dirs[dir] = true
+	x.record(Placed{Path: filepath.ToSlash(dir), Kind: KindDir, Mode: perm})
 	return nil
 }
 
-// missingDirs returns name and those of its ancestors that do not yet exist
-// under the root, shallowest first; below the first missing one, every
-// deeper one is missing too. An Lstat error other than not-exist ends the
-// scan with nothing missing: root.MkdirAll then meets and reports it.
-func (x *extraction) missingDirs(name string) []string {
-	parts := strings.Split(name, string(filepath.Separator))
-	for i := range parts {
-		_, err := x.root.Lstat(filepath.Join(parts[:i+1]...))
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		missing := make([]string, 0, len(parts)-i)
-		for j := i; j < len(parts); j++ {
-			missing = append(missing, filepath.Join(parts[:j+1]...))
-		}
-		return missing
+// refuseLinkAt refuses a file or symlink member whose own path holds a
+// symlink, which writing the member would follow or collide with.
+func (x *extraction) refuseLinkAt(name string) error {
+	if x.dirs[name] {
+		return nil
+	}
+	if info, err := x.root.Lstat(name); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("extraction rejected: %q passes through or replaces the symlink %q", name, name)
 	}
 	return nil
 }
@@ -313,27 +369,4 @@ func (x *extraction) record(p Placed) {
 	}
 	x.seen[p.Path] = true
 	x.placed = append(x.placed, p)
-}
-
-// refuseSymlinkRoute rejects an entry whose path runs through, or lands on, a
-// symlink already under the root. os.Root keeps such a write inside the root,
-// but it still lands somewhere other than the entry's own path (a/b written
-// through a -> c becomes c/b), so the extracted tree would not be the one the
-// archive lists, and no legitimate package needs it. This covers symlinks the
-// archive itself created and any that were under the root beforehand.
-func refuseSymlinkRoute(root *os.Root, name string) error {
-	parts := strings.Split(name, string(filepath.Separator))
-	for i := range parts {
-		p := filepath.Join(parts[:i+1]...)
-		info, err := root.Lstat(p)
-		if err != nil {
-			// Nothing exists here, so nothing deeper does either; any other
-			// error is left for the entry's own operation to report.
-			return nil
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("extraction rejected: %s passes through or replaces the symlink %s", name, p)
-		}
-	}
-	return nil
 }

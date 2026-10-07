@@ -15,12 +15,10 @@ import (
 )
 
 // seedGen writes a committed generation with the given ownership entries under a
-// fresh temp XDG_DATA_HOME, so completion functions reading CurrentOwnership have
-// real state. Sets the env for the rest of the spec.
+// fresh sandboxed user environment, so completion functions reading
+// CurrentOwnership have real state. Sets the env for the rest of the spec.
 func seedGen(entries []schema.OwnershipEntry) {
-	data := GinkgoT().TempDir()
-	GinkgoT().Setenv("XDG_DATA_HOME", data)
-	root := filepath.Join(data, "polypkg")
+	root := filepath.Join(sandboxUserEnv(GinkgoTB()), "data", "polypkg")
 	gen1 := filepath.Join(root, "generations", "1")
 	Expect(os.MkdirAll(filepath.Join(gen1, "active"), 0o755)).To(Succeed())
 	own := schema.Ownership{Schema: "polypkg.ownership/v1", Scope: "user", Entries: entries}
@@ -36,12 +34,13 @@ func seedGen(entries []schema.OwnershipEntry) {
 
 // complete drives cobra's hidden __complete command and returns its raw output.
 func complete(args ...string) string {
+	GinkgoHelper()
 	root := NewRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetArgs(append([]string{"__complete"}, args...))
-	_ = root.Execute()
+	Expect(root.Execute()).To(Succeed(), "__complete %v: %s", args, out.String())
 	return out.String()
 }
 

@@ -41,13 +41,8 @@ var _ = Describe("source set-trust-root", func() {
 	)
 
 	BeforeEach(func() {
-		tmpDir = GinkgoT().TempDir()
+		tmpDir = sandboxUserEnv(GinkgoTB())
 		_ = os.Unsetenv("POLYPKG_PROFILE")
-		GinkgoT().Setenv("HOME", filepath.Join(tmpDir, "home"))
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(tmpDir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(tmpDir, "state"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(tmpDir, "bin"))
 		// initMinimalProfile sets XDG_CONFIG_HOME=tmpDir and writes a profile
 		// whose only source is "native".
 		profilePath = initMinimalProfile(tmpDir)
@@ -232,30 +227,45 @@ var _ = Describe("source set-trust-root", func() {
 		Expect(os.ReadFile(managed)).To(Equal(oldKey))
 	})
 
-	It("prompts on a terminal with both key ids and refuses an answer that is not yes", func() {
-		// /dev/null is a character device, so isInteractive treats it as a
-		// terminal; reading it yields EOF, which the prompt takes as "no".
+	It("refuses without a fingerprint when stdin is /dev/null, which is not a terminal", func() {
 		devNull, err := os.Open(os.DevNull)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(devNull.Close)
-		root := NewRootCmd()
-		root.SilenceUsage = true
-		root.SilenceErrors = true
-		var buf strings.Builder
-		root.SetOut(&buf)
-		root.SetErr(&buf)
-		root.SetIn(devNull)
-		root.SetArgs([]string{"source", "set-trust-root", "native", "--trust-root", newPub})
-		GinkgoT().Setenv("POLYPKG_PROFILE", profilePath)
 
-		err = root.Execute()
-		Expect(err).To(HaveOccurred())
+		out, err := runWithStdin(profilePath, devNull, "source", "set-trust-root", "native", "--trust-root", newPub)
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(ContainSubstring("stdin is not a terminal"))
+		Expect(out).NotTo(ContainSubstring("[y/N]"), "a redirected stdin must not be prompted")
+		Expect(os.ReadFile(managed)).To(Equal(oldKey))
+	})
+
+	It("prompts on a terminal with both key ids and refuses an answer that is not yes", func() {
+		// End of input on a terminal is an answer that is not yes.
+		out, err := runWithStdin(profilePath, ttyInput{strings.NewReader("")},
+			"source", "set-trust-root", "native", "--trust-root", newPub)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 		Expect(ce.Msg).To(ContainSubstring("not confirmed"))
-		Expect(buf.String()).To(ContainSubstring(oldID))
-		Expect(buf.String()).To(ContainSubstring(newID))
+		Expect(out).To(ContainSubstring(oldID))
+		Expect(out).To(ContainSubstring(newID))
 		Expect(os.ReadFile(managed)).To(Equal(oldKey))
+	})
+
+	It("replaces the key and clears the anti-rollback state when the terminal prompt is answered yes", func() {
+		Expect(trust.StoreSeen(stateHome, "native", trust.Seen{TrustSerial: 7, IndexSerial: 7})).To(Succeed())
+
+		out, err := runWithStdin(profilePath, ttyInput{strings.NewReader("y\n")},
+			"source", "set-trust-root", "native", "--trust-root", newPub)
+		Expect(err).NotTo(HaveOccurred(), "set-trust-root failed: %s", out)
+		Expect(out).To(ContainSubstring("Replace the trust root? [y/N]"))
+		Expect(out).To(ContainSubstring("replaced trust root of source native"))
+
+		Expect(os.ReadFile(managed)).To(Equal(newKey))
+		Expect(reparseSources(profilePath).Sources["native"].TrustRoot).To(Equal(managed))
+		seen, err := trust.LoadSeen(stateHome, "native")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen).To(Equal(trust.Seen{}))
 	})
 
 	It("keeps URL credentials out of the error when the downloaded key does not match", func() {

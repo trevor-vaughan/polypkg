@@ -31,10 +31,24 @@ func requireSubcommand(unknownHint string) func(*cobra.Command, []string) error 
 				ce.Hint = unknownHint
 			}
 		}
-		format, ferr := resolveFormat(cmd)
-		if ferr != nil {
-			format = FormatText
-		}
-		return WrapError(cmd, format, cmd.Name(), ce)
+		return wrapInvocationError(cmd, ce)
 	}
+}
+
+// unknownCommand is the root's Args validator. Without one, cobra rejects an
+// unrecognised first word while it looks the command up, before any flag is
+// parsed, so --format json is never read and no envelope is printed. As an
+// Args validator the check runs after flag parsing, wherever --format sits.
+func unknownCommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	hint := fmt.Sprintf("run `%s --help` to list commands", cmd.CommandPath())
+	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+		hint = fmt.Sprintf("did you mean `%s %s`? (%s)", cmd.CommandPath(), s[0], hint)
+	}
+	return wrapInvocationError(cmd, &CLIError{
+		Msg:  fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath()),
+		Hint: hint,
+	})
 }

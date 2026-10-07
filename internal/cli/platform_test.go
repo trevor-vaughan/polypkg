@@ -34,17 +34,6 @@ func otherPlatform() string {
 	return "linux/amd64"
 }
 
-// sandboxPlatformEnv points HOME and every XDG directory at a fresh temp dir
-// and returns it.
-func sandboxPlatformEnv() string {
-	env := GinkgoT().TempDir()
-	GinkgoT().Setenv("HOME", env)
-	for _, v := range []string{"XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_BIN_HOME", "XDG_DATA_DIRS"} {
-		GinkgoT().Setenv(v, filepath.Join(env, strings.ToLower(v)))
-	}
-	return env
-}
-
 // publishPlatformRepo builds a signed repo publishing pkgs, sandboxes the
 // environment, and points POLYPKG_PROFILE at a profile that requests
 // profilePkg from it (FetchCatalog builds no catalog for an empty profile).
@@ -95,7 +84,7 @@ func publishPlatformRepo(profilePkg string, pkgs []platformPkg) {
 	Expect(err).NotTo(HaveOccurred())
 	publicDir := filepath.Join(root, "public")
 
-	env := sandboxPlatformEnv()
+	env := sandboxUserEnv(GinkgoTB())
 	profilePath := filepath.Join(env, "profile.yaml")
 	Expect(os.WriteFile(profilePath, []byte(
 		"schema: polypkg.spec/v1\nname: platform-fixture\n"+
@@ -258,8 +247,8 @@ var _ = Describe("info on a multi-platform repository", func() {
 	})
 
 	It("reads the installed artifact's platform from the generation manifest", func() {
-		env := sandboxPlatformEnv()
-		storeRoot := filepath.Join(env, "xdg_data_home", "polypkg")
+		env := sandboxUserEnv(GinkgoTB())
+		storeRoot := filepath.Join(env, "data", "polypkg")
 		Expect(os.MkdirAll(filepath.Join(storeRoot, "generations", "1", "active"), 0o700)).To(Succeed())
 		Expect(os.Symlink(filepath.Join("generations", "1", "active"), filepath.Join(storeRoot, "active"))).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "ownership.json"),

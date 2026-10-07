@@ -40,7 +40,7 @@ func newPlanCmd() *cobra.Command {
 			"With no profile-file argument, uses the default profile: POLYPKG_PROFILE\n" +
 			"if set, else profile.{yaml,yml,jsonc,json} in the scope's config directory\n" +
 			"(user: ~/.config/polypkg; system: /etc/polypkg).",
-		Args: cobra.MaximumNArgs(1),
+		Args: needsArgs(0, 1, "at most one [profile-file]"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -141,7 +141,7 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 	priorOwn, gen, activeRoot, oerr := sub.CurrentOwnership()
 
 	rl := schema.ResolveStarlarkLimits(p.Starlark)
-	// Posture floor (2d-2): load the current generation's manifest so Plan can
+	// Posture floor: load the current generation's manifest so Plan can
 	// preview a provenance-regression refusal. Best-effort; nil disables it.
 	var priorManifest *schema.Manifest
 	if oerr == nil && gen > 0 {
@@ -252,6 +252,11 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 		}
 		if currentGen != 0 {
 			pr.Current = &schema.PlanCurrentGen{Generation: currentGen}
+			// The commit time is the generation manifest's own timestamp,
+			// the value status reports as applied_at.
+			if priorMan != nil {
+				pr.Current.CommittedAt = priorMan.ProducedBy.Timestamp
+			}
 		}
 		data, _ := json.Marshal(&pr)
 		fmt.Fprintln(cmd.OutOrStdout(), string(data))
@@ -266,7 +271,7 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 }
 
 // attestationPolicy resolves the profile's attestation posture; absent → warn
-// (the D8 default: unattested installs are permitted with knowledge).
+// (unattested installs are permitted by default, with a warning).
 func attestationPolicy(p *schema.Profile) string {
 	if p.Attestation != nil && p.Attestation.Policy != "" {
 		return p.Attestation.Policy

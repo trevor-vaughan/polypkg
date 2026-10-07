@@ -49,6 +49,38 @@ var _ = Describe("Seen", func() {
 	})
 })
 
+var _ = Describe("LoadSeen on a damaged record", func() {
+	// Only a missing record is trust-on-first-use. Anything else that stops
+	// the record from loading is an error, never a zero Seen: a zero Seen
+	// forgets every serial and high-water mark the record protects.
+	DescribeTable("returns a parse error, not a zero Seen, for content that is not a Seen record",
+		func(content string) {
+			dir := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(dir, "trust"), 0o700)).To(Succeed())
+			Expect(os.WriteFile(SeenPath(dir, "native"), []byte(content), 0o600)).To(Succeed())
+
+			s, err := LoadSeen(dir, "native")
+			Expect(err).To(MatchError(ContainSubstring("parse trust state")))
+			Expect(s).To(Equal(Seen{}))
+		},
+		Entry("an empty file (a crash between create and write)", ""),
+		Entry("a torn write", `{"trust_serial":7,"index_ser`),
+		Entry("a JSON value of the wrong shape", `[1,2,3]`),
+		Entry("a field of the wrong type", `{"trust_serial":"seven"}`),
+	)
+
+	It("returns a read error when the record path cannot be read as a file", func() {
+		dir := GinkgoT().TempDir()
+		// A directory in the record's place fails with EISDIR, which is not
+		// "missing", whether or not the test runs as root.
+		Expect(os.MkdirAll(SeenPath(dir, "native"), 0o700)).To(Succeed())
+
+		s, err := LoadSeen(dir, "native")
+		Expect(err).To(MatchError(ContainSubstring("read trust state")))
+		Expect(s).To(Equal(Seen{}))
+	})
+})
+
 var _ = Describe("Seen bundle/revocation serials", func() {
 	It("round-trips BundleSerial and RevocationSerial through Store/Load", func() {
 		dir := GinkgoT().TempDir()

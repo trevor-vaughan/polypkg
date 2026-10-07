@@ -31,12 +31,13 @@ import (
 // a permanent ArtifactSignatureError.
 var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 	var (
-		anchor, signer       minisignKeypair
-		repoDir, srvURL      string
-		trustRoot            string
-		artifactA, artifactB []byte
-		dataHome             string
-		cacheFile            string
+		artifactB []byte
+		dataHome  string
+		cacheFile string
+		// The reinstall after the republish is the regression under test, so
+		// BeforeAll records its outcome for the spec to judge.
+		reinstallOut string
+		reinstallErr error
 	)
 
 	// activeFile is widget's placed file read THROUGH the active symlink —
@@ -53,12 +54,12 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 		// home; init records the default source name "native".
 		cacheFile = filepath.Join(os.Getenv("XDG_STATE_HOME"), "polypkg", "cache", "native", "widget-1.0.0.tar.zst")
 
-		anchor = newMinisignKeypair(t)
-		signer = newMinisignKeypair(t)
-		repoDir = t.TempDir()
+		anchor := newMinisignKeypair(t)
+		signer := newMinisignKeypair(t)
+		repoDir := t.TempDir()
 
 		// Same name, same version, same published path, different bytes.
-		artifactA = buildPkg(t, "widget", "1.0.0", "content-A")
+		artifactA := buildPkg(t, "widget", "1.0.0", "content-A")
 		artifactB = buildPkg(t, "widget", "1.0.0", "content-B")
 
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
@@ -66,20 +67,19 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactA})
 		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactA)
-		trustRoot = writeTrustRoot(t, anchor)
+		trustRoot := writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		DeferCleanup(srv.Close)
-		srvURL = srv.URL
 
 		profile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "polypkg", "profile.yaml")
 		GinkgoT().Setenv("POLYPKG_PROFILE", profile)
-		out, err := runCmd("init", "--source-url", srvURL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
-	})
 
-	It("installs content A and populates the artifact cache", func() {
-		out, err := runCmd("install", "widget@=1.0.0")
+		// The whole journey lives here, not in specs, so every spec below runs
+		// on its own (ginkgo --focus) as well as in sequence.
+		out, err = runCmd("install", "widget@=1.0.0")
 		Expect(err).NotTo(HaveOccurred(), "install widget: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
@@ -90,28 +90,28 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 		cached, cerr := os.ReadFile(cacheFile)
 		Expect(cerr).NotTo(HaveOccurred(), "artifact cache entry must exist after install")
 		Expect(cached).To(Equal(artifactA), "cache must hold the content-A bytes")
-	})
 
-	It("reinstalls successfully after a same-path republish (the regression)", func() {
 		// Republish content-B at serial 2 under the SAME path and keys —
 		// exactly the hand-rolled-repo shape the content-addressed pool avoids.
-		t := GinkgoTB()
 		publishTrustDoc(t, repoDir, "native", anchor, 2,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 2,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactB})
 		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactB)
 
-		out, err := runCmd("remove", "widget") // auto-applies generation 2
+		out, err = runCmd("remove", "widget") // auto-applies generation 2
 		Expect(err).NotTo(HaveOccurred(), "remove widget: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
+		reinstallOut, reinstallErr = runCmd("install", "widget@=1.0.0")
+	})
+
+	It("reinstalls successfully after a same-path republish (the regression)", func() {
 		// Pre-fix: the cache served stale content-A bytes against the fresh
 		// content-B signature, failing verification permanently.
-		out, err = runCmd("install", "widget@=1.0.0")
-		Expect(err).NotTo(HaveOccurred(),
-			"reinstall must evict the stale cache entry and fetch fresh bytes: %s", out)
-		Expect(out).To(ContainSubstring("applied generation"))
+		Expect(reinstallErr).NotTo(HaveOccurred(),
+			"reinstall must evict the stale cache entry and fetch fresh bytes: %s", reinstallOut)
+		Expect(reinstallOut).To(ContainSubstring("applied generation"))
 
 		body, rerr := os.ReadFile(activeFile())
 		Expect(rerr).NotTo(HaveOccurred(), "read placed file via active symlink")
@@ -147,13 +147,15 @@ var _ = Describe("poisoned artifact cache eviction", Ordered, func() {
 // attestation half then wedged with a permanent signature mismatch.
 var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 	var (
-		anchor, signer       minisignKeypair
-		repoDir, srvURL      string
-		trustRoot            string
-		artifactA, artifactB []byte
-		attA, attB           []byte
-		dataHome             string
-		attCacheFile         string
+		signer       minisignKeypair
+		repoDir      string
+		attB         []byte
+		dataHome     string
+		attCacheFile string
+		// The reinstall after the republish is the regression under test, so
+		// BeforeAll records its outcome for the spec to judge.
+		reinstallOut string
+		reinstallErr error
 	)
 
 	activeFile := func() string {
@@ -184,46 +186,41 @@ var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 		dataHome = os.Getenv("XDG_DATA_HOME")
 		attCacheFile = filepath.Join(os.Getenv("XDG_STATE_HOME"), "polypkg", "cache", "native", "gizmo-1.0.0.att.json")
 
-		anchor = newMinisignKeypair(t)
+		anchor := newMinisignKeypair(t)
 		signer = newMinisignKeypair(t)
 		repoDir = t.TempDir()
 
-		artifactA = buildPkg(t, "gizmo", "1.0.0", "content-A")
-		artifactB = buildPkg(t, "gizmo", "1.0.0", "content-B")
+		artifactA := buildPkg(t, "gizmo", "1.0.0", "content-A")
+		artifactB := buildPkg(t, "gizmo", "1.0.0", "content-B")
 
 		publishTrustDoc(t, repoDir, "native", anchor, 1,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact", "attestation"}}}, nil)
-		var refA schema.AttestationRef
-		attA, refA = publishAttestation(artifactA)
+		attA, refA := publishAttestation(artifactA)
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "gizmo", version: "1.0.0", artifact: artifactA, attestations: []schema.AttestationRef{refA}})
 		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", "", artifactA)
-		trustRoot = writeTrustRoot(t, anchor)
+		trustRoot := writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		DeferCleanup(srv.Close)
-		srvURL = srv.URL
 
 		profile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "polypkg", "profile.yaml")
 		GinkgoT().Setenv("POLYPKG_PROFILE", profile)
-		out, err := runCmd("init", "--source-url", srvURL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
-	})
 
-	It("installs attested content A and populates the attestation cache", func() {
-		out, err := runCmd("install", "gizmo@=1.0.0")
+		// The whole journey lives here, not in specs, so every spec below runs
+		// on its own (ginkgo --focus) as well as in sequence.
+		out, err = runCmd("install", "gizmo@=1.0.0")
 		Expect(err).NotTo(HaveOccurred(), "install gizmo: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
 		cached, cerr := os.ReadFile(attCacheFile)
 		Expect(cerr).NotTo(HaveOccurred(), "attestation cache entry must exist after install")
 		Expect(cached).To(Equal(attA), "cache must hold the serial-1 attestation bytes")
-	})
 
-	It("reinstalls successfully after a same-path attestation republish (the regression)", func() {
 		// Republish content-B at serial 2: same artifact path, same attestation
 		// path, re-signed statement binding the new digest.
-		t := GinkgoTB()
 		publishTrustDoc(t, repoDir, "native", anchor, 2,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact", "attestation"}}}, nil)
 		var refB schema.AttestationRef
@@ -232,17 +229,20 @@ var _ = Describe("poisoned attestation cache eviction", Ordered, func() {
 			indexPkg{name: "gizmo", version: "1.0.0", artifact: artifactB, attestations: []schema.AttestationRef{refB}})
 		writeArtifact(t, repoDir, signer, "gizmo", "1.0.0", "", "", artifactB)
 
-		out, err := runCmd("remove", "gizmo") // auto-applies the next generation
+		out, err = runCmd("remove", "gizmo") // auto-applies the next generation
 		Expect(err).NotTo(HaveOccurred(), "remove gizmo: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
+		reinstallOut, reinstallErr = runCmd("install", "gizmo@=1.0.0")
+	})
+
+	It("reinstalls successfully after a same-path attestation republish (the regression)", func() {
 		// Pre-fix: the artifact cache healed, then the attestation cache served
 		// stale serial-1 statement bytes against the fresh serial-2 signature,
 		// failing verification permanently.
-		out, err = runCmd("install", "gizmo@=1.0.0")
-		Expect(err).NotTo(HaveOccurred(),
-			"reinstall must evict the stale attestation cache entry and fetch fresh bytes: %s", out)
-		Expect(out).To(ContainSubstring("applied generation"))
+		Expect(reinstallErr).NotTo(HaveOccurred(),
+			"reinstall must evict the stale attestation cache entry and fetch fresh bytes: %s", reinstallOut)
+		Expect(reinstallOut).To(ContainSubstring("applied generation"))
 
 		body, rerr := os.ReadFile(activeFile())
 		Expect(rerr).NotTo(HaveOccurred(), "read placed file via active symlink")

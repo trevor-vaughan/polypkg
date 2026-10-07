@@ -46,7 +46,7 @@ var _ = Describe("recurse contract (relied on by Phase 2)", func() {
 		Expect(chosen).To(HaveLen(before))
 	})
 
-	// Gap 4: Phase 2's degrade-to-skip path relies on recurse returning
+	// Phase 2's degrade-to-skip path relies on recurse returning
 	// KindTooComplex with chosen fully restored when the per-recommend budget
 	// trips MID-DESCENT (after at least one selection has been committed). The
 	// conflict/no-version cases above never commit a key first; this one does, so

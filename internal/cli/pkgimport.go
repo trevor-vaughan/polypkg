@@ -392,6 +392,7 @@ func importError(err error, ref string, haveToken bool, apiURL string) error {
 	var ie *ghrelease.IntegrityError
 	var pe *importer.ProvenanceError
 	var te *importer.TargetExistsError
+	var cv *importer.CaseVariantError
 	var be *importer.BinError
 	var ae *ghrelease.APIURLError
 	var ne *importer.NameError
@@ -481,6 +482,17 @@ func importError(err error, ref string, haveToken bool, apiURL string) error {
 			Msg:  te.Dir + " already exists; refusing to overwrite it",
 			Hint: "choose another <out-dir>, or remove or rename the existing <os>-<arch> directory, then re-run",
 			Err:  err,
+		}
+	case errors.As(err, &cv):
+		flag := "--name"
+		if cv.What == "version" {
+			flag = "--version"
+		}
+		return &CLIError{
+			Msg: cv.Error(),
+			Hint: fmt.Sprintf("pass %s %q to import into the existing directory, or remove %q, then re-run",
+				flag, cv.Existing, filepath.Join(cv.Dir, cv.Existing)),
+			Err: err,
 		}
 	case errors.Is(err, importer.ErrFetchTrustedRoot):
 		return &CLIError{

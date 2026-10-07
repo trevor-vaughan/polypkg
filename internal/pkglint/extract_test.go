@@ -252,6 +252,76 @@ var _ = Describe("extract dest created by an earlier action (PKG010)", func() {
 	)
 })
 
+var _ = Describe("extract dest below a leaf an earlier action places (PKG010)", func() {
+	extract := "  - phase: post-place\n" +
+		"    action: extract\n" +
+		"    params: {" + goodSrc + ", dest: \"$ACTIVE/hello/opt/tool\"}\n"
+	files := map[string][]byte{
+		"a.tar.gz": helloTarGz(),
+		"app.conf": []byte("key = value\n"),
+	}
+
+	// apply would fail: a regular file at an ancestor stops extract creating a
+	// directory below it, and a link out of the package directory is one the
+	// confined apply refuses to traverse.
+	DescribeTable("reports a dest below a file or an outward link that an action running before it places",
+		func(earlier, want string) {
+			res := pkglintMust(writePkg(earlier+extract, files))
+			Expect(countRule(res, "PKG010")).To(Equal(1))
+			f := findRule(res, "PKG010")
+			Expect(f.Message).To(ContainSubstring(`action "extract" parameter "dest" value "$ACTIVE/hello/opt/tool" cannot be created when extract runs`))
+			Expect(f.Message).To(ContainSubstring(want))
+			Expect(f.Message).To(ContainSubstring("extract cannot create a directory below it"))
+			Expect(f.Loc.Line).To(Equal(10))
+		},
+		Entry("a file an install copies to the parent",
+			"  - phase: post-place\n    action: install\n    params: {src: \"$PKG/content/a.tar.gz\", dest: \"$ACTIVE/hello/opt\"}\n",
+			`the "install" action at line 5 first places "$ACTIVE/hello/opt"`),
+		Entry("an install that links a file to the parent, in an earlier phase",
+			"  - phase: pre-place\n    action: install\n    params: {src: \"$PKG/content/a.tar.gz\", dest: \"$ACTIVE/hello/opt\", policy: symlink}\n",
+			`the "install" action at line 5 first places "$ACTIVE/hello/opt"`),
+		Entry("a config file at the parent",
+			"  - phase: post-place\n    action: config\n    params: {src: \"$PKG/content/app.conf\", dest: \"$ACTIVE/hello/opt\"}\n",
+			`the "config" action at line 5 first places "$ACTIVE/hello/opt"`),
+		Entry("a state link at the parent, spelled with a trailing slash",
+			"  - phase: post-place\n    action: state\n    params: {path: \"$ACTIVE/hello/opt/\"}\n",
+			`the "state" action at line 5 first places "$ACTIVE/hello/opt/"`),
+	)
+
+	DescribeTable("does not report an earlier placement extract can create a directory below",
+		func(other string, after bool) {
+			recipe := other + extract
+			if after {
+				recipe = extract + other
+			}
+			Expect(findRule0(pkglintMust(writePkg(recipe, files)), "PKG010")).To(BeZero())
+		},
+		Entry("a dir at the parent",
+			"  - phase: post-place\n    action: dir\n    params: {path: \"$ACTIVE/hello/opt\"}\n", false),
+		Entry("a symlink at the parent, whose target decides where dest lands",
+			"  - phase: post-place\n    action: symlink\n    params: {src: \"real\", dest: \"$ACTIVE/hello/opt\"}\n", false),
+		Entry("another extract into the parent",
+			"  - phase: post-place\n    action: extract\n    params: {"+goodSrc+", dest: \"$ACTIVE/hello/opt\"}\n", false),
+		Entry("an install at a name that only shares the parent's prefix",
+			"  - phase: post-place\n    action: install\n    params: {src: \"$PKG/content/a.tar.gz\", dest: \"$ACTIVE/hello/op\"}\n", false),
+		Entry("an install at the parent declared after the extract in the same phase",
+			"  - phase: post-place\n    action: install\n    params: {src: \"$PKG/content/a.tar.gz\", dest: \"$ACTIVE/hello/opt\"}\n", true),
+	)
+
+	// Actions run by phase first and declaration order second, so the
+	// collision reported as placing "first" is the one that runs first, not
+	// the one declared first.
+	It("reports the colliding action that runs first, even when another is declared before it", func() {
+		recipe := "  - phase: post-place\n    action: install\n    params: {src: \"$PKG/content/a.tar.gz\", dest: \"$ACTIVE/hello/opt\"}\n" +
+			"  - phase: pre-place\n    action: dir\n    params: {path: \"$ACTIVE/hello/opt/tool\"}\n" +
+			extract
+		res := pkglintMust(writePkg(recipe, files))
+		Expect(countRule(res, "PKG010")).To(Equal(1))
+		Expect(findRule(res, "PKG010").Message).To(ContainSubstring(
+			`value "$ACTIVE/hello/opt/tool" already exists when extract runs: the "dir" action at line 8 creates "$ACTIVE/hello/opt/tool" first`))
+	})
+})
+
 var _ = Describe("extract archive detection (PKG012)", func() {
 	params := goodSrc + ", " + goodDest
 

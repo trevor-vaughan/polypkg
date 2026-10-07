@@ -68,12 +68,12 @@ type Options struct {
 	// AttestationPolicy governs packages whose index entry carries NO
 	// attestations: "warn" (default when empty) installs with a warning,
 	// "require" refuses, "off" installs silently. A PRESENT attestation is
-	// hard-verified in every mode (D-C10) — the policy never bypasses a
+	// hard-verified in every mode — the policy never bypasses a
 	// failed verification.
 	AttestationPolicy string
 	// PriorManifest is the current generation's manifest (the one active before
 	// this apply), or nil on the first apply / when unreadable. The posture
-	// floor (2d-2, spec §10.7) reads each package's prior AttestationState from
+	// floor reads each package's prior AttestationState from
 	// it to refuse a provenance regression. Populated by the CLI from the
 	// substrate; nil disables the floor.
 	PriorManifest *schema.Manifest
@@ -110,10 +110,10 @@ type Result struct {
 	Suggests  []resolver.Suggestion
 	// AttestationWarnings lists packages installed unattested under the warn
 	// policy. Callers surface them on stderr; the verdict itself is recorded
-	// per entry in Manifest (D11).
+	// per entry in Manifest.
 	AttestationWarnings []string
 	// AttestationGateDisabled lists packages installed from a source whose
-	// per-source attestation tier is "off" (phase 2d-3, threat G8). It is
+	// per-source attestation tier is "off" (threat G8). It is
 	// DISTINCT from AttestationWarnings (the warn-policy channel): callers
 	// surface it as a prominent SECURITY warning on every apply and record it in
 	// the audit log. The disabled gate is also recorded per entry in the
@@ -122,7 +122,7 @@ type Result struct {
 	// event (discrete source field) without string surgery.
 	AttestationGateDisabled []GateDisabledEntry
 	// FreshnessGraced lists signed metadata documents accepted under per-source
-	// accept_expiry_until grace during the fetch (phase 2e-1, spec §10.9 E-3):
+	// accept_expiry_until grace during the fetch:
 	// expired but within the operator's deadline. Callers surface it as a loud
 	// SECURITY line and (on apply) a metadata.expiry_graced audit event. The
 	// anti-rollback serial floor was still enforced.
@@ -192,7 +192,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		suggests = rr.Suggests
 	}
 
-	// Per-package anti-downgrade guard (D15): refuse a resolved version below
+	// Per-package anti-downgrade guard: refuse a resolved version below
 	// its source's high-water mark unless the profile explicitly pins that
 	// exact version (the operator's escape hatch for a pulled release).
 	// Resolver-chosen dependencies have no profile entry, so they can never
@@ -238,12 +238,13 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		backend := fr.Backends[e.Source]
 		artState := fr.Keyrings[e.Source]
 		sourceURL := fr.SourceURLs[e.Source]
-		// Per-source attestation posture (2d-1/2d-3). Read once here because the
-		// tier: off case (2d-3, threat G8) must lower the EFFECTIVE absence policy
-		// for verifyAttestations below (so an unattested package installs instead
-		// of being refused by a global require) — and it is the OPPOSITE of the
-		// global attestation.policy: off, which is silent. srcOff also skips the
-		// require gate + posture floor and drives the loud, recorded warning.
+		// Per-source attestation posture (require gate or tier: off). Read once
+		// here because the tier: off case (threat G8) must lower the EFFECTIVE
+		// absence policy for verifyAttestations below (so an unattested package
+		// installs instead of being refused by a global require) — and it is the
+		// OPPOSITE of the global attestation.policy: off, which is silent. srcOff
+		// also skips the require gate + posture floor and drives the loud,
+		// recorded warning.
 		var srcPol *schema.SourceAttestationPolicy
 		var pinnedSigstoreRoot *schema.SigstoreRoot
 		if sb, ok := p.Sources.Sources[e.Source]; ok {
@@ -306,7 +307,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 			return nil, fmt.Errorf("extract %s-%s: %w", e.Name, e.Version, err)
 		}
 
-		// Install-time half of the two-point binding (P6): re-bind each carried
+		// Install-time half of the two-point binding: re-bind each carried
 		// external attestation's subjects, by digest, against the bytes that just
 		// extracted. Runs post-extraction because it needs the extracted tree; a
 		// binding failure here refuses the install (fail closed).
@@ -316,19 +317,19 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		}
 
 		if srcOff {
-			// Per-source attestation OFF (2d-3, threat G8): the operator disabled
+			// Per-source attestation OFF (threat G8): the operator disabled
 			// this source's gate. Record it distinctly and surface a loud,
 			// unsuppressible warning every apply — a silent kill-switch is the
-			// threat. D-C10 still held above (a PRESENT attestation was
-			// hard-verified regardless of policy), so off only waives the require
-			// gate + the posture floor, never tamper detection.
+			// threat. Tamper detection still held above (a PRESENT attestation
+			// was hard-verified regardless of policy), so off only waives the
+			// require gate + the posture floor, never tamper detection.
 			attState.GateDisabled = true
 			gateDisabled = append(gateDisabled, GateDisabledEntry{
 				Package: fmt.Sprintf("%s-%s", e.Name, e.Version),
 				Source:  e.Source,
 			})
 		} else {
-			// Consumer attestation policy gate (2d-1): refuse the install when this
+			// Consumer attestation policy gate: refuse the install when this
 			// source's per-predicate require is not met at an anchored, allow-listed
 			// tier. Additive — a source with no attestation block is ungated. Reads
 			// the same source bundle bindCarriedRefs used for key resolution, and
@@ -337,7 +338,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 				return nil, fmt.Errorf("%s-%s: %w", e.Name, e.Version, err)
 			}
 
-			// Posture floor (2d-2, G3): every predicate type verified in the prior
+			// Posture floor: every predicate type verified in the prior
 			// generation must still be verified now, else refuse — unless the operator
 			// pinned the exact resolved version. PriorManifest is trusted local
 			// generation state a mirror cannot influence; the floor keys by package
@@ -432,12 +433,15 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 // verifyArtifact runs the full artifact verification chain over data: the
 // detached minisign signature, the signed claims binding (name/version/
 // platform/hash), and the index content-hash recomputation. staleable reports
-// whether the failure could be explained by stale locally cached bytes — the
-// mismatch cases a cache eviction and refetch may recover from. Authorization
-// failures (revoked key, key not in the trust set, wrong role), malformed
-// signed claims (including a missing or invalid platform=), and a claimed
-// platform that differs from the entry's are problems no refetch can fix, so
-// they return staleable=false.
+// whether the failure could be explained by stale locally cached bytes, the
+// one case a cache eviction and refetch may recover from. Only a cryptographic
+// signature mismatch qualifies. The signature is fetched fresh on every call,
+// so once it verifies over data those bytes are fixed: different bytes could
+// not verify under the same signature. Every later check compares the signed
+// claims and the bytes' hash against the index entry, values a refetch cannot
+// change, so those failures return staleable=false, as do authorization
+// failures (revoked key, key not in the trust set, wrong role) and malformed
+// signed claims (including a missing or invalid platform=).
 func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.Resolved) (staleable bool, err error) {
 	claims, err := keyring.Verify(trust.RoleArtifact, data, sig)
 	if err != nil {
@@ -457,13 +461,11 @@ func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.R
 		return false, fmt.Errorf("artifact %s-%s: %w", e.Name, e.Version, err)
 	}
 	if cname != e.Name || cversion != e.Version || chash != e.ContentHash {
-		return true, fmt.Errorf("artifact signature for %s-%s claims %s-%s/%s, expected %s-%s/%s",
+		return false, fmt.Errorf("artifact signature for %s-%s claims %s-%s/%s, expected %s-%s/%s",
 			e.Name, e.Version, cname, cversion, chash, e.Name, e.Version, e.ContentHash)
 	}
 	// Claim "" (signed as "any") must meet entry "", and a platform claim must
 	// meet the identical entry platform; render "" as "any" for the operator.
-	// Not staleable: the signature already verified over these bytes, so a
-	// refetch cannot change the claimed or the expected platform.
 	if cplat != e.Platform {
 		return false, fmt.Errorf("artifact signature for %s-%s claims platform %s, expected %s",
 			e.Name, e.Version, platform.Display(cplat), platform.Display(e.Platform))
@@ -475,7 +477,7 @@ func verifyArtifact(data []byte, sig string, keyring trust.Keyring, e resolver.R
 	}
 	computed := "blake3:" + hex.EncodeToString(h.Sum(nil))
 	if computed != e.ContentHash {
-		return true, fmt.Errorf("hash mismatch for %s-%s: index has %s, artifact is %s",
+		return false, fmt.Errorf("hash mismatch for %s-%s: index has %s, artifact is %s",
 			e.Name, e.Version, e.ContentHash, computed)
 	}
 	return false, nil
@@ -551,7 +553,7 @@ func verifyAttestation(attBytes []byte, attSig string, keyring trust.Keyring, e 
 		return true, "", fmt.Errorf("attestation predicate type mismatch for %s-%s: statement %q, index %q", e.Name, e.Version, st.PredicateType, ref.PredicateType)
 	}
 	// In-toto semantics: the predicate applies to EACH subject, so the binding
-	// subject may sit at any index. Since 2b-1, ParseStatement accepts subjects
+	// subject may sit at any index. ParseStatement accepts subjects
 	// with any digest algorithm, so a native attestation is bound only if SOME
 	// subject carries the artifact's blake3 digest; subjects without a blake3
 	// entry reconstruct to the never-matching "blake3:" and are skipped. No
@@ -610,14 +612,14 @@ type carriedRef struct {
 	bytes []byte
 }
 
-// verifyAttestations enforces D8/D-C10: a PRESENT attestation must verify
-// (signature under the attestation role, claims binding, content-addressed
-// hash, statement subject == artifact digest) in EVERY policy mode; only
-// ABSENCE consults the policy (warn installs with a warning, require
+// verifyAttestations enforces the attestation policy. A PRESENT attestation
+// must verify (signature under the attestation role, claims binding,
+// content-addressed hash, statement subject == artifact digest) in EVERY policy
+// mode; only ABSENCE consults the policy (warn installs with a warning, require
 // refuses, off installs silently). An attestation whose content-hash is on the
-// source's revocation list is refused in every policy mode (2c-0), before the
+// source's revocation list is refused in every policy mode, before the
 // present/absent split. The returned state is recorded in the generation
-// manifest (D11) — only "verified" or "unattested" ever persist.
+// manifest — only "verified" or "unattested" ever persist.
 func verifyAttestations(ctx context.Context, backend source.Backend, keyring trust.Keyring, revocations *trust.Revocations, e resolver.Resolved, policy string) (*schema.AttestationState, []carriedRef, string, error) {
 	if len(e.Attestations) == 0 {
 		state := &schema.AttestationState{Status: "unattested", PolicyAtInstall: policy}
@@ -635,7 +637,7 @@ func verifyAttestations(ctx context.Context, backend source.Backend, keyring tru
 	var carried []carriedRef
 	var lastHash string
 	for _, ref := range e.Attestations {
-		// Revoked-attestation refusal (2c-0): the ref's content_hash is the
+		// Revoked-attestation refusal: the ref's content_hash is the
 		// content-addressed blake3 of the att.json bytes, verified against the
 		// fetched bytes below; a revoked hash refuses the install in every
 		// policy mode (revocation is absolute, like a failed signature).
@@ -645,11 +647,12 @@ func verifyAttestations(ctx context.Context, backend source.Backend, keyring tru
 		// Carried external provenance (kind: carried-opaque) is transport-verified
 		// here — its publisher signature, claims, and content hash are checked
 		// against the signed index like any ref — but its subjects are digest-bound
-		// AFTER extraction, against the bytes that actually land (two-point binding
-		// P6, install half; see bindCarriedRefs). The native in-toto statement parse
+		// AFTER extraction, against the bytes that actually land (the install half
+		// of the two-point binding: digests are enforced at pack time AND at
+		// install time; see bindCarriedRefs). The native in-toto statement parse
 		// and subject check are skipped: a DSSE/SBOM envelope is not a bare in-toto
 		// Statement. A carried ref cannot be smuggled in by a mirror — the ref list
-		// lives inside the signed index (D7).
+		// lives inside the signed index, so the index signature covers it.
 		if ref.Kind == schema.KindCarriedOpaque {
 			vbytes, err := fetchVerifiedAttestation(ctx, backend, e, ref, func(b []byte, s string) (bool, error) {
 				staleable, _, verr := verifyTransport(b, s, keyring, e, ref)
@@ -684,8 +687,8 @@ func verifyAttestations(ctx context.Context, backend source.Backend, keyring tru
 // that actually landed: the fetched tarball (scope "artifact") plus every
 // regular file under pkgRoot/content (scope "content:<rel>"). Non-regular
 // entries — symlinks and the like — are skipped, never followed: a provenance
-// subject must resolve to concrete bytes, not a redirect (extraction hardening,
-// spec §5.3). A subject whose file was swapped for a symlink therefore finds no
+// subject must resolve to concrete bytes, not a redirect (extraction
+// hardening). A subject whose file was swapped for a symlink therefore finds no
 // matching target and fails to bind (fail closed). Hard links never reach here:
 // ExtractTarZst drops TypeLink entries, so a hard-linked subject surfaces as an
 // absent file and also fails to bind.
@@ -722,7 +725,8 @@ func extractedTargets(tarball []byte, pkgRoot string) ([]attest.Target, error) {
 	return targets, nil
 }
 
-// bindCarriedRefs performs the install-time half of the two-point binding (P6).
+// bindCarriedRefs performs the install-time half of the two-point binding
+// (digests are enforced at pack time AND at install time).
 // For each transport-verified carried envelope it re-extracts the covered
 // subjects (authoritative digests come from the payload, not the advisory index
 // field) and re-binds them BY DIGEST against the bytes that actually landed —
@@ -737,7 +741,8 @@ func extractedTargets(tarball []byte, pkgRoot string) ([]attest.Target, error) {
 // DSSE envelope — recording verifying_key_id and, for SLSA, builder_identity;
 // verified-transport-only when it is a DSSE envelope that did not so verify (bad
 // key, revoked, or out-of-window at build time); or bound-unverified for a bare
-// in-toto Statement. Refusing an install on a weak tier is phase 2d, not here.
+// in-toto Statement. Refusing an install on a weak tier is the attestation
+// gate's job (enforceAttestationPolicy), not this function's.
 //
 // It returns the builder key ids the source's revocation list rejected while
 // classifying these envelopes. That set never changes the verdict — a revoked
@@ -809,42 +814,47 @@ func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundl
 			AttestationHash: c.ref.ContentHash,
 		}
 		if info.Format == schema.FormatSigstoreBundle {
-			// Sigstore path (2c-3b): verify the bundle OFFLINE against the source's
+			// Sigstore path: verify the bundle OFFLINE against the source's
 			// mirrored SigstoreRoot selected by the bundle's (unverified) integrated
 			// time; the kernel re-verifies everything. Any failure — no bundle, no
 			// root for that time, adapter error, or verification failure — is
 			// fail-closed to verified-transport-only. Identity is recorded, not gated
-			// (2d). Subject binding already happened above (P6).
+			// here (the allow-list gate does that). Subject binding already happened
+			// above.
 			binding.Tier = schema.CarriedTierVerifiedTransportOnly
 			if info.BuildTimeKnown {
-				// Root selection (2e-5, spec §10.9 E-6): a consumer-pinned root is
-				// AUTHORITATIVE — the source-mirrored root is NOT consulted, closing
-				// the D-4 G1 chain-degradation asymmetry. No pin => mirrored root
-				// (today's behavior). Both are window-checked by the bundle's Rekor
-				// integrated time (info.BuildTime) via one selector; downstream
-				// verification is identical either way.
-				var sroot schema.SigstoreRoot
-				var haveRoot bool
+				// A consumer-pinned root is authoritative: the source-mirrored
+				// roots are NOT consulted, so a mirror cannot substitute its own
+				// CA for the one the operator pinned. With no pin, the mirrored
+				// roots apply. Every candidate whose window contains the bundle's
+				// Rekor integrated time (info.BuildTime) is tried in order and the
+				// first that verifies wins: Fulcio CA windows overlap across a
+				// rotation, so the first root live at that instant need not be
+				// the CA that signed the bundle.
+				var roots []schema.SigstoreRoot
 				switch {
 				case pin != nil:
-					sroot, haveRoot = trust.SelectSigstoreRoot([]schema.SigstoreRoot{*pin}, info.BuildTime)
+					roots = trust.SelectSigstoreRoots([]schema.SigstoreRoot{*pin}, info.BuildTime)
 				case bundle != nil:
-					sroot, haveRoot = bundle.SigstoreRootAt(info.BuildTime)
+					roots = bundle.SigstoreRootsAt(info.BuildTime)
 				}
-				if haveRoot {
-					if tm, terr := attest.SigstoreTrustedMaterial(sroot); terr == nil {
-						if verdict, verr := attest.VerifySigstoreBundle(c.bytes, tm); verr == nil && verdict.Verified {
-							binding.Tier = schema.CarriedTierVerifiedOffline
-							binding.CertificateIdentity = verdict.CertificateIdentity
-							binding.CertificateIssuer = verdict.CertificateIssuer
-						}
+				for _, sroot := range roots {
+					tm, terr := attest.SigstoreTrustedMaterial(sroot)
+					if terr != nil {
+						continue
+					}
+					if verdict, verr := attest.VerifySigstoreBundle(c.bytes, tm); verr == nil && verdict.Verified {
+						binding.Tier = schema.CarriedTierVerifiedOffline
+						binding.CertificateIdentity = verdict.CertificateIdentity
+						binding.CertificateIssuer = verdict.CertificateIssuer
+						break
 					}
 				}
 			}
 			attState.CarriedBindings = append(attState.CarriedBindings, binding)
 			continue
 		}
-		// Builder-signature verification (2c-1a): the kernel classifies the
+		// Builder-signature verification: the kernel classifies the
 		// envelope. A revoked builder key or a structurally-invalid envelope
 		// (verr != nil, e.g. duplicate JSON keys) fails closed to transport-only.
 		tier, keyID, verr := attest.VerifyBuilderSignature(c.bytes, lookup, revoked)
@@ -853,11 +863,11 @@ func bindCarriedRefs(carried []carriedRef, tarball []byte, pkgRoot string, bundl
 			binding.Tier = schema.CarriedTierBuilderVerified
 			binding.VerifyingKeyID = keyID
 			binding.BuilderIdentity = info.SLSABuilderID
-			// Window gate (2c-1b): a builder-verified signature additionally
+			// Window gate: a builder-verified signature additionally
 			// requires the signing key to have been valid AT the attestation's
 			// build time. A definite out-of-window result (or an unparseable stored
 			// window) downgrades to transport-only; an absent build timestamp
-			// no-ops (design F1). The keyid is in the bundle (the signature verified
+			// no-ops. The keyid is in the bundle (the signature verified
 			// against it), so BuilderKeyAt reports only out-of-window / parse error.
 			if info.BuildTimeKnown && bundle != nil {
 				if _, werr := bundle.BuilderKeyAt(keyID, info.BuildTime); werr != nil {

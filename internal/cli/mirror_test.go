@@ -21,29 +21,13 @@ import (
 
 func exportTestBundle(t *testing.T) (bundle, trustRoot string) {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), "r")
-	keyDir := t.TempDir()
+	mPath, keyDir := buildHelloRepo(t)
 	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
-	mPath := filepath.Join(repoDir, "polypkg-repo.yaml")
-	if _, err := runRepo(t, env, "repo", "init", repoDir, "--source", "example", "--key-dir", keyDir); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	writeHelloPkgSource(t, repoDir)
-	mraw, err := os.ReadFile(mPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(mPath, []byte(injectHelloPackage(t, repoDir, keyDir, mraw)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir); err != nil {
-		t.Fatalf("build: %v", err)
-	}
 	bundle = filepath.Join(t.TempDir(), "bundle.tar")
 	if _, err := runRepo(t, env, "repo", "export-bundle", "--manifest", mPath, "--key-dir", keyDir, "-o", bundle); err != nil {
 		t.Fatalf("export: %v", err)
 	}
-	return bundle, filepath.Join(repoDir, "public", "trust_root.pub")
+	return bundle, filepath.Join(filepath.Dir(mPath), "public", "trust_root.pub")
 }
 
 func TestMirrorVerifyAcceptsGoodBundle(t *testing.T) {
@@ -58,8 +42,51 @@ func TestMirrorVerifyAcceptsGoodBundle(t *testing.T) {
 }
 
 func TestMirrorVerifyRejectsMissingBundle(t *testing.T) {
-	if _, err := runRepo(t, nil, "mirror", "verify", filepath.Join(t.TempDir(), "nope.tar")); err == nil {
-		t.Fatal("expected error verifying a nonexistent bundle")
+	sandboxUserEnv(t)
+	missing := filepath.Join(t.TempDir(), "nope.tar")
+	_, err := runRepo(t, nil, "mirror", "verify", missing)
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("want a *CLIError, got %T: %v", err, err)
+	}
+	if want := "bundle " + missing + " does not exist"; ce.Msg != want {
+		t.Fatalf("Msg = %q, want %q", ce.Msg, want)
+	}
+	if !strings.Contains(ce.Hint, "export-bundle") {
+		t.Fatalf("Hint = %q", ce.Hint)
+	}
+}
+
+// A file that is not a tar archive, or a bundle cut short in transit, is
+// named as not a bundle rather than with the tar reader's own error.
+func TestMirrorVerifyRejectsAFileThatIsNotABundle(t *testing.T) {
+	sandboxUserEnv(t)
+	good, _ := exportTestBundle(t)
+	raw, err := os.ReadFile(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{
+		"text":      []byte(strings.Repeat("this is not a tar archive\n", 40)),
+		"truncated": raw[:len(raw)/2],
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), name+".tar")
+			if err := os.WriteFile(path, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := runRepo(t, nil, "mirror", "verify", path)
+			var ce *CLIError
+			if !errors.As(err, &ce) {
+				t.Fatalf("want a *CLIError, got %T: %v", err, err)
+			}
+			if want := path + " is not a polypkg bundle"; ce.Msg != want {
+				t.Fatalf("Msg = %q, want %q", ce.Msg, want)
+			}
+			if !strings.Contains(ce.Hint, "export-bundle") {
+				t.Fatalf("Hint = %q", ce.Hint)
+			}
+		})
 	}
 }
 
@@ -591,7 +618,7 @@ func loadMirrorRevocations(t *testing.T, outputDir string) *trust.Revocations {
 // for revocation propagation: an upstream revokes a hash + a builder key, and
 // after `mirror pull`, the MIRROR's own revocations.json — verified under the
 // mirror's own trust root, as a downstream consumer of the mirror would — honors
-// both. Task 6 (runMirrorPull) wires PropagateRevocations in; this proves the
+// both. runMirrorPull wires PropagateRevocations in; this proves the
 // wiring actually produces a document a real consumer accepts, not just that
 // the CLI call did not error.
 func TestMirrorPullPropagatesUpstreamRevocations(t *testing.T) {
@@ -711,7 +738,7 @@ func TestMirrorPullRejectsNonSlugRepoSource(t *testing.T) {
 	}
 }
 
-// Finding 9: a --key path that does not exist used to be reported byte-for-byte
+// A --key path that does not exist used to be reported byte-for-byte
 // like a wrong passphrase, sending the operator after the password instead of
 // the file. The two cases must now be distinguishable, and the missing-file one
 // must name the path polypkg actually opened.
@@ -749,7 +776,7 @@ func TestMirrorPullMissingKeyFileIsNotReportedAsWrongPassword(t *testing.T) {
 	}
 }
 
-// Finding 12, mirror pull's copy of --valid-for: the same non-positive window
+// mirror pull's --valid-for: the same non-positive window
 // that repo build and repo revoke now refuse must be refused here too, before
 // any upstream is fetched.
 func TestMirrorPullRejectsNonPositiveValidFor(t *testing.T) {
@@ -791,7 +818,7 @@ func mirrorBuilderKeyID(t *testing.T, outputDir string) string {
 	return tb.BuilderKeys[0].KeyID
 }
 
-// Finding 3: `mirror pull` wrote its generated polypkg-repo.yaml into the
+// `mirror pull` used to write its generated polypkg-repo.yaml into the
 // staging root, which defaults to a temp dir it deletes on the way out. The
 // mirror therefore had no manifest, and `repo revoke` — the exact command
 // docs/publishing.md tells the operator to run against it — could not open one.
@@ -1349,5 +1376,92 @@ func TestMirrorPullRedactsTheUpstreamURLInStderrNotes(t *testing.T) {
 	}
 	if strings.Contains(out, "ghp_secret") {
 		t.Fatalf("output leaks the URL token:\n%s", out)
+	}
+}
+
+// A mirror operator who names the upstream wrongly is told to fix
+// --source-name, not given the client-side `source add` remedy.
+func TestMirrorPullSourceNameMismatchPointsAtSourceName(t *testing.T) {
+	upstream, upTrust := buildUpstreamRepo(t) // publishes source "example"
+	keyPath, keyDir := makeLocalKey(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+
+	_, err := runRepo(t, env, "mirror", "pull",
+		"--source-url", upstream, "--trust-root", upTrust, "--source-name", "upstream",
+		"--repo-source", "local", "--output-dir", filepath.Join(t.TempDir(), "out"),
+		"--key", keyPath, "--key-dir", keyDir)
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("want a *CLIError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ce.Msg, `trust document is for source "example", expected "upstream"`) {
+		t.Fatalf("Msg = %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Hint, "--source-name example") || !strings.Contains(ce.Hint, "source_name: example") {
+		t.Fatalf("Hint = %q, want the --source-name remedy", ce.Hint)
+	}
+	if strings.Contains(ce.Hint, "polypkg source add") {
+		t.Fatalf("Hint = %q gives the client-side remedy", ce.Hint)
+	}
+}
+
+// A bundle checked against a trust root that did not sign it gets a hint
+// that says what the library's "Incompatible key identifiers" means.
+func TestMirrorVerifyWrongTrustRootExplainsTheSignatureFailure(t *testing.T) {
+	bundle, _ := exportTestBundle(t)
+	kp, err := repo.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := filepath.Join(t.TempDir(), "wrong.pub")
+	if err := os.WriteFile(wrong, []byte(kp.PublicKeyFile("unrelated key")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = runRepo(t, nil, "mirror", "verify", bundle, "--trust-root", wrong)
+	var ce *CLIError
+	if !errors.As(err, &ce) {
+		t.Fatalf("want a *CLIError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ce.Msg, "pool manifest signature") {
+		t.Fatalf("Msg = %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Hint, "signed by another key") || !strings.Contains(ce.Hint, "Recovering after a repository is re-created") {
+		t.Fatalf("Hint = %q", ce.Hint)
+	}
+}
+
+// Without --trust-root the bundle is checked only against the trust root it
+// carries itself, which proves consistency, not who signed it.
+func TestMirrorVerifySaysWhenItOnlyCheckedSelfConsistency(t *testing.T) {
+	bundle, root := exportTestBundle(t)
+
+	out, err := runRepo(t, nil, "mirror", "verify", bundle)
+	if err != nil {
+		t.Fatalf("mirror verify: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "OK:") || !strings.Contains(out, "self-consistency only") {
+		t.Fatalf("an unpinned verify must say it checked self-consistency only, got %q", out)
+	}
+
+	out, err = runRepo(t, nil, "mirror", "verify", bundle, "--trust-root", root)
+	if err != nil {
+		t.Fatalf("mirror verify --trust-root: %v (out=%s)", err, out)
+	}
+	if strings.Contains(out, "self-consistency") {
+		t.Fatalf("a pinned verify must not be qualified, got %q", out)
+	}
+
+	out, err = runRepo(t, nil, "--format", "json", "mirror", "verify", bundle)
+	if err != nil {
+		t.Fatalf("mirror verify json: %v (out=%s)", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	res, err := schema.ParseCLIResult(strings.NewReader(lines[len(lines)-1]))
+	if err != nil {
+		t.Fatalf("parse result: %v (out=%s)", err, out)
+	}
+	if res.Data["pinned"] != false {
+		t.Fatalf("data.pinned = %v, want false", res.Data["pinned"])
 	}
 }

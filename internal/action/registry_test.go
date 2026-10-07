@@ -49,6 +49,27 @@ var expectedFilePlacing = map[string]bool{
 	"extract":      true,
 }
 
+// expectedCreates is an INDEPENDENT anti-drift oracle for ParamSpec.Creates,
+// which pkg lint reads to find an earlier action whose placement collides
+// with an extract destination. It is written out by hand and must name every
+// action, so a new action forces an explicit choice here; a param an action's
+// map omits must declare CreatesNothing.
+var expectedCreates = map[string]map[string]Creation{
+	"install":      {"dest": CreatesLeaf},
+	"symlink":      {"dest": CreatesPath},
+	"dir":          {"path": CreatesPath},
+	"perms":        {},
+	"config":       {"dest": CreatesLeaf},
+	"unmanaged":    {},
+	"state":        {"path": CreatesLeaf},
+	"path":         {},
+	"alternatives": {},
+	"completion":   {},
+	"desktop":      {},
+	"mime":         {},
+	"extract":      {"dest": CreatesPath},
+}
+
 var _ = Describe("Registry", func() {
 	It("declares exactly the expected 13 actions", func() {
 		keys := make([]string, 0, len(Registry))
@@ -84,6 +105,26 @@ var _ = Describe("Registry", func() {
 		}
 		Expect(IsFilePlacing("does-not-exist")).To(BeFalse(),
 			"IsFilePlacing must report false for an unknown action")
+	})
+
+	It("declares the expected Creates value for every param", func() {
+		oracleKeys := make([]string, 0, len(expectedCreates))
+		for name := range expectedCreates {
+			oracleKeys = append(oracleKeys, name)
+		}
+		Expect(oracleKeys).To(ConsistOf(expectedActions))
+
+		for name, spec := range Registry {
+			declared := make(map[string]bool, len(spec.Params))
+			for _, p := range spec.Params {
+				declared[p.Name] = true
+				Expect(p.Creates).To(Equal(expectedCreates[name][p.Name]),
+					"Creates for param %q of action %q must match the independent oracle", p.Name, name)
+			}
+			for param := range expectedCreates[name] {
+				Expect(declared).To(HaveKey(param), "the oracle names param %q, which action %q does not declare", param, name)
+			}
+		}
 	})
 
 	It("is well-formed for every entry", func() {

@@ -55,7 +55,7 @@ testcases:
   - name: consumer initializes against the non-default source name
     steps:
       - type: exec
-        script: '{{.pxa}} init --scope user --source-name authors --source-url file://{{.repo}}/public --trust-root-file {{.repo}}/public/trust_root.pub'
+        script: '{{.pxa}} init --scope user --source-name authors --source-url file://{{.repo}}/public --trust-root {{.repo}}/public/trust_root.pub'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

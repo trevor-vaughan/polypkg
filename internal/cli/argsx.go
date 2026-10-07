@@ -2,9 +2,15 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// resultCommandAnnotation, set in a command's Annotations, overrides the
+// command name an argument or flag error's JSON envelope reports, for a command whose
+// results have always used a name other than its path.
+const resultCommandAnnotation = "polypkg.result-command"
 
 // needsArgs replaces cobra.ExactArgs/MinimumNArgs with messages naming the
 // missing operands ("polypkg generation pin needs <generation-id>") instead
@@ -25,12 +31,35 @@ func needsArgs(minimum, maximum int, operands string) cobra.PositionalArgs {
 		}
 		// Args validators run before RunE, so RunE's WrapError never sees
 		// this error; emit the JSON envelope here. Flags are already parsed.
-		format, ferr := resolveFormat(cmd)
-		if ferr != nil {
-			format = FormatText
-		}
-		return WrapError(cmd, format, cmd.Name(), err)
+		return wrapInvocationError(cmd, err)
 	}
+}
+
+// resultCommand is the command value an error envelope reports for cmd: the
+// name its own results use, which is its path without the root
+// ("repo remove") unless it declares another name. The root itself, which
+// rejects an unknown command, reports its own name: the envelope schema
+// requires a non-empty command.
+func resultCommand(cmd *cobra.Command) string {
+	if name, ok := cmd.Annotations[resultCommandAnnotation]; ok {
+		return name
+	}
+	if !cmd.HasParent() {
+		return cmd.Name()
+	}
+	return strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
+}
+
+// wrapInvocationError is WrapError for an error about how cmd was invoked
+// (arguments, flags, subcommand), raised where no RunE has resolved the
+// format. An unparseable --format falls back to text: the invocation error
+// is the one to report, not the format's.
+func wrapInvocationError(cmd *cobra.Command, err error) error {
+	format, ferr := resolveFormat(cmd)
+	if ferr != nil {
+		format = FormatText
+	}
+	return WrapError(cmd, format, resultCommand(cmd), err)
 }
 
 // countArgs renders a grammatical argument count: "no arguments",

@@ -26,9 +26,9 @@ const (
 
 // AttestationRef points at one signed attestation for an index entry. Living
 // inside the signed index makes attestations strip-resistant: removing one
-// invalidates the index signature (D7).
+// invalidates the index signature.
 //
-// Kind/Format/SubjectScope/SubjectDigests carry external provenance (phase 2b):
+// Kind/Format/SubjectScope/SubjectDigests carry external provenance:
 // they are optional and absent on the pre-carriage native-jcs SARIF ref, which
 // is treated as Kind==KindNativeJCS by default.
 type AttestationRef struct {
@@ -71,7 +71,7 @@ type IndexEntry struct {
 	Platform     string           `json:"platform,omitempty"` // <os>/<arch>[/<variant>]; "" = platform-agnostic
 	ContentHash  string           `json:"content_hash"`
 	Artifact     string           `json:"artifact"`
-	Revision     int              `json:"revision,omitempty"` // informational rebuild ordinal (D10)
+	Revision     int              `json:"revision,omitempty"` // informational rebuild ordinal
 	Attestations []AttestationRef `json:"attestations,omitempty"`
 	Depends      []Relation       `json:"depends,omitempty"`
 	Recommends   []Relation       `json:"recommends,omitempty"`
@@ -84,7 +84,7 @@ type IndexEntry struct {
 // Index is a source's published catalog of available packages.
 type Index struct {
 	Schema   string                  `json:"schema"`  // polypkg.index/v3
-	Expires  string                  `json:"expires"` // RFC3339; consumer rejects stale (D13)
+	Expires  string                  `json:"expires"` // RFC3339; consumer rejects stale
 	Packages map[string][]IndexEntry `json:"packages"`
 }
 

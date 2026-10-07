@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/hex"
 	"errors"
@@ -169,7 +168,7 @@ func acquireTrustRoot(cmd *cobra.Command, sourceName, trustRootURL, wantFingerpr
 //
 // The copy is the point: recording the operator's own path instead would leave
 // the anchor late-bound, re-read from that path on every verification. Our
-// guidance points --trust-root-file at the published repository's own tree, so
+// guidance points --trust-root at the published repository's own tree, so
 // an attacker who can write that tree could otherwise swap the anchor and have
 // their index verify under it. No TOFU prompt here, unlike acquireTrustRoot: a
 // local file the operator named is already material they chose, whereas a
@@ -184,9 +183,13 @@ func pinTrustRootFile(path, destDir, sourceName, wantFingerprint string) (string
 	}
 	data, err := os.ReadFile(abs) //nolint:gosec // path is resolved from a user-supplied flag and sanitized to absolute
 	if err != nil {
+		msg := fsFailureMsg("cannot read trust root "+path, err)
+		if errors.Is(err, fs.ErrNotExist) {
+			msg = fmt.Sprintf("trust root %s does not exist", path)
+		}
 		return "", &CLIError{
-			Msg:  fmt.Sprintf("trust_root %s is not a valid minisign public key", path),
-			Hint: "trust_root must point at the repository's minisign .pub file",
+			Msg:  msg,
+			Hint: "pass the repository's minisign .pub file: trust_root.pub in its published directory",
 			Err:  err,
 		}
 	}
@@ -331,6 +334,8 @@ func fsFailureMsg(failed string, err error) string {
 		return failed + ": no space left on device"
 	case errors.Is(err, syscall.EROFS):
 		return failed + ": read-only file system"
+	case errors.Is(err, syscall.ENOTDIR):
+		return failed + ": part of the path is not a directory"
 	default:
 		return failed
 	}
@@ -341,12 +346,7 @@ func fsFailureMsg(failed string, err error) string {
 // Only "y" or "Y" confirms; empty or anything else declines.
 func confirmTrustRoot(in io.Reader, out io.Writer, origin, fingerprint string) (bool, error) {
 	fmt.Fprintf(out, "Downloaded trust root from %s\n  key fingerprint: %s\nVerify this matches the publisher's key id (e.g. from `polypkg repo key show`).\nTrust this key? [y/N]: ", origin, fingerprint)
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, err
-	}
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y", nil
+	return readYes(in)
 }
 
 // confirmTrustRootReplacement prompts on out and reads a y/N answer from in,
@@ -355,10 +355,5 @@ func confirmTrustRoot(in io.Reader, out io.Writer, origin, fingerprint string) (
 // "Y" confirms; empty or anything else declines.
 func confirmTrustRootReplacement(in io.Reader, out io.Writer, sourceName, origin, oldFingerprint, newFingerprint string) (bool, error) {
 	fmt.Fprintf(out, "Replacing the trust root of source %s\n  pinned key id: %s\n  new key id:    %s (from %s)\nVerify the new key id with the publisher (e.g. from `polypkg repo key show`).\nThis also clears the source's anti-rollback state.\nReplace the trust root? [y/N]: ", sourceName, oldFingerprint, newFingerprint, origin)
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, err
-	}
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y", nil
+	return readYes(in)
 }

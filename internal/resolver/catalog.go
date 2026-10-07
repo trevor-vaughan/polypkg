@@ -63,12 +63,13 @@ type unavailable struct {
 // Every package key and every relation name must be a package-name slug
 // (schema.ValidatePackageName), and every entry platform must satisfy the
 // consumer grammar (platform.ValidateConsumer). Every (version, platform)
-// pair is listed once, and no version has both a platform-agnostic entry and
-// platform entries (repo build's publishing rules). Index names flow into
-// on-disk paths downstream (the planner's extract directory), and the index
-// signature proves only who published a name, not that it is safe. A
-// violation fails the whole load: a malformed signed index is a publisher
-// fault, not an entry to skip.
+// pair is listed once, versions compared as semantic versions, no version has
+// both a platform-agnostic entry and platform entries, and no two names, or
+// two versions of one name, differ only in letter case (repo build's
+// publishing rules). Index names flow into on-disk paths downstream (the
+// planner's extract directory), and the index signature proves only who
+// published a name, not that it is safe. A violation fails the whole load: a
+// malformed signed index is a publisher fault, not an entry to skip.
 //
 // Only entries whose platform is empty (platform-agnostic) or equal to host
 // become candidates; everything downstream of the catalog sees only what this
@@ -77,6 +78,9 @@ type unavailable struct {
 // NewestUnavailable). Entries are validated before they are filtered, so a
 // malformed entry for another platform still fails the load.
 func BuildCatalog(idx *schema.Index, sourceName, host string) (*Catalog, error) {
+	if err := schema.CaseFoldCollision(idx); err != nil {
+		return nil, fmt.Errorf("catalog: %w", err)
+	}
 	c := &Catalog{
 		byName:  map[string][]*Candidate{},
 		dropped: map[string]map[string]*unavailable{},
@@ -86,9 +90,11 @@ func BuildCatalog(idx *schema.Index, sourceName, host string) (*Catalog, error) 
 		if err := schema.ValidatePackageName(name); err != nil {
 			return nil, fmt.Errorf("catalog: %w", err)
 		}
-		// builds maps version -> platform ("" for platform-agnostic) for the
-		// entries seen so far, to enforce repo build's publishing rules.
-		builds := map[string]map[string]bool{}
+		// builds maps each semver-distinct version of the entries seen so far
+		// to the platforms ("" for platform-agnostic) it is listed for, each
+		// with that entry's spelling, to enforce repo build's publishing
+		// rules.
+		builds := map[schema.VersionKey]map[string]string{}
 		for i := range entries {
 			e := &entries[i]
 			if err := validateRelationNames(name, e); err != nil {
@@ -103,7 +109,7 @@ func BuildCatalog(idx *schema.Index, sourceName, host string) (*Catalog, error) 
 			if err != nil {
 				return nil, fmt.Errorf("catalog: %s %q: %w", name, e.Version, err)
 			}
-			if err := admitBuild(builds, name, e.Version, e.Platform); err != nil {
+			if err := admitBuild(builds, name, e.Version, v, e.Platform); err != nil {
 				return nil, err
 			}
 			if e.Platform != "" && e.Platform != host {
@@ -140,34 +146,44 @@ func BuildCatalog(idx *schema.Index, sourceName, host string) (*Catalog, error) 
 	return c, nil
 }
 
-// admitBuild records that an index entry publishes version of name for plat
-// ("" for platform-agnostic) in builds, or returns the error for an entry that
-// breaks repo build's publishing rules: a (version, platform) pair is listed
-// once, and a version is either one platform-agnostic artifact or one artifact
-// per platform, never both. Either violation would hand a host two candidates
-// for one version, so it fails the load like any other malformed entry.
-func admitBuild(builds map[string]map[string]bool, name, version, plat string) error {
-	byPlat := builds[version]
-	if byPlat[plat] {
-		return fmt.Errorf("catalog: %s %q for platform %q is listed more than once",
-			name, version, platform.Display(plat))
+// admitBuild records in builds that an index entry publishes version (parsed
+// as sv) of name for plat ("" for platform-agnostic), or returns the error for
+// an entry that breaks repo build's publishing rules: a (version, platform)
+// pair is listed once, and a version is either one platform-agnostic artifact
+// or one artifact per platform, never both. Versions compare as semantic
+// versions, so "1.0" and "1.0.0" are one version. Either violation would hand
+// a host two candidates for one version, so it fails the load like any other
+// malformed entry.
+func admitBuild(builds map[schema.VersionKey]map[string]string, name, version string, sv *semver.Version, plat string) error {
+	key := schema.VersionKeyOf(sv)
+	byPlat := builds[key]
+	// also names an earlier entry's spelling when it differs from version.
+	also := func(spelling string) string {
+		if spelling == version {
+			return ""
+		}
+		return fmt.Sprintf(" (also listed as %q)", spelling)
 	}
-	other := ""
-	switch {
-	case plat != "" && byPlat[""]:
-		other = plat
-	case plat == "" && len(byPlat) > 0:
+	if prev, dup := byPlat[plat]; dup {
+		return fmt.Errorf("catalog: %s %q for platform %q is listed more than once%s",
+			name, version, platform.Display(plat), also(prev))
+	}
+	var other, otherSpelling string
+	if prev, ok := byPlat[""]; ok && plat != "" {
+		other, otherSpelling = plat, prev
+	} else if plat == "" && len(byPlat) > 0 {
 		other = slices.Sorted(maps.Keys(byPlat))[0]
+		otherSpelling = byPlat[other]
 	}
 	if other != "" {
-		return fmt.Errorf("catalog: %s %q has both a platform-agnostic entry and a %q entry",
-			name, version, other)
+		return fmt.Errorf("catalog: %s %q has both a platform-agnostic entry and a %q entry%s",
+			name, version, other, also(otherSpelling))
 	}
 	if byPlat == nil {
-		byPlat = map[string]bool{}
-		builds[version] = byPlat
+		byPlat = map[string]string{}
+		builds[key] = byPlat
 	}
-	byPlat[plat] = true
+	byPlat[plat] = version
 	return nil
 }
 

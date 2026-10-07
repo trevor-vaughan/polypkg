@@ -116,11 +116,12 @@ type importRun struct {
 // <OutDir>/sigstore-trusted-root.json.
 //
 // It refuses before downloading anything when a target directory already
-// exists. Each asset's integrity is checked (its GitHub digest, else the
-// release's checksums file), its attestations verified offline, and its
-// generated source linted, all in a staging directory inside OutDir that is
-// moved into place only when every platform has succeeded, so a failed
-// import leaves OutDir as it was.
+// exists, or when OutDir holds the package or this version of it under a
+// spelling that differs only in letter case. Each asset's integrity is
+// checked (its GitHub digest, else the release's checksums file), its
+// attestations verified offline, and its generated source linted, all in a
+// staging directory inside OutDir that is moved into place only when every
+// platform has succeeded, so a failed import leaves OutDir as it was.
 //
 // A platform that cannot be imported safely (an unpublishable platform, an
 // unsafe asset name, no integrity source, an unsupported asset kind, an
@@ -190,6 +191,9 @@ func Run(ctx context.Context, opts Options) (res *Result, err error) {
 	}
 
 	// Every target is checked before anything is downloaded or written.
+	if err := refuseCaseVariant(opts.OutDir, name, version); err != nil {
+		return nil, err
+	}
 	plats := make([]string, 0, len(match.Chosen))
 	targets := make(map[string]string, len(match.Chosen))
 	for _, p := range slices.Sorted(maps.Keys(match.Chosen)) {
@@ -301,6 +305,32 @@ func targetDir(name, version, plat string) (string, error) {
 		return "", err
 	}
 	return path.Join(name, version, strings.ReplaceAll(plat, "/", "-")), nil
+}
+
+// refuseCaseVariant refuses an import when out-dir already holds this
+// package, or this version of it, under a spelling that differs only in
+// letter case. On a case-insensitive filesystem, the default on macOS and
+// Windows, the two would share a directory; on any filesystem, repo build
+// refuses to publish both. A directory that does not exist holds no variant.
+func refuseCaseVariant(outDir, name, version string) error {
+	for _, step := range []struct{ dir, want, what string }{
+		{outDir, name, "package"},
+		{filepath.Join(outDir, name), version, "version"},
+	} {
+		ents, err := os.ReadDir(step.dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("check %s: %w", step.dir, err)
+		}
+		for _, e := range ents {
+			if e.Name() != step.want && strings.EqualFold(e.Name(), step.want) {
+				return &CaseVariantError{Dir: step.dir, Existing: e.Name(), Want: step.want, What: step.what}
+			}
+		}
+	}
+	return nil
 }
 
 // importPlatform downloads, checks and stages the asset chosen for plat at

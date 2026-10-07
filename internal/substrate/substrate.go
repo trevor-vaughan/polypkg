@@ -1,5 +1,5 @@
 // Package substrate defines polypkg's substrate-backend interface and
-// ships the own-store substrate for M1.
+// ships the own-store substrate.
 package substrate
 
 import (

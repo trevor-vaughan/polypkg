@@ -120,11 +120,23 @@ var _ = ginkgo.Describe("Attestations", func() {
 	ginkgo.It("never puts the token in an error when a next link echoes it", func() {
 		srv, _ := newRecordedServer(func(w http.ResponseWriter, r *http.Request) {
 			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			w.Header().Set("Link", `<https://elsewhere.invalid/page2?t=`+token+`>; rel="next"`)
+			// In the path, where URL redaction keeps it: the scrub must catch it.
+			w.Header().Set("Link", `<https://elsewhere.invalid/`+token+`/page2>; rel="next"`)
 			_, _ = w.Write([]byte(attestationsPage(bundleJSON(1))))
 		})
 		_, err := newTestClient(srv.URL).Attestations(context.Background(), "o", "r", artifactHex)
 		Expect(err).To(MatchError(ContainSubstring("echoed the API token")))
+		Expect(err.Error()).NotTo(ContainSubstring(testToken))
+	})
+
+	ginkgo.It("redacts a token a next link echoes in its query", func() {
+		srv, _ := newRecordedServer(func(w http.ResponseWriter, r *http.Request) {
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			w.Header().Set("Link", `<https://elsewhere.invalid/page2?t=`+token+`>; rel="next"`)
+			_, _ = w.Write([]byte(attestationsPage(bundleJSON(1))))
+		})
+		_, err := newTestClient(srv.URL).Attestations(context.Background(), "o", "r", artifactHex)
+		Expect(err).To(MatchError("pagination link https://elsewhere.invalid/page2?t=xxxxx leaves the GitHub API origin"))
 		Expect(err.Error()).NotTo(ContainSubstring(testToken))
 	})
 

@@ -41,8 +41,10 @@ Subcommands: pin, unpin.`,
 func newGenerationPinCmd() *cobra.Command {
 	var reason string
 	cmd := &cobra.Command{
-		Use:   "pin <generation-id>",
-		Short: "Pin a generation so it is exempt from automatic GC",
+		Use: "pin <generation-id>",
+		// The JSON result has always named this command "pin".
+		Annotations: map[string]string{resultCommandAnnotation: "pin"},
+		Short:       "Pin a generation so it is exempt from automatic GC",
 		Long: `Marks a generation so that GC never removes it, regardless of how many newer
 generations accumulate. Pinning is useful before a risky change (so there is a
 known-good generation to roll back to) or to preserve a baseline for auditing.
@@ -77,8 +79,10 @@ so that the purpose is visible when reviewing pinned generations later.`,
 
 func newGenerationUnpinCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "unpin <generation-id>",
-		Short: "Remove a generation pin",
+		Use: "unpin <generation-id>",
+		// The JSON result has always named this command "unpin".
+		Annotations: map[string]string{resultCommandAnnotation: "unpin"},
+		Short:       "Remove a generation pin",
 		Long: `Removes the pin from a generation so it is eligible for garbage collection
 again. Once unpinned, the generation will be pruned by the next GC pass if it
 falls outside the retention policy.`,

@@ -132,12 +132,7 @@ var _ = Describe("buildAttestationReport", func() {
 		var storeRoot string
 
 		BeforeEach(func() {
-			dir := GinkgoT().TempDir()
-			GinkgoT().Setenv("HOME", filepath.Join(dir, "home"))
-			GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-			GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-			GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-			GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+			dir := sandboxUserEnv(GinkgoTB())
 			storeRoot = filepath.Join(dir, "data", "polypkg")
 			writeReportGen(storeRoot, 1, fmt.Sprintf(complete, 1))
 			// generations/2: the skeleton BeginTransaction leaves, no manifest.

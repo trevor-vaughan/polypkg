@@ -27,13 +27,13 @@ const (
 	cyclonedxBOMType = "https://cyclonedx.org/bom"
 )
 
-// recognizedGenericPredicates are non-SLSA/SPDX/CycloneDX in-toto predicate types
-// polypkg recognizes as legitimate supply-chain provenance and classifies as
-// in-toto-generic (policy-weightable in phase 2d). URIs verified against
-// in-toto.io / slsa.dev (2026-07-06). A predicate type outside this set — and
-// outside the SLSA/SPDX/CycloneDX families — is in-toto-unclassified: bound and
-// possibly builder-verified, but carrying no policy weight (GAP8: classification
-// is (predicateType, builder), never an unknown predicate alone).
+// recognizedGenericPredicates are non-SLSA/SPDX/CycloneDX in-toto predicate
+// types polypkg recognizes as legitimate supply-chain provenance and classifies
+// as in-toto-generic (policy-weightable). URIs verified against in-toto.io /
+// slsa.dev (2026-07-06). A predicate type outside this set — and outside the
+// SLSA/SPDX/CycloneDX families — is in-toto-unclassified: bound and possibly
+// builder-verified, but carrying no policy weight (classification is
+// (predicateType, builder), never an unknown predicate alone).
 var recognizedGenericPredicates = map[string]struct{}{
 	"https://in-toto.io/attestation/link/v0.3":          {},
 	"https://in-toto.io/attestation/test-result/v0.1":   {},
@@ -69,7 +69,7 @@ func ClassifyFormat(predicateType string) string {
 // envelope: the inner statement's predicate type, the polypkg format it maps to,
 // the in-toto subjects it covers, and — for SLSA provenance — the builder identity
 // and build timestamp the install-time window gate needs. Digests here are
-// advisory (the caller binds them against installed bytes, P6); the builder
+// advisory (the caller binds them against installed bytes); the builder
 // signature is verified separately (VerifyBuilderSignature). InspectCarried does
 // NEITHER — it only reads.
 type CarriedInfo struct {
@@ -81,7 +81,7 @@ type CarriedInfo struct {
 	SLSABuilderID string
 	// BuildTime is the SLSA build finished (or, failing that, started) timestamp;
 	// it is meaningful only when BuildTimeKnown is true. A predicate carrying no
-	// parseable timestamp leaves it zero so the window gate no-ops (design F1).
+	// parseable timestamp leaves it zero so the window gate no-ops.
 	BuildTime      time.Time
 	BuildTimeKnown bool
 }
@@ -89,7 +89,7 @@ type CarriedInfo struct {
 // InspectCarried shallow-parses a carried attestation envelope — a DSSE envelope
 // wrapping an in-toto Statement, or a bare in-toto Statement — into a CarriedInfo.
 // It does NOT verify the DSSE/builder signature (that is VerifyBuilderSignature);
-// it reads only what the caller needs to bind digests (P6) and, once the signature
+// it reads only what the caller needs to bind digests and, once the signature
 // is verified, to apply the key validity-window gate. An unrecognized envelope is
 // an error; a SLSA predicate it cannot fully interpret is not (it yields less
 // metadata). A raw SPDX/CycloneDX SBOM (no DSSE/in-toto wrapper) is recognized
@@ -176,7 +176,7 @@ func ExtractCarriedSubjects(data []byte) (predicateType, format string, subjects
 // slsa.dev, 2026-07-06): v1.0 nests under runDetails/buildDefinition, v0.2 is
 // flat. It never errors — a predicate it cannot fully read still binds and
 // verifies, it just carries less metadata: an absent or unparseable timestamp
-// yields known=false (the window gate then no-ops, design F1) and an absent id
+// yields known=false (the window gate then no-ops) and an absent id
 // yields "". The decode is permissive (SLSA predicates carry many ignored fields).
 func interpretSLSA(predicateType string, predicate json.RawMessage) (builderID string, buildTime time.Time, known bool) {
 	parse := func(ts string) {
@@ -256,7 +256,7 @@ func normalizeSBOMAlgo(raw string) (string, bool) {
 
 // sbomSubject builds a Subject from a digest set, or ok=false when the set is
 // empty (all algorithms were dropped) — such a subject is unbindable and omitted,
-// leaving the caller to refuse if nothing else binds (P6, fail closed).
+// leaving the caller to refuse if nothing else binds (fail closed).
 func sbomSubject(name string, digests map[string]string) (Subject, bool) {
 	if len(digests) == 0 {
 		return Subject{}, false
@@ -268,7 +268,7 @@ func sbomSubject(name string, digests map[string]string) (Subject, bool) {
 // one per files[]/packages[] entry that carries a recomputable strong checksum.
 // The document has no in-toto predicateType, so PredicateType is the canonical
 // SPDX document URI. Digests are advisory here; the caller binds them against
-// installed bytes (P6) and the tier caps at verified-transport-only (no builder
+// installed bytes and the tier caps at verified-transport-only (no builder
 // signature).
 func inspectRawSPDX(data []byte) (CarriedInfo, error) {
 	type checksum struct {

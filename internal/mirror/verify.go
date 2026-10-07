@@ -35,7 +35,8 @@ type VerifyOptions struct {
 	// trust_root.pub is used (integrity/self-consistency only).
 	TrustRootPath string
 	// AcceptExpiryUntil is an optional RFC3339 freshness-grace ceiling for a
-	// frozen mirror whose manifest has expired (phase 2e-1 semantics).
+	// frozen mirror whose manifest has expired: an expired manifest is still
+	// accepted while now is at or before this deadline.
 	AcceptExpiryUntil string
 }
 
@@ -124,12 +125,29 @@ func contentHash(b []byte) string {
 	return "blake3:" + hex.EncodeToString(h.Sum(nil))
 }
 
+// BundleReadError is a bundle file that cannot be opened (Err is the open
+// error), or whose bytes are not a complete tar archive (NotTar).
+type BundleReadError struct {
+	Path   string
+	NotTar bool
+	Err    error
+}
+
+func (e *BundleReadError) Error() string {
+	if e.NotTar {
+		return fmt.Sprintf("bundle %s is not a complete tar archive: %v", e.Path, e.Err)
+	}
+	return fmt.Sprintf("open bundle: %v", e.Err)
+}
+
+func (e *BundleReadError) Unwrap() error { return e.Err }
+
 // readTar loads all regular-file entries into a name->bytes map, rejecting
 // path-traversal names and duplicate paths.
 func readTar(path string) (map[string][]byte, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return nil, fmt.Errorf("open bundle: %w", err)
+		return nil, &BundleReadError{Path: path, Err: err}
 	}
 	defer func() { _ = f.Close() }()
 	tr := tar.NewReader(f)
@@ -140,7 +158,7 @@ func readTar(path string) (map[string][]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read bundle tar: %w", err)
+			return nil, &BundleReadError{Path: path, NotTar: true, Err: err}
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			return nil, fmt.Errorf("bundle contains non-regular member %q (tar type %q); mirror bundles must contain regular files only", hdr.Name, string(hdr.Typeflag))
@@ -154,7 +172,7 @@ func readTar(path string) (map[string][]byte, error) {
 		}
 		body, err := io.ReadAll(tr)
 		if err != nil {
-			return nil, fmt.Errorf("read bundle entry %q: %w", hdr.Name, err)
+			return nil, &BundleReadError{Path: path, NotTar: true, Err: fmt.Errorf("entry %q: %w", hdr.Name, err)}
 		}
 		files[name] = body
 	}

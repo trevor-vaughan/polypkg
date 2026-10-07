@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
-	"github.com/charmbracelet/x/term"
 	"github.com/jedisct1/go-minisign"
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/paths"
@@ -24,14 +23,14 @@ func newInitCmd() *cobra.Command {
 		Short: "Create a polypkg profile for this machine",
 		Long: `Create a polypkg profile at the scope's default location.
 
-With --source-url and --trust-root-file the command runs non-interactively.
+With --source-url and --trust-root the command runs non-interactively.
 Without them (on a TTY) it presents a short wizard.
 
 --trust-root-url downloads the key instead (https, file://, or an absolute
 path; plain http is refused). The download is confirmed by
 --trust-root-fingerprint <key id>, the id 'polypkg repo key show' prints on the
 repository host, or else by a prompt on a TTY; without a TTY the fingerprint is
-required. With --trust-root-file the fingerprint is optional and, if given,
+required. With --trust-root the fingerprint is optional and, if given,
 must match.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -44,7 +43,7 @@ must match.`,
 	}
 	addScopeFlags(cmd)
 	cmd.Flags().String("source-url", "", "Repository URL: http(s), file://, or an absolute local path")
-	cmd.Flags().String("trust-root-file", "", "Path to the repository's minisign .pub file (copied into the config dir and pinned by content)")
+	cmd.Flags().String("trust-root", "", "Path to the repository's minisign .pub file (copied into the config dir and pinned by content)")
 	cmd.Flags().String("trust-root-url", "", "Download the trust root from this URL (https, file://, or absolute path) and confirm it: by --trust-root-fingerprint, or interactively")
 	cmd.Flags().String("trust-root-fingerprint", "", "Expected key id of the trust root (hex, as printed by 'polypkg repo key show'); required with --trust-root-url when not on a TTY")
 	cmd.Flags().String("source-name", "native", "Source name to record in the profile (must match the name the repository was published under)")
@@ -52,12 +51,12 @@ must match.`,
 }
 
 // runInit is the init implementation. It selects the flag route when both
-// --source-url and --trust-root-file are provided (or stdin is not a TTY),
+// --source-url and --trust-root are provided (or stdin is not a TTY),
 // and falls back to the interactive wizard when both are absent and both
 // stdin and stdout are TTYs.
 func runInit(cmd *cobra.Command, format Format) error {
 	sourceURL, _ := cmd.Flags().GetString("source-url")
-	trustRootFile, _ := cmd.Flags().GetString("trust-root-file")
+	trustRootFile, _ := cmd.Flags().GetString("trust-root")
 	trustRootURL, _ := cmd.Flags().GetString("trust-root-url")
 	fingerprint, _ := cmd.Flags().GetString("trust-root-fingerprint")
 	scope, _ := cmd.Flags().GetString("scope")
@@ -67,29 +66,28 @@ func runInit(cmd *cobra.Command, format Format) error {
 	}
 
 	// Mutual exclusion: cannot specify both local file and remote URL for trust root.
-	if cmd.Flags().Changed("trust-root-file") && cmd.Flags().Changed("trust-root-url") {
+	if cmd.Flags().Changed("trust-root") && cmd.Flags().Changed("trust-root-url") {
 		return &CLIError{
-			Msg:  "use only one of --trust-root-file or --trust-root-url",
-			Hint: "supply the trust root either as a local file path (--trust-root-file) or a URL to download (--trust-root-url), not both",
+			Msg:  "use only one of --trust-root or --trust-root-url",
+			Hint: "supply the trust root either as a local file path (--trust-root) or a URL to download (--trust-root-url), not both",
 		}
 	}
 
 	flagsProvided := cmd.Flags().Changed("source-url") ||
-		cmd.Flags().Changed("trust-root-file") ||
+		cmd.Flags().Changed("trust-root") ||
 		cmd.Flags().Changed("trust-root-url") ||
 		cmd.Flags().Changed("trust-root-fingerprint")
 
-	// Non-interactive: use flag route when running without a TTY, or when any
-	// flag is present (partial flags are an error caught below).
-	stdinTTY := term.IsTerminal(os.Stdin.Fd())
-	stdoutTTY := term.IsTerminal(os.Stdout.Fd())
-	interactive := stdinTTY && stdoutTTY && !flagsProvided
+	// Non-interactive: use flag route unless both stdin and stdout are
+	// terminals, or when any flag is present (partial flags are an error
+	// caught below).
+	interactive := interactiveTTY(cmd) && !flagsProvided
 
 	if !interactive {
 		if sourceURL == "" || (trustRootFile == "" && trustRootURL == "") {
 			return &CLIError{
 				Msg:  "init needs --source-url and a trust root when not run interactively",
-				Hint: "provide a trust root with --trust-root-file <path> or --trust-root-url <url>; e.g. polypkg init --source-url <url> --trust-root-file <path>",
+				Hint: "provide a trust root with --trust-root <path> or --trust-root-url <url>; e.g. polypkg init --source-url <url> --trust-root <path>",
 			}
 		}
 		normalizedURL, err := normalizeSourceURL(sourceURL)
@@ -253,8 +251,9 @@ func writeInitProfile(cfgDir, sourceName, sourceURL, trustRootInput, scope strin
 	dirMode := scopeDirMode(scope)
 	if err := os.MkdirAll(cfgDir, dirMode); err != nil {
 		return "", &CLIError{
-			Msg: fmt.Sprintf("cannot create config dir %s: %s", cfgDir, err),
-			Err: err,
+			Msg:  fsFailureMsg("cannot create config dir "+cfgDir, err),
+			Hint: "check that its parent directory is writable (--scope system needs root)",
+			Err:  err,
 		}
 	}
 
@@ -264,8 +263,9 @@ func writeInitProfile(cfgDir, sourceName, sourceURL, trustRootInput, scope strin
 	destPath := filepath.Join(cfgDir, "profile.yaml")
 	if err := os.WriteFile(destPath, []byte(rendered), 0o600); err != nil {
 		return "", &CLIError{
-			Msg: fmt.Sprintf("cannot write profile to %s: %s", destPath, err),
-			Err: err,
+			Msg:  fsFailureMsg("cannot write profile to "+destPath, err),
+			Hint: fmt.Sprintf("check that %s is writable and has free space", cfgDir),
+			Err:  err,
 		}
 	}
 

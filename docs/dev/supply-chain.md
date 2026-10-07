@@ -163,7 +163,7 @@ dependency on `internal/trust`: `InspectCarried` shallow-reads the envelope
 `VerifyBuilderSignature` is the DSSE verifier; `VerifySigstoreBundle` and
 `SigstoreTrustedMaterial` are the offline sigstore path. `internal/trust`
 supplies the material (`Bundle.BuilderKey`, `Bundle.BuilderKeyAt`,
-`Bundle.SigstoreRootAt`, `Revocations.IsBuilderKeyRevoked`).
+`Bundle.SigstoreRootsAt`, `Revocations.IsBuilderKeyRevoked`).
 `bindCarriedRefs` in the planner adapts one to the other through two
 closures — a key lookup and a revocation predicate — so the kernel stays
 testable without a signed trust document.
@@ -211,11 +211,14 @@ downgrades.
 
   - Root selection prefers a consumer pin: when the profile sets
     `sources.<name>.sigstore_root`, that pin is authoritative and the
-    source-mirrored root is not consulted at all. With no pin,
-    `Bundle.SigstoreRootAt` supplies the mirrored one.
+    source-mirrored roots are not consulted at all. With no pin,
+    `Bundle.SigstoreRootsAt` supplies every mirrored root whose window
+    covers the build time, and each is tried in turn until one verifies:
+    Fulcio CA windows overlap across a rotation, so the first root live at
+    that instant need not be the CA that signed the bundle.
   - Every way this can go wrong — no bundle, no root whose window covers the
-    build time, an unusable root (an empty Fulcio CA set is an error), or a
-    chain that fails to verify — lands on `verified-transport-only`.
+    build time, or no candidate that is usable (an empty Fulcio CA set is an
+    error) and verifies the chain — lands on `verified-transport-only`.
   - sigstore-go runs with identity and artifact matching deliberately off: the
     identity is *recorded* for the policy layer, and the subject-to-bytes
     binding already happened in step 4.
@@ -417,8 +420,8 @@ same list at the mirror hop.
   built and are **not** minisign signing roles — the `polypkg.trust/v2` role
   model (`index`/`artifact`/`attestation`) is untouched. Lookups are temporal:
   `Bundle.BuilderKeyAt(keyID, buildTime)` returns a key only if `buildTime` fell
-  in its `[valid_from, valid_until]` window, and `Bundle.SigstoreRootAt(buildTime)`
-  selects the root live at that instant — validity is judged at the attestation's
+  in its `[valid_from, valid_until]` window, and `Bundle.SigstoreRootsAt(buildTime)`
+  selects every root live at that instant — validity is judged at the attestation's
   build timestamp, not at verification time.
 - **`polypkg.revocation-list/v1`** is a *separate* signed document with its own
   `serial` and `expires`, revoking builder keys and attestations by BLAKE3

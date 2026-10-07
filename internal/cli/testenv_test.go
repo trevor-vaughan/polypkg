@@ -70,13 +70,16 @@ func publishUnattestedHello() string {
 
 // writeHelloProfile writes a user-scope profile requiring hello from the
 // file:// repository at publicDir into dir and returns the profile's path.
-func writeHelloProfile(dir, publicDir string) string {
+// sourceExtra is appended verbatim to the repo source's block; each line must
+// carry the source's four-space indent ("" adds nothing).
+func writeHelloProfile(dir, publicDir, sourceExtra string) string {
 	GinkgoHelper()
 	profile := "schema: polypkg.spec/v1\nname: att\n" +
 		"scopes:\n  user:\n    substrate: store\n" +
 		"sources:\n  order: [repo]\n  repo:\n    type: polypkg-native\n" +
 		"    url: file://" + publicDir + "\n" +
 		"    trust_root: " + filepath.Join(publicDir, "trust_root.pub") + "\n" +
+		sourceExtra +
 		"packages:\n  user:\n    hello:\n      version: \">=1.0.0\"\n"
 	profilePath := filepath.Join(dir, "profile.yaml")
 	Expect(os.WriteFile(profilePath, []byte(profile), 0o644)).To(Succeed())

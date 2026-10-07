@@ -127,7 +127,7 @@ func mintSLSAWithDigest(subjectName string, digest map[string]string, keyID stri
 
 // G4MismatchDigest is a subject digest whose sha256 matches BaseContent but whose
 // sha512 is the hash of DIFFERENT bytes — the "all-overlap-must-agree" tamper
-// (spec §11 G4): MatchSubjectDigests recomputes both and rejects on the sha512
+// (G4): MatchSubjectDigests recomputes both and rejects on the sha512
 // disagreement despite the matching sha256.
 func G4MismatchDigest() map[string]string {
 	sum256 := sha256.Sum256(BaseContent)
@@ -139,7 +139,7 @@ func G4MismatchDigest() map[string]string {
 }
 
 // G4Sha1OnlyDigest is a subject offering ONLY sha1 — a forbidden weak algorithm
-// MatchSubjectDigests rejects on mere presence (spec §11 G4 downgrade vector).
+// MatchSubjectDigests rejects on mere presence (G4 downgrade vector).
 func G4Sha1OnlyDigest() map[string]string {
 	sum := sha1.Sum(BaseContent) //nolint:gosec // G401: sha1 is the tampered weak algorithm under test, not a security primitive
 	return map[string]string{"sha1": hex.EncodeToString(sum[:])}
@@ -147,7 +147,7 @@ func G4Sha1OnlyDigest() map[string]string {
 
 // g4UnknownAlgo is a digest algorithm polypkg can neither recompute (absent from
 // attest.digestStrength) nor forbids — a subject offering ONLY it has nothing at
-// or above the sha256 floor and is unbindable (spec §11 G4 no-overlap).
+// or above the sha256 floor and is unbindable (G4 no-overlap).
 const g4UnknownAlgo = "sha3-512"
 
 // G4NoOverlapDigest is a subject offering only the uncomputable g4UnknownAlgo.
@@ -161,7 +161,7 @@ func G4NoOverlapDigest() map[string]string {
 // offers BOTH sha256 and sha512 of content/bin/app (=BaseContent). Both agree
 // with the installed bytes, so it binds at pack AND install time and reaches
 // builder-verified — the G4 positive/selection half proving multi-algo
-// agreement is accepted (spec §11 G4). Signed by BuilderCurrentID, registered
+// agreement is accepted (G4). Signed by BuilderCurrentID, registered
 // in the anchor-signed trust bundle exactly like BuildGenuine.
 func BuildG4MultiAlgo(dir string) (Tree, error) {
 	keys := Keys()
@@ -214,7 +214,7 @@ func buildSwappedSLSA(dir string, badEnv []byte) (Tree, error) {
 
 // BuildG4MismatchAlgo builds a genuine tree then swaps in a carried SLSA whose
 // subject sha256 matches content/bin/app but whose sha512 is the hash of other
-// bytes (G4MismatchDigest) — the "all-overlap-must-agree" refusal (spec §11 G4).
+// bytes (G4MismatchDigest) — the "all-overlap-must-agree" refusal (G4).
 func BuildG4MismatchAlgo(dir string) (Tree, error) {
 	keys := Keys()
 	env := mintSLSAWithDigest("bin/app", G4MismatchDigest(), BuilderCurrentID, keys.BuilderCurrent)
@@ -223,7 +223,7 @@ func BuildG4MismatchAlgo(dir string) (Tree, error) {
 
 // BuildG4Sha1Only builds a genuine tree then swaps in a carried SLSA whose
 // subject offers ONLY sha1 (G4Sha1OnlyDigest) — a forbidden weak algorithm
-// MatchSubjectDigests rejects on presence (spec §11 G4 downgrade vector).
+// MatchSubjectDigests rejects on presence (G4 downgrade vector).
 func BuildG4Sha1Only(dir string) (Tree, error) {
 	keys := Keys()
 	env := mintSLSAWithDigest("bin/app", G4Sha1OnlyDigest(), BuilderCurrentID, keys.BuilderCurrent)
@@ -232,7 +232,7 @@ func BuildG4Sha1Only(dir string) (Tree, error) {
 
 // BuildG4NoOverlap builds a genuine tree then swaps in a carried SLSA whose
 // subject offers ONLY an uncomputable algorithm (G4NoOverlapDigest, sha3-512) —
-// nothing at or above the sha256 floor, so it is unbindable (spec §11 G4
+// nothing at or above the sha256 floor, so it is unbindable (G4
 // no-overlap).
 func BuildG4NoOverlap(dir string) (Tree, error) {
 	keys := Keys()
@@ -308,8 +308,8 @@ func BuildGenuine(dir string) (Tree, error) {
 // carried SLSA attestation is minted and signed by BuilderRogueID — a
 // publisher-minted key the same publisher also registers in the (still
 // anchor-signed) trust bundle alongside builder-current. That registration
-// lets the rogue key resolve to the builder-verified TIER genuinely (spec
-// §11 G1): the fixture is not a forged signature or an unregistered key, so
+// lets the rogue key resolve to the builder-verified TIER genuinely (G1): the
+// fixture is not a forged signature or an unregistered key, so
 // the only remaining defense is the consumer's independent builders.allow
 // anchor. Tree.AllowKeyB64 is the CURRENT key (what a legitimate consumer
 // would allow), NOT the rogue signer, so a caller that innocently allow-lists
@@ -447,7 +447,7 @@ func buildSigstoreTree(dir string, content, bundleJSON []byte, sroot schema.Sigs
 // offline sigstore bundle, publishing its SigstoreRoot in the trust bundle. The
 // bundle verifies offline, so the consumer records CarriedTierVerifiedOffline
 // with the Fulcio SAN/issuer and installs under require:[SLSA] — the G6
-// positive control (spec §11).
+// positive control.
 func BuildG6SigstoreGenuine(dir string) (Tree, error) {
 	sroot, err := parseSigstoreRoot()
 	if err != nil {
@@ -506,7 +506,7 @@ func stripInclusionProof(bundleJSON []byte) ([]byte, error) {
 // binds by digest at pack time and still classifies as a sigstore-bundle, but it
 // can no longer verify offline, so the consumer fails closed to
 // verified-transport-only: it installs under DEFAULT (a downgrade) and refuses
-// under require:[SLSA] (spec §11 G6). No post-publish swap is needed — the
+// under require:[SLSA] (G6). No post-publish swap is needed — the
 // stripped bundle binds and installs on its own.
 func BuildG6NoInclusionProof(dir string) (Tree, error) {
 	stripped, err := stripInclusionProof(bindableBundleJSON)
@@ -642,14 +642,14 @@ var (
 // content/bin/app = BaseContent and content/bin/other = BaseContent +
 // otherContentSuffix — whose carried SLSA attestation's advisory subject NAME
 // is the MISLEADING "bin/app", but whose digest actually matches bin/other
-// (spec §11 G5, relabel half). repo build (internal/repo/carried.go's
+// (G5, relabel half). repo build (internal/repo/carried.go's
 // bindCarried) binds carried subjects BY DIGEST — the name is advisory only —
 // so it binds bin/other and publishes without any tampering: the built
 // index's AttestationRef.SubjectScope records "content:bin/other", never the
 // misleading advisory name. A consumer's install-time re-bind
 // (internal/planner/planner.go's bindCarriedRefs) re-derives the identical
 // digest match against the extracted tree, proving the advisory label is
-// never trusted for selection at either point of the two-point binding (P6).
+// never trusted for selection at either point of the two-point binding.
 func BuildG5Relabel(dir string) (Tree, error) {
 	keys := Keys()
 	otherContent := bytes.Join([][]byte{BaseContent, otherContentSuffix}, nil)
@@ -667,7 +667,7 @@ func BuildG5Relabel(dir string) (Tree, error) {
 // BuildG5Mismatch builds a genuine served repo tree (BuildGenuine), then
 // simulates a malicious mirror swapping the carried SLSA pool blob for one
 // whose subject digest matches NEITHER content/bin/app nor any other packed
-// file (spec §11 G5, mismatch half): repo build itself refuses to publish an
+// file (G5, mismatch half): repo build itself refuses to publish an
 // unbound carried attestation (bindCarried errors "binds nothing polypkg
 // packed"), so this fixture can only be produced by tampering an
 // already-published tree via swapPoolBlob, which re-signs the swapped blob's
@@ -688,7 +688,7 @@ func BuildG5Mismatch(dir string) (Tree, error) {
 // leaving the native SARIF attestation (and everything else) intact: it
 // deletes the SLSA pool blob and its detached signature, removes the
 // corresponding AttestationRef from the index, and re-signs the index under
-// the same fixed anchor keypair (spec §11 G2). A consumer with
+// the same fixed anchor keypair (G2). A consumer with
 // attestation.require:[slsa] must refuse (the predicate is genuinely
 // absent); a consumer without that require must still install, proving the
 // strip produced a valid, installable, re-signed index rather than a broken
@@ -753,7 +753,7 @@ const mismatchedPredicateType = "https://spdx.dev/Document"
 // pool blob are left byte-for-byte untouched (still a genuine, builder-signed
 // SLSA v1.0 statement), but the index.json AttestationRef's predicate_type is
 // rewritten to a different, unrelated URI and the index is re-signed under
-// the same fixed anchor keypair (spec §11 G9 / §10.3 F2). Because the index
+// the same fixed anchor keypair (G9). Because the index
 // itself still verifies, this is tampering-class rather than a missing-
 // predicate gap: the consumer's bindCarriedRefs cross-check
 // (internal/planner/planner.go) treats the signed payload's predicateType as
@@ -1095,7 +1095,7 @@ const duplicatedPayloadTypeKey = `"payloadType":"` + inTotoPayload + `",`
 // produced them — same subject digest, same signature) and splices a SECOND,
 // byte-identical "payloadType" key immediately after the envelope's opening
 // brace, producing a syntactically valid but ambiguous JSON object with a
-// repeated top-level key (spec §11 G10: a parser-differential vector — a
+// repeated top-level key (G10: a parser-differential vector — a
 // lenient parser could bind different bytes than the ones the signature
 // covers). json.Marshal cannot emit duplicate keys, so this must be a raw
 // byte splice rather than a re-encode. It asserts the splice actually
@@ -1121,7 +1121,7 @@ func dupKeyEnvelope(genuineEnv []byte) ([]byte, error) {
 // BuildG10DupKeys builds a genuine served repo tree (BuildGenuine), then
 // simulates a malicious mirror swapping the carried SLSA pool blob for one
 // whose JSON is byte-identical to the genuine, builder-signed envelope except
-// for a single spliced-in duplicate "payloadType" key (spec §11 G10, a
+// for a single spliced-in duplicate "payloadType" key (G10, a
 // parser-differential vector). swapPoolBlob re-signs the swapped blob's
 // transport signature under the same fixed anchor keypair, so the eventual
 // refusal is attributable to the duplicate-key detection alone, not a
@@ -1134,11 +1134,12 @@ func dupKeyEnvelope(genuineEnv []byte) ([]byte, error) {
 // (bindCarriedRefs, internal/planner/planner.go) treats that the same as an
 // unverifiable signature and fails the binding CLOSED to
 // verified-transport-only rather than hard-erroring itself — refusing an
-// install on a weak tier is a separate policy decision (phase 2d). So, like
-// G1/G2, this fixture alone does not refuse a DEFAULT (unrequired) install; a
-// consumer that REQUIRES the SLSA predicate does refuse, because the
-// degraded tier can no longer satisfy an anchored, allow-listed require
-// (internal/planner/attestpolicy.go's enforceAttestationPolicy).
+// install on a weak tier is a separate policy decision (the source's
+// attestation gate). So, like G1/G2, this fixture alone does not refuse a
+// DEFAULT (unrequired) install; a consumer that REQUIRES the SLSA predicate
+// does refuse, because the degraded tier can no longer satisfy an anchored,
+// allow-listed require (internal/planner/attestpolicy.go's
+// enforceAttestationPolicy).
 func BuildG10DupKeys(dir string) (Tree, error) {
 	keys := Keys()
 	sum := sha256.Sum256(BaseContent)
@@ -1152,7 +1153,7 @@ func BuildG10DupKeys(dir string) (Tree, error) {
 
 // BuildG7InstallRefused builds a genuine served repo tree (BuildGenuine), then
 // simulates a post-publish TOCTOU content substitution by an attacker holding
-// the publisher/anchor key (spec §11 G7): via repackArtifact it substitutes
+// the publisher/anchor key (G7): via repackArtifact it substitutes
 // content/bin/app, re-packs the artifact, recomputes its blake3, re-signs the
 // artifact transport signature, STRIPS the anchor-signed native artifact-binding
 // attestations (which that attacker can remove), retargets the index's package
@@ -1161,7 +1162,7 @@ func BuildG10DupKeys(dir string) (Tree, error) {
 // remaining attestation. Artifact transport and index content-hash both still
 // verify; only the consumer's install-time re-bind (bindCarriedRefs) refuses,
 // because the SLSA subject digest no longer matches the actually-installed bytes.
-// Proves the P6 two-point binding's un-forgeable carried backstop catches a
+// Proves the two-point binding's un-forgeable carried backstop catches a
 // substitution that survived transport integrity and native-attestation stripping.
 func BuildG7InstallRefused(dir string) (Tree, error) {
 	tree, err := BuildGenuine(dir)
@@ -1182,7 +1183,7 @@ func BuildG7InstallRefused(dir string) (Tree, error) {
 // (internal/repo/carried.go) refuses to publish a carried attestation binding
 // nothing it packed. It returns that build error and never a usable tree, so the
 // caller asserts the pack-time refusal. Nothing publishes, so there is no venom
-// row for this half (spec §11 G7, pre-pack).
+// row for this half (G7, pre-pack).
 func BuildG7PackRefusedErr(dir string) error {
 	keys := Keys()
 	phantom := bytes.Join([][]byte{BaseContent, mismatchContentSuffix}, nil)

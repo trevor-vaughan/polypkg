@@ -53,7 +53,7 @@ var _ = Describe("source set-trust-root recovers a re-created repository", Order
 		publish("v2")
 		publish("v3")
 
-		out, err := runCmd("init", "--source-url", "file://"+publicDir, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", "file://"+publicDir, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
 		out, err = runCmd("install", "hello")
 		Expect(err).NotTo(HaveOccurred(), "install: %s", out)

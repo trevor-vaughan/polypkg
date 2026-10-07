@@ -9,7 +9,7 @@ testcases:
   - name: init the sandbox
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
 
@@ -87,7 +87,8 @@ testcases:
         assertions:
           - result.code ShouldNotEqual 0
           # prove it aborted for lack of confirmation, not e.g. "still active"
-          - result.systemerr ShouldContainSubstring "purge aborted"
+          - result.systemerr ShouldContainSubstring "purge needs confirmation but stdin is not a terminal"
+          - result.systemerr ShouldContainSubstring "--yes"
 
   - name: purge --yes removes the removed package's state
     steps:

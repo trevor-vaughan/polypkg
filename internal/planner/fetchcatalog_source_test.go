@@ -207,7 +207,7 @@ func writeBundleWithKeys(repoDir string, kp *repo.Keypair, source string, serial
 }
 
 // writeBundleWithSigstoreRoots writes a signed polypkg.trust-bundle/v1 carrying
-// mirrored sigstore trust roots (the source-mirrored root chain 2c-3 shipped),
+// mirrored sigstore trust roots (the source-mirrored root chain),
 // so a full-Plan spec can prove a consumer pin overrides the mirrored root.
 func writeBundleWithSigstoreRoots(repoDir string, kp *repo.Keypair, source string, serial uint64, expires string, roots []schema.SigstoreRoot) {
 	GinkgoHelper()
@@ -237,7 +237,7 @@ func writeRevocationsFull(repoDir string, kp *repo.Keypair, source string, seria
 	Expect(os.WriteFile(filepath.Join(repoDir, "revocations.json.minisig"), []byte(sig), 0o644)).To(Succeed())
 }
 
-var _ = Describe("FetchCatalog trust bundle + revocation list (2c-0)", func() {
+var _ = Describe("FetchCatalog trust bundle + revocation list", func() {
 	const src = "repo"
 	far := "2099-01-01T00:00:00Z"
 
@@ -343,7 +343,7 @@ var _ = Describe("FetchCatalog trust bundle + revocation list (2c-0)", func() {
 	})
 })
 
-var _ = Describe("FetchCatalog accept_expiry_until freshness grace (2e-1)", func() {
+var _ = Describe("FetchCatalog accept_expiry_until freshness grace", func() {
 	var restore func()
 	AfterEach(func() {
 		if restore != nil {

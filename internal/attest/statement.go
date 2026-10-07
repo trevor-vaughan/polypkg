@@ -1,6 +1,6 @@
 // Package attest assembles the predicate-agnostic in-toto Statement that binds
-// a lint (SARIF) predicate to a package's BLAKE3 digest. Phase B produces the
-// unsigned preview; Phase C signs the identical bytes.
+// a lint (SARIF) predicate to a package's BLAKE3 digest. `pkg build` produces
+// the unsigned preview; `repo build` signs the identical bytes.
 package attest
 
 import (

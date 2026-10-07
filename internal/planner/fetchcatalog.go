@@ -37,22 +37,23 @@ type FetchResult struct {
 	// SourceURLs maps source name -> that source's base URL (for ManifestEntry).
 	SourceURLs map[string]string
 	// HighWater maps source name -> package name -> the highest version that
-	// source's verified index has EVER offered (D15), after folding in this
+	// source's verified index has EVER offered, after folding in this
 	// fetch. Plan's downgrade guard refuses resolving below it without an
 	// exact profile pin.
 	HighWater map[string]map[string]string
 	// Revocations maps source name -> that source's verified revocation list, or
 	// nil when the source publishes none. Consulted per attestation ref during
-	// artifact verification (2c-0: revoked-attestation-by-hash refusal).
+	// artifact verification: an attestation whose content hash is revoked is
+	// refused.
 	Revocations map[string]*trust.Revocations
 	// Bundles maps source name -> that source's verified trust bundle (builder
 	// keyring), or nil when the source publishes none. Consulted per carried
-	// attestation ref during install-time builder-signature verification (2c-1a).
+	// attestation ref during install-time builder-signature verification.
 	Bundles map[string]*trust.Bundle
 	// FreshnessGraced lists signed metadata documents accepted under per-source
-	// accept_expiry_until freshness grace during this fetch (phase 2e-1, spec
-	// §10.9 E-3): expired but within the operator's deadline. Callers surface
-	// it loudly; the anti-rollback serial floor was still enforced.
+	// accept_expiry_until freshness grace during this fetch: expired but within
+	// the operator's deadline. Callers surface it loudly; the anti-rollback
+	// serial floor was still enforced.
 	FreshnessGraced []GracedMetadata
 	// NearExpiry lists signed metadata documents that are still valid but within
 	// the operator's near-expiry threshold at fetch time (informational warning).
@@ -60,8 +61,8 @@ type FetchResult struct {
 }
 
 // GracedMetadata records that one signed metadata document was accepted under
-// per-source accept_expiry_until freshness grace (phase 2e-1, spec §10.9 E-3):
-// it was expired but within the operator's deadline. Surfaced loudly by
+// per-source accept_expiry_until freshness grace: it was expired but within
+// the operator's deadline. Surfaced loudly by
 // apply/plan; the anti-rollback serial floor was still enforced.
 type GracedMetadata struct {
 	Source      string // source name
@@ -225,6 +226,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 	}
 	backend := source.NewNativeBackend(source.NativeBackendOpts{
 		URL:      src.URL,
+		Source:   sourceName,
 		CacheDir: filepath.Join(source.CacheRoot(opts.StateHome), sourceName),
 	})
 
@@ -264,7 +266,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 	if err != nil {
 		return nil, fmt.Errorf("fetch index: %w", err)
 	}
-	// Order matters (D13/D15): signature first, then the serial rollback
+	// Order matters: signature first, then the serial rollback
 	// check, then parse + freshness + catalog construction — and only THEN
 	// persist the advanced serials and per-package high-water marks. A stale,
 	// unparseable, or catalog-refused index must never advance any stored
@@ -324,9 +326,9 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		}
 	}
 
-	// Optional trust bundle (2c-0): validate signature/freshness and advance its
+	// Optional trust bundle: validate signature/freshness and advance its
 	// serial floor. The builder keyring it carries is kept on Bundles for
-	// per-format builder-signature verification (2c-1a) to consult per carried
+	// per-format builder-signature verification to consult per carried
 	// attestation ref. Absent-and-never-seen is the TOFU baseline; absent-after-
 	// seen is a rollback (a stripped bundle) and refuses.
 	bundleSerial := seen.BundleSerial
@@ -355,7 +357,7 @@ func fetchOneSource(ctx context.Context, sourceName string, src schema.SourceBac
 		return nil, fmt.Errorf("fetch trust bundle: %w", berr)
 	}
 
-	// Optional revocation list (2c-0): same absence/rollback rules. Unlike the
+	// Optional revocation list: same absence/rollback rules. Unlike the
 	// bundle, this IS consumed — revoked attestation hashes refuse installs.
 	revSerial := seen.RevocationSerial
 	var revs *trust.Revocations

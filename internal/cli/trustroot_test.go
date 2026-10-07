@@ -613,6 +613,7 @@ var _ = Describe("init command: --trust-root-url flag", func() {
 	)
 
 	BeforeEach(func() {
+		sandboxUserEnv(GinkgoTB())
 		tmp = GinkgoT().TempDir()
 		GinkgoT().Setenv("XDG_CONFIG_HOME", tmp)
 		_ = os.Unsetenv("POLYPKG_PROFILE")
@@ -686,19 +687,19 @@ var _ = Describe("init command: --trust-root-url flag", func() {
 		Expect(perr).NotTo(HaveOccurred(), "written profile must be schema-valid")
 	})
 
-	It("mutual exclusion: --trust-root-file and --trust-root-url together return CLIError", func() {
+	It("mutual exclusion: --trust-root and --trust-root-url together return CLIError", func() {
 		tmp2 := GinkgoT().TempDir()
 		keyFile := writeTrustKeyFile(tmp2)
 
 		_, err := runInitWithTrustURL(
 			"--source-url", sourceURL,
-			"--trust-root-file", keyFile,
+			"--trust-root", keyFile,
 			"--trust-root-url", srv.URL+"/key.pub",
 		)
 		Expect(err).To(HaveOccurred())
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
-		Expect(ce.Msg).To(ContainSubstring("use only one of --trust-root-file or --trust-root-url"))
+		Expect(ce.Msg).To(ContainSubstring("use only one of --trust-root or --trust-root-url"))
 	})
 
 	It("refuses a plain http --trust-root-url and writes nothing", func() {
@@ -786,5 +787,17 @@ var _ = Describe("init command: --trust-root-url flag", func() {
 		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 		Expect(ce.Msg).To(ContainSubstring("profile already exists at"))
 		Expect(ce.Msg).To(ContainSubstring(existing))
+	})
+})
+
+var _ = Describe("pinTrustRootFile on an unreadable file", func() {
+	It("says a missing trust root file does not exist, not that it is an invalid key", func() {
+		missing := filepath.Join(GinkgoT().TempDir(), "nope.pub")
+		_, err := pinTrustRootFile(missing, GinkgoT().TempDir(), "native", "")
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("trust root " + missing + " does not exist"))
+		Expect(ce.Hint).To(ContainSubstring("trust_root.pub"))
+		Expect(ce.Err).To(MatchError(fs.ErrNotExist))
 	})
 })

@@ -134,8 +134,8 @@ type Verifier interface {
 
 // NewVerifier returns the trust Verifier for the given source backend type,
 // anchored by anchorPub (the trust_root .pub content) and bound to sourceName
-// (the trust document must name this source). M2 supports only the native
-// backend's minisign scheme.
+// (the trust document must name this source). Only the native backend's
+// minisign scheme is supported.
 func NewVerifier(sourceType, anchorPub, sourceName string) (Verifier, error) {
 	switch sourceType {
 	case "polypkg-native":

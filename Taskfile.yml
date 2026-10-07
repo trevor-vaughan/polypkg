@@ -12,6 +12,13 @@ vars:
   BINARY: '{{.BINARY | default "polypkg"}}'
   BUILD_DIR: '{{.BUILD_DIR | default "bin"}}'
   GO: '{{.GO | default "go"}}'
+  # Prefix for every go-invoking command: it appends -mod=readonly to the
+  # caller's GOFLAGS (the last -mod wins), so no task rewrites go.mod or go.sum
+  # even when the shell exports GOFLAGS=-mod=mod. Commands those tasks spawn
+  # (golangci-lint's and govulncheck's go list, builds inside tests) inherit
+  # it. A Taskfile env: entry cannot do this: the caller's environment
+  # overrides it.
+  GO_READONLY: 'GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=readonly"'
   TEST_DIR: '{{.TEST_DIR | default ".test-output"}}'
   GOVULNCHECK_VERSION: '{{.GOVULNCHECK_VERSION | default "v1.3.0"}}'
   FUZZTIME: '{{.FUZZTIME | default "60s"}}'
@@ -26,13 +33,13 @@ tasks:
 
   build:
     desc: Build the polypkg binary into {{.BUILD_DIR}}/
-    cmd: '{{.GO}} build -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/polypkg'
+    cmd: '{{.GO_READONLY}} {{.GO}} build -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/polypkg'
 
   test:
     desc: Run the test suite with race detector and coverage profile
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage.out ./...'
+      - '{{.GO_READONLY}} {{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage.out ./...'
 
   test:fips:
     desc: Run the test suite under Go's FIPS 140-3 module (GODEBUG=fips140=on)
@@ -40,30 +47,30 @@ tasks:
       GODEBUG: fips140=on
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage-fips.out ./...'
+      - '{{.GO_READONLY}} {{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage-fips.out ./...'
 
   lint:
     desc: Run golangci-lint across all packages
-    cmd: golangci-lint run ./...
+    cmd: '{{.GO_READONLY}} golangci-lint run ./...'
 
   vuln:
     desc: Scan for known vulnerabilities with govulncheck
-    cmd: '{{.GO}} run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...'
+    cmd: '{{.GO_READONLY}} {{.GO}} run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...'
 
   # fuzz runs the mutating fuzzer. Seed corpora also run as ordinary tests under
   # `task test`; this target is for deeper exploration (local or scheduled CI).
   # Override FUZZTARGET, FUZZTIME, or FUZZPKG to focus on a different target.
   fuzz:
     desc: Run the mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
-    cmd: "{{.GO}} test -run='^$' -fuzz={{.FUZZTARGET}} -fuzztime={{.FUZZTIME}} {{.FUZZPKG}}"
+    cmd: "{{.GO_READONLY}} {{.GO}} test -run='^$' -fuzz={{.FUZZTARGET}} -fuzztime={{.FUZZTIME}} {{.FUZZPKG}}"
 
   fmt:
     desc: Format all Go source with go fmt
-    cmd: '{{.GO}} fmt ./...'
+    cmd: '{{.GO_READONLY}} {{.GO}} fmt ./...'
 
   generate:
     desc: Regenerate committed generated Go source (go generate)
-    cmd: '{{.GO}} generate ./...'
+    cmd: '{{.GO_READONLY}} {{.GO}} generate ./...'
 
   check:
     desc: Run all quality gates
@@ -92,13 +99,15 @@ tasks:
     desc: 'Opt-in network test: pkg import the latest cli/cli release and check its attestation'
     env:
       POLYPKG_TEST_LIVE: '1'
-    cmd: "{{.GO}} test -count=1 -timeout 15m -run '^TestLiveGitHubImport$' -v ./tests/live/"
+    cmd: "{{.GO_READONLY}} {{.GO}} test -count=1 -timeout 15m -run '^TestLiveGitHubImport$' -v ./tests/live/"
 
   clean:
     desc: Remove build artifacts and test output
     cmd: rm -rf {{.BUILD_DIR}} {{.TEST_DIR}}
 
   install:
-    desc: Build and install the binary into ~/.local/bin
+    desc: Build and install the binary into ~/.local/bin (created if missing)
     deps: [build]
-    cmd: install -m 0755 {{.BUILD_DIR}}/{{.BINARY}} "$HOME/.local/bin/{{.BINARY}}"
+    cmds:
+      - mkdir -p "$HOME/.local/bin"
+      - install -m 0755 {{.BUILD_DIR}}/{{.BINARY}} "$HOME/.local/bin/{{.BINARY}}"

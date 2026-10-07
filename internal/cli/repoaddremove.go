@@ -131,18 +131,22 @@ func runRepoAdd(cmd *cobra.Command, srcDirs []string, format Format) error {
 	}
 	// package and version name the first source, as they did when `repo add`
 	// took exactly one directory; added lists every source.
-	EmitResult(cmd, format, "repo add",
-		map[string]any{"package": pkgs[0].Name, "version": pkgs[0].Version, "serial": res.SerialAfter, "added": added},
+	data := map[string]any{"package": pkgs[0].Name, "version": pkgs[0].Version, "serial": res.SerialAfter, "added": added}
+	if res.TrustBundle != nil {
+		data["trust_bundle"] = res.TrustBundle
+	}
+	EmitResult(cmd, format, "repo add", data,
 		func(w *bytes.Buffer, d map[string]any) {
 			entries, _ := d["added"].([]map[string]string)
 			if len(entries) == 1 {
 				fmt.Fprintf(w, "Added %s@%s and rebuilt the repository (serial %d)\n", d["package"], d["version"], d["serial"])
-				return
+			} else {
+				fmt.Fprintf(w, "Added %d package sources and rebuilt the repository (serial %d)\n", len(entries), d["serial"])
+				for _, e := range entries {
+					fmt.Fprintf(w, "  %s@%s (%s)\n", e["package"], e["version"], e["platform"])
+				}
 			}
-			fmt.Fprintf(w, "Added %d package sources and rebuilt the repository (serial %d)\n", len(entries), d["serial"])
-			for _, e := range entries {
-				fmt.Fprintf(w, "  %s@%s (%s)\n", e["package"], e["version"], e["platform"])
-			}
+			writeTrustBundleChange(w, res.TrustBundle, false)
 		})
 	return nil
 }
@@ -177,7 +181,7 @@ func newRepoRemoveCmd() *cobra.Command {
 		Long: "Removes packages.<name> from the manifest, or with @<version>, every entry that " +
 			"publishes that version (one per platform for a per-platform release), then reconciles " +
 			"the repository so the removed package or version drops out of the signed index.",
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>[@<version>]"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -235,6 +239,9 @@ func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 		}
 		data["removed"] = entries
 	}
+	if res.TrustBundle != nil {
+		data["trust_bundle"] = res.TrustBundle
+	}
 	EmitResult(cmd, format, "repo remove", data,
 		func(w *bytes.Buffer, d map[string]any) {
 			if v, ok := d["version"]; ok {
@@ -251,6 +258,7 @@ func runRepoRemove(cmd *cobra.Command, arg string, format Format) error {
 			} else {
 				fmt.Fprintf(w, "Removed %s and rebuilt the repository (serial %d)\n", d["package"], d["serial"])
 			}
+			writeTrustBundleChange(w, res.TrustBundle, false)
 		})
 	return nil
 }

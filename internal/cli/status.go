@@ -714,7 +714,8 @@ func humanAge(d time.Duration) string {
 }
 
 // attestationTag renders the -vv package-listing suffix for a manifest
-// entry's install-time attestation record (D11): " [attested]" when it
+// entry's install-time attestation record (persisted per package in the
+// generation manifest): " [attested]" when it
 // verified, " [unattested]" when it installed without one, and nothing when
 // the record is absent (generation predates the v2 attestation chain).
 func attestationTag(a *schema.AttestationState) string {

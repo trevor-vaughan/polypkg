@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"charm.land/huh/v2"
+	cterm "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/planner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -122,18 +123,15 @@ func searchRows(
 	return rows, nil
 }
 
-// interactiveTTY reports whether both stdin and stdout of cmd are TTYs.
-// The picker is only shown when this returns true, which requires that both
-// cmd.InOrStdin() and cmd.OutOrStdout() are *os.File values backed by
-// character devices. In-process tests wiring bytes.Buffer I/O always return
-// false, satisfying the non-TTY regression contract.
+// interactiveTTY reports whether both stdin and stdout of cmd are terminals.
+// The picker is only shown when this returns true: stdout must be an
+// *os.File that is a terminal (not merely a character device such as
+// /dev/null), and stdin must pass isInteractive. In-process tests wiring
+// bytes.Buffer I/O always return false, satisfying the non-TTY regression
+// contract.
 func interactiveTTY(cmd *cobra.Command) bool {
 	outFile, ok := cmd.OutOrStdout().(*os.File)
-	if !ok {
-		return false
-	}
-	outInfo, err := outFile.Stat()
-	if err != nil || outInfo.Mode()&os.ModeCharDevice == 0 {
+	if !ok || !cterm.IsTerminal(outFile.Fd()) {
 		return false
 	}
 	return isInteractive(cmd)

@@ -27,7 +27,7 @@ func applyEditsJSONC(data []byte, path string, edits []Edit) ([]byte, error) {
 	}
 
 	for _, e := range edits {
-		// M1: on patch failure v may be partially mutated but is discarded here.
+		// On patch failure v may be partially mutated but is discarded here.
 		// That is harmless: Pack and atomicWrite are never reached on this path.
 		if err := applyOneJSONC(&v, e); err != nil {
 			return nil, err

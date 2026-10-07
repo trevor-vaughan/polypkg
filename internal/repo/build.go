@@ -3,6 +3,7 @@ package repo
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 const buildTimestamp = "1970-01-01T00:00:00Z"
 
 // DefaultValidFor is the validity window stamped into the signed index and
-// trust document when --valid-for is not given (D13/D-C1). It is also the
+// trust document when --valid-for is not given. It is also the
 // fallback window for a build cache that has no window recorded yet (see
 // effectiveWindow).
 const DefaultValidFor = 720 * time.Hour
@@ -34,7 +35,7 @@ type Result struct {
 	// earlier window, not one derived from this call's ValidFor.
 	Expires string
 	// ValidForApplied reports whether this call's ValidFor was stamped into the
-	// published metadata. It is false exactly when the D13 half-life rule reused
+	// published metadata. It is false exactly when the half-life rule reused
 	// the still-fresh published window, which silently discards the caller's
 	// requested duration.
 	ValidForApplied bool
@@ -44,15 +45,19 @@ type Result struct {
 	// window. Callers report it so an operator whose --valid-for was dropped can
 	// see when it stops being dropped.
 	RestampAfter string
+	// TrustBundle is what this build did to trust-bundle.json: the bundle it
+	// published, or its withdrawal. Nil when the bundle was left as it was.
+	TrustBundle *TrustBundleChange
 }
 
 // BuildOptions tunes one Build invocation.
 type BuildOptions struct {
 	// ValidFor is the validity window stamped into the signed index and trust
-	// document (D13). Zero or negative means the 720h (30 day) default.
+	// document; consumers reject metadata past it. Zero or negative means the
+	// 720h (30 day) default.
 	ValidFor time.Duration
-	// SkipAttestations publishes without per-package lint attestations (D-C3:
-	// e.g. the signing key deliberately lacks the attestation role). Cached
+	// SkipAttestations publishes without per-package lint attestations (e.g.
+	// the signing key deliberately lacks the attestation role). Cached
 	// packages keep their previous attestation decision until their source
 	// changes (see the cache-hit CAVEAT in Build).
 	SkipAttestations bool
@@ -121,7 +126,7 @@ func layoutFor(m *schema.RepoManifest, manifestPath, keyDir string) (repoLayout,
 // not write any files.
 type Inspector struct {
 	layout repoLayout
-	// now is the clock the D13 half-life decision reads. Always time.Now in
+	// now is the clock the half-life decision reads. Always time.Now in
 	// production; tests replace it to cross the half-life boundary of a real
 	// published window without sleeping through it.
 	now func() time.Time
@@ -267,7 +272,7 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 
 	// No content change — but Build restamps expires (and bumps the serial)
 	// when the published expiry is absent, unparseable, or below its half-life
-	// (D13/D-C1 renewal), so status must report that as pending too. The window
+	// (half-life renewal), so status must report that as pending too. The window
 	// comes from the build cache, which records what the build that published
 	// that expiry actually used: `repo status` has no --valid-for flag, and
 	// assuming the 720h default here made every repository published with a
@@ -277,6 +282,16 @@ func (i *Inspector) Pending() (pending bool, reason string, err error) {
 	}
 
 	return false, "", nil
+}
+
+// TrustBundleChange reports what the next build would do to the published
+// trust-bundle.json: nil when it would leave it as it is.
+func (i *Inspector) TrustBundleChange() (*TrustBundleChange, error) {
+	tb, err := collectTrustBundle(i.layout)
+	if err != nil {
+		return nil, err
+	}
+	return tb.summary(tb.publishedChange(i.layout.outputDir))
 }
 
 // Builder reconciles a repo manifest into a signed output directory.
@@ -416,8 +431,16 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// What this build does to the published trust-bundle.json, decided now,
+	// while the output directory still holds the previous build's bundle.
+	bundleChanged, bundleOrphaned := tb.publishedChange(lay.outputDir)
+	tbChange, err := tb.summary(bundleChanged, bundleOrphaned)
+	if err != nil {
+		return Result{}, err
+	}
 
-	// Pool blobs are content-addressed under <output>/pool (D10).
+	// Pool blobs are content-addressed under <output>/pool and never
+	// overwritten; the signed index is the only mutable pointer to them.
 	if err := os.MkdirAll(filepath.Join(lay.outputDir, "pool"), 0o755); err != nil { //nolint:gosec // G301: output dir is served over HTTP; 0755 is intentional
 		return Result{}, &PublishError{
 			Msg:  "cannot create output directory",
@@ -441,12 +464,19 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	// newEntries will replace cache.Entries so removed packages drop out.
 	newEntries := make(map[string]CacheEntry, len(names))
 	changed := false
+	// origins records which polypkg-repo.yaml entry each published entry came
+	// from, so a refusal of the whole index can name the entries to change.
+	origins := map[string][]entryOrigin{}
+	publish := func(name string, entry schema.IndexEntry, from string) {
+		idx.Packages[name] = append(idx.Packages[name], entry)
+		origins[name] = append(origins[name], entryOrigin{version: entry.Version, from: from})
+	}
 
 	for _, name := range names {
 		// Every entry under one name is checked against the per-name build
 		// rules (see entryRules) on all four paths below — prebuilt and source,
 		// cache hit and fresh pack — before it is published.
-		rules := entryRules{name: name, seen: map[string]map[string]string{}}
+		rules := entryRules{name: name}
 
 		for _, pkg := range lay.manifest.Packages[name] {
 			if pkg.Prebuilt != nil {
@@ -461,7 +491,7 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 					return Result{}, err
 				}
 				if hit.reuse {
-					idx.Packages[name] = append(idx.Packages[name], hit.entry)
+					publish(name, hit.entry, fmt.Sprintf("prebuilt %q", pkg.Prebuilt.Artifact))
 					newEntries[w.cacheKey] = hit.cacheEntry
 					continue
 				}
@@ -470,7 +500,7 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 				if err != nil {
 					return Result{}, err
 				}
-				idx.Packages[name] = append(idx.Packages[name], entry)
+				publish(name, entry, fmt.Sprintf("prebuilt %q", pkg.Prebuilt.Artifact))
 				newEntries[w.cacheKey] = ce
 				changed = true
 				continue
@@ -494,12 +524,20 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 				if err := rules.admit(prev.Version, prev.Platform, pkg.Source, false); err != nil {
 					return Result{}, err
 				}
-				idx.Packages[name] = append(idx.Packages[name], prev.indexEntry())
+				publish(name, prev.indexEntry(), fmt.Sprintf("source %q", pkg.Source))
 				newEntries[pkg.Source] = prev
 				continue
 			}
 
 			artifact, pkgParsed, err := PackArtifact(srcDir)
+			var refusal *PackRefusal
+			if errors.As(err, &refusal) {
+				return Result{}, &PublishError{
+					Msg:  fmt.Sprintf("cannot pack package %q: %s", name, refusal.Msg),
+					Hint: refusal.Hint,
+					Err:  err,
+				}
+			}
 			if err != nil {
 				return Result{}, &PublishError{
 					Msg:  fmt.Sprintf("cannot pack package %q", name),
@@ -530,13 +568,20 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 			if err != nil {
 				return Result{}, err
 			}
-			idx.Packages[name] = append(idx.Packages[name], entry)
+			publish(name, entry, fmt.Sprintf("source %q", pkg.Source))
 			newEntries[pkg.Source] = ce
 			changed = true
 		}
 	}
 
-	// Stamp the freshness bound (D13). computeExpires reuses the published
+	// Mirror staging and pkg import lay packages out as <name>/<version>/, so
+	// a published index must not hold two names, or two versions of one name,
+	// that a case-insensitive filesystem would merge.
+	if cf := schema.CaseFoldCollision(&idx); cf != nil {
+		return Result{}, caseFoldRefusal(cf, origins)
+	}
+
+	// Stamp the freshness bound. computeExpires reuses the published
 	// expiry on a pure no-op rebuild so the byte-compare below still sees
 	// identical index bytes (serial-stable); a content change, or a published
 	// document past its own half-life, restamps, and the byte-compare then bumps
@@ -572,7 +617,6 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 	// An orphaned trust-bundle.json (published earlier, nothing to publish now)
 	// counts as a change so the trust set is re-signed at a new serial; it is
 	// pruned after publish.
-	bundleChanged, bundleOrphaned := tb.publishedChange(lay.outputDir)
 	serial := before
 	idxPath := filepath.Join(lay.outputDir, "index.json")
 	trustRootPubPath := filepath.Join(lay.outputDir, "trust_root.pub")
@@ -662,6 +706,7 @@ func (b *Builder) Build(opts BuildOptions) (Result, error) {
 		Expires:         expires,
 		ValidForApplied: validForApplied,
 		RestampAfter:    restampAfter,
+		TrustBundle:     tbChange,
 	}, nil
 }
 
@@ -749,7 +794,7 @@ func effectiveWindow(window time.Duration) time.Duration {
 }
 
 // expiryFresh reports whether a published expiry is still above its own
-// half-life. It is the single implementation of the D13/D-C1 renewal rule:
+// half-life. It is the single implementation of the expiry renewal rule:
 // Build calls it to decide whether to reuse the published expiry, and
 // Inspector.Pending calls it to predict that decision. One function is what
 // keeps `repo status` and `repo build` from disagreeing about whether an expiry
@@ -775,8 +820,7 @@ func expiryFresh(now time.Time, publishedExpiry string, window time.Duration) bo
 // computeExpires returns the RFC3339 expiry for this publish, and whether it
 // reused the currently published one. It reuses when nothing changed and the
 // published document is still above its own half-life, so no-op rebuilds stay
-// byte-identical (and serial-stable); otherwise it stamps a fresh now+validFor
-// (D13/D-C1).
+// byte-identical (and serial-stable); otherwise it stamps a fresh now+validFor.
 //
 // publishedWindow is the window the currently published expiry was stamped
 // with; validFor is the window to stamp if this call does restamp.
@@ -846,4 +890,48 @@ func fileHasContent(path string, want []byte) bool {
 		return false
 	}
 	return bytes.Equal(got, want)
+}
+
+// entryOrigin is the polypkg-repo.yaml entry one published index entry came
+// from: its version, and "source <path>" or "prebuilt <artifact>".
+type entryOrigin struct {
+	version string
+	from    string
+}
+
+// caseFoldRefusal turns a CaseFoldCollision error into the user-facing
+// refusal, naming both colliding spellings and the polypkg-repo.yaml entries
+// that produced them. A name or version comes from each package's own
+// polypkg.yaml, so that is where the hint sends the author.
+func caseFoldRefusal(cf *schema.CaseFoldCollisionError, origins map[string][]entryOrigin) *PublishError {
+	if cf.Package == "" {
+		describe := func(name string) string {
+			froms := make([]string, 0, len(origins[name]))
+			for _, o := range origins[name] {
+				froms = append(froms, o.from)
+			}
+			return fmt.Sprintf("%q (packages.%s: %s)", name, name, strings.Join(froms, ", "))
+		}
+		return &PublishError{
+			Msg: fmt.Sprintf("package names %s and %s differ only in letter case, so they would share a directory on a case-insensitive filesystem",
+				describe(cf.First), describe(cf.Second)),
+			Hint: "rename one package in its polypkg.yaml and under packages: in polypkg-repo.yaml, or remove one of the entries from polypkg-repo.yaml",
+			Err:  cf,
+		}
+	}
+	describe := func(version string) string {
+		var froms []string
+		for _, o := range origins[cf.Package] {
+			if o.version == version {
+				froms = append(froms, o.from)
+			}
+		}
+		return fmt.Sprintf("%q (%s)", version, strings.Join(froms, ", "))
+	}
+	return &PublishError{
+		Msg: fmt.Sprintf("package %q versions %s and %s differ only in letter case, so they would share a directory on a case-insensitive filesystem",
+			cf.Package, describe(cf.First), describe(cf.Second)),
+		Hint: "change the version in one package's polypkg.yaml, or remove one of the entries from polypkg-repo.yaml",
+		Err:  cf,
+	}
 }

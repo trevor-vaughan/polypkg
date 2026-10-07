@@ -39,9 +39,10 @@ and on-disk formats may change in breaking ways.
   key management) with encrypted signing keys stored outside the published tree
   and incremental, serial-bumping rebuilds.
 - Offline mirror bundles: `repo export-bundle` writes a signed, self-contained
-  tarball of a built repository, `repo pull` fetches upstream packages and
-  re-publishes them into one, and `mirror verify` checks a bundle's manifest
-  signature, freshness, and completeness before use.
+  tarball of a built repository, `mirror pull` fetches upstream packages and
+  re-publishes them as a local repository (and, with `-o`, exports it as a
+  bundle), and `mirror verify` checks a bundle's manifest signature,
+  freshness, and completeness before use.
 - `mirror pull --all-versions` mirrors every published version of an unpinned
   package instead of only the latest; an explicit `name@version` selector
   still wins.
@@ -66,10 +67,12 @@ and on-disk formats may change in breaking ways.
   from recorded evidence.
 
 - Package manifests declare `actions:` — each item carrying a `phase` and an
-  `action`; `ownership.json` and `plan --json` record the chosen action in an
-  `action` field.
-- Starlark-sandboxed package builds (RSS-limited), package linting (`lint`)
-  emitting human or SARIF findings, and diff3 three-way config merge for drift.
+  `action`; `ownership.json` and `plan --format json` record the chosen action
+  in an `action` field.
+- Sandboxed Starlark evaluation of computed `!starlark` parameters (in a
+  subprocess, with a hard memory limit on Linux), package linting
+  (`pkg lint`) emitting human or SARIF findings, and diff3 three-way config
+  merge for drift.
 - `pkg init` scaffolds a task-first package: it leads with the package identity,
   annotates each action inline, and includes a `path` action so the command
   lands on `$PATH` once published and installed. The `init` profile scaffold
@@ -87,9 +90,12 @@ and on-disk formats may change in breaking ways.
   integration, and shell `completion` (bash, fish, zsh, powershell).
 - Maintenance commands: `config reset`, `accept-drift`, and `purge`.
 - JSON output (`--format json`, `polypkg.cli-result/v2` envelope), `NO_COLOR`
-  support, and the `POLYPKG_PROFILE` override. `status` renders generation ages
-  at their largest whole unit (42s / 8m / 3h / 2d), and `generation <unknown>`
-  fails with an error and a hint rather than silently printing help.
+  support, and the `POLYPKG_PROFILE` override. `docs/json-output.md` documents
+  every command's JSON fields, links the schema files, and states the
+  stability policy: within one schema version fields are only added.
+  `status` renders generation ages at their largest whole unit (42s / 8m /
+  3h / 2d), and `generation <unknown>` fails with an error and a hint rather
+  than silently printing help.
 
 - Extracted package trees are content-addressed
   (`pkg-extract/<name>-<version>+<hash16>`) and materialized by extract-to-temp
@@ -311,8 +317,100 @@ and on-disk formats may change in breaking ways.
   given. To withdraw one platform, delete its entry from
   `polypkg-repo.yaml`.
 
+- **Breaking:** `init --trust-root-file` is now `init --trust-root`, the name
+  `source add` and `source set-trust-root` already use. The old name is not
+  kept as an alias and fails with `unknown flag --trust-root-file`.
+- `source add` checks a source before writing it. It fetches the signed trust
+  document and refuses a source whose trust document is not signed by the
+  trust root you gave, or that publishes a different source name (the hint
+  names the right command, or the source already in your profile), and it
+  refuses an unsupported `--type`. When the check cannot complete (the source
+  cannot be reached within 30 seconds, serves no trust document, or its trust
+  document has expired) it warns, adds the source anyway, and `--format json`
+  reports `data.verified: false` with the reason in `data.warning`.
+- `repo build`, `repo add`, and `repo remove` print what the trust bundle
+  vouches for whenever a build changes it: each sigstore root's Fulcio root
+  fingerprint and validity window, and each builder key id and window, or that
+  the bundle was withdrawn. `repo status` prints what a pending build would
+  change. `--format json` carries the same report as `data.trust_bundle`.
+- Versions are compared as semantic versions when publishing and loading an
+  index. `repo build`, clients, and `mirror pull` treat `1.0` and `1.0.0` (or
+  `1.0.0+a` and `1.0.0+b`) as one version, and `repo build` refuses a version
+  that is not a semantic version, which no client could load.
+- Two package names, or two versions of one package, that differ only in
+  letter case are refused by `repo build`, by clients loading an index, and by
+  `mirror pull`; `pkg import` refuses an output directory that already holds
+  such a variant. On a case-insensitive filesystem the two would share a
+  directory.
+- `pkg build` and `repo build` refuse a package whose `content/` holds a
+  setuid, setgid, or sticky file instead of silently dropping the bits, and
+  installing an artifact whose members carry them is refused. polypkg never
+  installs a privileged file.
+- `pkg lint -o <file>` without `--sarif` is an error instead of silently
+  writing nothing.
+- y/N prompts and the `search` picker ask the terminal itself, so a stdin
+  redirected from a file or `/dev/null` gets `stdin is not a terminal`
+  instead of reaching the prompt. An answer is read for at most 64 bytes.
+- A positional-argument error names the missing or extra operands (`polypkg
+  source remove expected <name> (got 2 arguments)`) with a `usage:` hint, and
+  under `--format json` prints an error envelope naming the command path.
+  `generation pin` and `generation unpin` keep reporting `pin` and `unpin`.
+- `mirror verify` without `--trust-root` says its result is a self-consistency
+  check only, and `--format json` reports `data.pinned`.
+- Every `go`-invoking `task` gate appends `-mod=readonly` to `GOFLAGS`, so no
+  gate rewrites `go.mod` or `go.sum`, even when the caller exports
+  `GOFLAGS=-mod=mod`.
+
 ### Fixed
 
+- `pkg init`, `pkg lint` and `pkg build` now print the
+  `polypkg.cli-result/v2` error envelope on stdout when they fail under
+  `--format json`, as every other command does; before, stdout was empty
+  unless the arguments or flags were wrong. Under `--format json` the human
+  lint report of `pkg lint` and `pkg build` now goes to stderr, so stdout holds
+  only JSON. `pkg lint --sarif` without `-o` still prints only the SARIF
+  document on stdout, and exits 1 without an envelope when the lint fails.
+- The error envelope for an unknown or malformed flag names a nested command
+  by its full path (`"command": "repo remove"` for `repo remove --bogus`, not
+  `"remove"`). Every error envelope now reports the same `command` value as
+  the command's successful result, and the JSON reference promises it stable
+  within `polypkg.cli-result/v2`.
+- `pkg build` and `repo add` say which file stopped the package from packing
+  and why, instead of only `pkg build: pack` or `cannot pack package "hello"`:
+  for example `cannot pack package "hello": "content/bin/hello" is setuid; a
+  package cannot carry setuid, setgid or sticky bits`, with a hint naming what
+  to change (here `chmod u-s,g-s,-t`). This covers setuid, setgid and sticky
+  files, symlinks and special files, paths too long or too deep to extract,
+  files over 1 GiB, and packages with too many entries. The same applies to
+  `repo build`.
+- `repo build`'s refusal of names or versions that differ only in letter case
+  names both spellings and the `polypkg-repo.yaml` entries (source directories
+  or prebuilt artifacts) they came from. Its hint now points at the package's
+  own `polypkg.yaml`, where a name and version are set, or at removing one of
+  the entries, instead of saying to rename the package in
+  `polypkg-repo.yaml`.
+- A missing required flag (`repo init` without `--source`, `source add` without
+  `--url`, `mirror pull` without `--repo-source`, `--output-dir` or `--key`,
+  `repo export-bundle` without `-o`) now prints the `polypkg.cli-result/v2`
+  error envelope under `--format json`, and in text mode names every missing
+  flag with a usage hint (`polypkg mirror pull needs --repo-source and
+  --output-dir`), instead of cobra's bare `required flag(s) ... not set`.
+- An unknown command (`polypkg -f json bogus`) prints the error envelope, with
+  `"command": "polypkg"`, wherever `--format` appears; the "did you mean"
+  suggestion moved into the hint. The one error still printed without an
+  envelope is an unknown flag placed before `--format`, which stops flag
+  parsing before `--format` is read; docs/json-output.md says so.
+- `pkg init`, `pkg build`, `pkg lint` and `repo export-bundle` name the path
+  that failed and why (`cannot write artifact ./out/hello-1.0.0.tar.zst:
+  permission denied`), with a hint, instead of fragments such as `write stub`
+  or `write bundle` that dropped the cause. A directory with no `polypkg.yaml`
+  reads `./empty has no polypkg.yaml`, with a hint pointing at `pkg init`,
+  instead of `cannot lint "./empty"`. `repo export-bundle -o` into a directory
+  that does not exist is refused before the bundle is assembled. The `repo`
+  commands' other filesystem errors gain the same cause suffix.
+- `mirror verify` reports a missing bundle as `bundle /x does not exist` and a
+  file that is not a complete tar archive as `/x is not a polypkg bundle`, with
+  a hint, instead of the OS's or tar reader's own error text.
 - A `perms` action that changes the mode of a path an earlier action of the
   same package created (`dir`, or a file `extract` unpacked) no longer leaves
   that path drifting forever. Both actions recorded a mode, so every apply saw
@@ -373,6 +471,52 @@ and on-disk formats may change in breaking ways.
   `apply` could garbage-collect the generation being rolled back to and leave
   the `active` pointer dangling.
 
+- Fetch errors name the source as the profile does instead of always saying
+  `native`. A file a source does not serve reads `source "x" at <url> does not
+  serve <file>`, with a hint to check the url, instead of an HTTP 404 that
+  never happened for a local source.
+- A hint about a missing profile says how that command takes one:
+  `--profile <path>` for `install`, `remove`, and `upgrade`, a positional
+  profile file for `apply` and `plan`, and `POLYPKG_PROFILE=<path>` for every
+  other command.
+- The `pkg init` scaffold's header points at `polypkg repo add <this-dir>` and
+  `polypkg install <name>` instead of a command that could not work.
+- A `mirror pull` source-name mismatch hints at `--source-name` (or
+  `source_name:` on a `--sources-file` entry) instead of giving client-side
+  advice.
+- `init` says in plain words when it cannot create the config directory or
+  write the profile, with a hint.
+- `repo build` names a non-regular file under `content/` once, instead of
+  `content/content/<file>`.
+- An unknown key in a package or repository manifest reads
+  `line N: unknown field "key"`, without the Go type behind it.
+- A signature that does not verify under the pinned trust root gets a hint
+  pointing at "Recovering after a repository is re-created" in
+  `docs/trust-policy.md`.
+- A `--trust-root` file that does not exist is reported as missing rather than
+  as an invalid key.
+- The warning for a `--valid-for` under an hour no longer claims `status`
+  exits 4; it says clients refuse the metadata once the window and the
+  5-minute clock-skew allowance have passed.
+- `list` prints `no packages installed` for an empty generation, as it does
+  before the first apply, instead of nothing.
+- `rollback --help` says rollback does not edit the profile, so the next
+  `apply` re-applies whatever the profile still asks for.
+- `plan --format json` fills `current.committed_at` with the generation's
+  commit time instead of Go's zero time.
+- `task install` creates `~/.local/bin` when it is missing.
+- The profile template cites the "Attestation policy" section of
+  `docs/trust-policy.md` instead of a README section that does not exist.
+- A sigstore bundle is tried against every sigstore root whose validity window
+  contains its time, not only the first. A bundle signed by the older of two
+  overlapping Fulcio CAs no longer drops to `verified-transport-only`.
+- `pkg lint` reports an `extract` destination below a file, or a link out of
+  the package, that an earlier action placed, which apply could never create,
+  and names the colliding action that runs first rather than the one declared
+  first.
+- An artifact whose signed name, version, or hash claim is wrong is refused
+  without being downloaded a second time.
+
 ### Security
 
 - A repository index can no longer name a package with a path. Package and
@@ -410,7 +554,7 @@ and on-disk formats may change in breaking ways.
   the http request is made. Redirects from https to https, including to
   another host such as a CDN, are still followed, up to 10 hops.
 - Trust roots supplied as a local file are now pinned by content, not by path.
-  `init --trust-root-file` and `source add --trust-root` recorded the path you
+  `init --trust-root` and `source add --trust-root` recorded the path you
   gave them and re-read the anchor from it on every verification, so a key that
   lived anywhere the repository operator could write was not pinned at all: the
   same write that replaced the signed metadata replaced the key that metadata is
@@ -474,3 +618,15 @@ and on-disk formats may change in breaking ways.
     artifact and re-extracts one that was modified, logging a warning. An edited
     cache therefore can't be copied into a new generation or stay live behind a
     symlink.
+- Package extraction applies the same symlink-target rule as the `extract`
+  action: a symlink whose target climbs out through another symlink
+  (`up -> .`, then `x -> up/..`) is refused.
+- Package extraction bounds member names to 4096 bytes and 64 path segments
+  and counts the directories it creates toward the 100 000-entry limit, so one
+  deep member can no longer create thousands of directories. `pkg build` and
+  `repo build` refuse a package that would exceed either limit.
+- The `extract` action refuses a `.tar.xz` block that declares an LZMA2
+  dictionary larger than 64 MiB, and never reads past a block's declared
+  output size.
+- URLs in errors and warnings show every query value as `xxxxx` and a fragment
+  as `#xxxxx`, in addition to hiding userinfo.

@@ -130,7 +130,7 @@ var _ = Describe("Resolve", func() {
 		Expect(errors.As(err, &rerr)).To(BeTrue())
 	})
 
-	// M2 enforces Obsoletes as a mutual conflict: requiring both an obsoleter
+	// Obsoletes is enforced as a mutual conflict: requiring both an obsoleter
 	// and the package it obsoletes is rejected (supersession/auto-drop is
 	// deferred).
 	It("treats Obsoletes as a mutual conflict", func() {

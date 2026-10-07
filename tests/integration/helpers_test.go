@@ -24,23 +24,34 @@ import (
 	"lukechampine.com/blake3"
 )
 
-// IsolatedEnv sets XDG_DATA_HOME / XDG_STATE_HOME / XDG_CONFIG_HOME
-// to a per-test temp directory so polypkg state is fully isolated.
+// IsolatedEnv points HOME and every XDG base directory at a per-test temp
+// directory so polypkg state is fully isolated and nothing falls through to
+// the invoking user's home. XDG_BIN_HOME matters most: the default-on bridge
+// that runs during apply/rollback would otherwise write the real ~/.local/bin.
 func IsolatedEnv(t testing.TB) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"data", "state", "config", "bin"} {
-		dir := filepath.Join(root, name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	for _, d := range []struct {
+		env, name string
+		mode      os.FileMode
+	}{
+		{"HOME", "home", 0o755},
+		{"XDG_DATA_HOME", "data", 0o755},
+		{"XDG_STATE_HOME", "state", 0o755},
+		{"XDG_CONFIG_HOME", "config", 0o755},
+		{"XDG_CACHE_HOME", "cache", 0o755},
+		{"XDG_BIN_HOME", "bin", 0o755},
+		// The XDG spec requires the runtime dir to be owner-only.
+		{"XDG_RUNTIME_DIR", "runtime", 0o700},
+		{"XDG_CONFIG_DIRS", "config-dirs", 0o755},
+		{"XDG_DATA_DIRS", "data-dirs", 0o755},
+	} {
+		dir := filepath.Join(root, d.name)
+		if err := os.MkdirAll(dir, d.mode); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
+		t.Setenv(d.env, dir)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	// Isolate the ~/.local/bin bridge target so the (default-on) bridge that runs
-	// during apply/rollback never writes to the real user bin dir under test.
-	t.Setenv("XDG_BIN_HOME", filepath.Join(root, "bin"))
 	return root
 }
 
@@ -240,6 +251,27 @@ actions:
 		"polypkg.yaml":                     manifest,
 		filepath.Join("content/bin", name): script,
 	})
+}
+
+// buildHelloMissingSource builds a hello package at version whose install
+// action names a source file the artifact does not contain. The package is
+// valid to publish and to resolve; only its apply fails, after any profile
+// edit is written, and the failure needs no permission trick, so it fires
+// under root too. Specs use it to drive the restore-on-failure paths.
+func buildHelloMissingSource(t testing.TB, version string) []byte {
+	t.Helper()
+	manifest := fmt.Sprintf(`schema: polypkg.package/v1
+name: hello
+version: %s
+actions:
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/missing
+      dest: $ACTIVE/hello/bin/hi
+      policy: symlink
+`, version)
+	return buildTarZst(t, map[string]string{"polypkg.yaml": manifest})
 }
 
 // indexPkg describes one package to publish into a signed test index.

@@ -332,13 +332,16 @@ func runInfo(cmd *cobra.Command, pkgName string, format Format) error {
 	})
 }
 
+// listEmptyMsg is what list prints when nothing is installed: before the
+// first apply, and when the current generation holds no packages.
+const listEmptyMsg = "no packages installed — run `polypkg install <name>` to get started"
+
 // emitListEmpty writes the no-packages-installed output and returns nil.
 func emitListEmpty(cmd *cobra.Command, format Format) error {
-	const msg = "no packages installed — run `polypkg install <name>` to get started"
 	EmitResult(cmd, format, "list", map[string]any{
 		"packages": []any{},
 	}, func(w *bytes.Buffer, _ map[string]any) {
-		fmt.Fprintln(w, msg)
+		fmt.Fprintln(w, listEmptyMsg)
 	})
 	return nil
 }
@@ -396,6 +399,10 @@ func emitListResult(
 		"generation": gen,
 		"scope":      scope,
 	}, func(w *bytes.Buffer, _ map[string]any) {
+		if len(rows) == 0 {
+			fmt.Fprintln(w, listEmptyMsg)
+			return
+		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, r := range rows {
 			line := r.Name + "\t" + r.Version
@@ -429,7 +436,7 @@ type infoInstalled struct {
 	// artifact, as in the manifest).
 	platform string
 	gen      int
-	// att is the installed entry's install-time attestation record (D11); nil
+	// att is the installed entry's install-time attestation record; nil
 	// when the package is not installed or its generation predates the v2
 	// chain (the JSON field then serializes as null, like the other optional
 	// fields).

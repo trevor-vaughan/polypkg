@@ -86,7 +86,7 @@ func TestLoadBuildCacheMissingIsEmpty(t *testing.T) {
 func TestStaleV1CacheIsCold(t *testing.T) {
 	// A cache file with schema polypkg.repo-cache/v1 must be treated as cold:
 	// its entries carry flat artifact names that would leak into a v2 pool
-	// index via the stat-check cache-hit path (D-C8).
+	// index via the stat-check cache-hit path.
 	c := NewBuildCache()
 	if c.Schema != "polypkg.repo-cache/v4" {
 		t.Fatalf("new cache schema = %q", c.Schema)

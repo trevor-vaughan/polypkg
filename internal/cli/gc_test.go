@@ -104,9 +104,7 @@ var _ = Describe("lock contention error shaping", func() {
 		if os.Getuid() == 0 {
 			Skip("flock EWOULDBLOCK tests do not apply when running as root")
 		}
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		lockPath := filepath.Join(dir, "state", "polypkg", "apply.lock")
 		Expect(os.MkdirAll(filepath.Dir(lockPath), 0o700)).To(Succeed())
 		// Hold the lock ourselves so gc cannot acquire it.
@@ -142,9 +140,7 @@ var _ = Describe("lock contention error shaping", func() {
 
 var _ = Describe("gc --count 0 validation", func() {
 	It("returns CLIError with hint when --count is 0", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"gc", "--count", "0"})
 		err := root.Execute()
@@ -159,9 +155,7 @@ var _ = Describe("gc --count 0 validation", func() {
 
 var _ = Describe("gc invalid --age flag", func() {
 	It("returns CLIError with hint for an unparseable age", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"gc", "--age", "notanage"})
 		err := root.Execute()
@@ -173,8 +167,8 @@ var _ = Describe("gc invalid --age flag", func() {
 	})
 })
 
-// Finding 11: `gc --count 1` with several recent generations reclaimed nothing
-// and said only "removed 0, failed 0, bytes reclaimed 0". Both retention
+// `gc --count 1` with several recent generations used to reclaim nothing
+// and say only "removed 0, failed 0, bytes reclaimed 0". Both retention
 // predicates apply simultaneously, so --age 30d held every generation — correct,
 // but the operator was given no way to see it from the output.
 var _ = Describe("gc age-held reporting", func() {
@@ -190,9 +184,7 @@ var _ = Describe("gc age-held reporting", func() {
 		}
 	}
 	setupStore := func(n int) {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		commitGenerations(filepath.Join(dir, "data", "polypkg"), n)
 	}
 	runGCCmd := func(args ...string) string {
@@ -239,14 +231,7 @@ var _ = Describe("gc age-held reporting", func() {
 // counted as inside --age).
 var _ = Describe("gc removes incomplete generations", func() {
 	It("removes a manifest-less generation inside the default age window and keeps the rest", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", filepath.Join(dir, "home"))
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
-		GinkgoT().Setenv("XDG_DATA_DIRS", filepath.Join(dir, "share"))
+		dir := sandboxUserEnv(GinkgoTB())
 		storeRoot := filepath.Join(dir, "data", "polypkg")
 		s, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
@@ -282,14 +267,7 @@ var _ = Describe("gc removes incomplete generations", func() {
 		if os.Getuid() == 0 {
 			Skip("root reads a mode-000 file, so the read error cannot be provoked")
 		}
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", filepath.Join(dir, "home"))
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
-		GinkgoT().Setenv("XDG_DATA_DIRS", filepath.Join(dir, "share"))
+		dir := sandboxUserEnv(GinkgoTB())
 		storeRoot := filepath.Join(dir, "data", "polypkg")
 		s, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
@@ -314,14 +292,7 @@ var _ = Describe("gc removes incomplete generations", func() {
 	})
 
 	It("never removes a damaged generation, even outside --count and --age", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", filepath.Join(dir, "home"))
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
-		GinkgoT().Setenv("XDG_DATA_DIRS", filepath.Join(dir, "share"))
+		dir := sandboxUserEnv(GinkgoTB())
 		storeRoot := filepath.Join(dir, "data", "polypkg")
 		s, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())

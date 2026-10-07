@@ -81,7 +81,7 @@ func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	dec.KnownFields(true)
 	var m RepoManifest
 	if err := dec.Decode(&m); err != nil {
-		return nil, fmt.Errorf("decode repo manifest: %w", err)
+		return nil, fmt.Errorf("decode repo manifest: %w", plainYAMLDecodeError(err))
 	}
 	if err := ValidateSourceName(m.Source); err != nil {
 		return nil, fmt.Errorf("repo manifest: %w", err)

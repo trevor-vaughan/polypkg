@@ -65,7 +65,7 @@ type StatusGCPreview struct {
 }
 
 // StatusGraceEntry reports that one source's signed metadata was accepted under
-// freshness grace at its last fetch (phase 2e-1). WindowExpired is computed at
+// freshness grace at its last fetch. WindowExpired is computed at
 // status time: the accept_expiry_until deadline has itself now passed, so the
 // next fetch will refuse unless the operator extends it.
 type StatusGraceEntry struct {

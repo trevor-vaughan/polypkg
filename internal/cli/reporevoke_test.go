@@ -118,7 +118,7 @@ func TestRepoRevokeRejectsNoTargets(t *testing.T) {
 	}
 }
 
-// Finding 12: `repo revoke --valid-for` took nonsense windows silently — a
+// `repo revoke --valid-for` used to take nonsense windows silently — a
 // negative duration was replaced by the 720h default, and a sub-second window
 // published a list consumers treat as expired on arrival (status exit 4).
 func TestRepoRevokeRejectsNonPositiveValidFor(t *testing.T) {

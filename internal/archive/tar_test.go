@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -196,18 +197,32 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 		}
 	})
 
-	DescribeTable("refuses a setuid, setgid or sticky mode",
-		func(m member) {
+	DescribeTable("SpecialBits names the setuid, setgid and sticky bits of a mode",
+		func(mode fs.FileMode, want string) {
+			Expect(SpecialBits(mode)).To(Equal(want))
+		},
+		Entry("none", fs.FileMode(0o755), ""),
+		Entry("setuid", 0o755|fs.ModeSetuid, "setuid"),
+		Entry("setgid on a directory", 0o755|fs.ModeDir|fs.ModeSetgid, "setgid"),
+		Entry("sticky", 0o777|fs.ModeSticky, "sticky"),
+		Entry("all three", 0o755|fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky, "setuid and setgid and sticky"),
+	)
+
+	DescribeTable("refuses a setuid, setgid or sticky mode, naming the bits",
+		func(m member, want string) {
 			root, _ := sandbox()
 			placed, err := ExtractTar(bytes.NewReader(tarOf(m)), root, pkgOpts)
-			Expect(err).To(MatchError(ContainSubstring("unsupported file mode")))
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(err).To(MatchError(ContainSubstring("a package cannot carry setuid, setgid or sticky bits")))
 			Expect(placed).To(BeNil())
 			_, statErr := root.Lstat(m.name)
 			Expect(statErr).To(MatchError(fs.ErrNotExist))
 		},
-		Entry("a setuid file", member{name: "f", typeflag: tar.TypeReg, body: "x", mode: 0o4755}),
-		Entry("a setgid file", member{name: "f", typeflag: tar.TypeReg, body: "x", mode: 0o2755}),
-		Entry("a sticky directory", member{name: "d", typeflag: tar.TypeDir, mode: 0o1777}),
+		Entry("a setuid file", member{name: "f", typeflag: tar.TypeReg, body: "x", mode: 0o4755}, `"f" has mode 04755, which is setuid`),
+		Entry("a setgid file", member{name: "f", typeflag: tar.TypeReg, body: "x", mode: 0o2755}, `"f" has mode 02755, which is setgid`),
+		Entry("a setuid and setgid file", member{name: "f", typeflag: tar.TypeReg, body: "x", mode: 0o6755}, "which is setuid and setgid"),
+		Entry("a setgid directory", member{name: "d/", typeflag: tar.TypeDir, mode: 0o2755}, `"d/" has mode 02755, which is setgid`),
+		Entry("a sticky directory", member{name: "d", typeflag: tar.TypeDir, mode: 0o1777}, `"d" has mode 01777, which is sticky`),
 	)
 
 	Describe("limits", func() {
@@ -233,6 +248,21 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 			)
 			placed, err := ExtractTar(bytes.NewReader(data), root, opts)
 			Expect(err).To(MatchError(ContainSubstring("total size would exceed limit 12")))
+			Expect(placed).To(BeNil())
+		})
+
+		It("counts the directories it creates as implicit parents against the entry limit", func() {
+			data := tarOf(member{name: "a/b/c/f", typeflag: tar.TypeReg, body: "x", mode: 0o644})
+			opts := pkgOpts
+			opts.Limits = Limits{MaxFileBytes: 100, MaxTotalBytes: 1000, MaxEntries: 4}
+			root, _ := sandbox()
+			_, err := ExtractTar(bytes.NewReader(data), root, opts)
+			Expect(err).NotTo(HaveOccurred(), "the member and its three parents are four entries")
+
+			opts.Limits.MaxEntries = 3
+			root, _ = sandbox()
+			placed, err := ExtractTar(bytes.NewReader(data), root, opts)
+			Expect(err).To(MatchError(ContainSubstring("archive exceeds 3 entries")))
 			Expect(placed).To(BeNil())
 		})
 
@@ -262,9 +292,63 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 		Entry("a ../ name", member{name: "../escape", typeflag: tar.TypeReg, body: "x", mode: 0o644}),
 		Entry("a deep ../ name", member{name: "../../../../etc/passwd", typeflag: tar.TypeReg, body: "x", mode: 0o644}),
 		Entry("an absolute name", member{name: "/etc/cron.d/pwned", typeflag: tar.TypeReg, body: "x", mode: 0o644}),
-		Entry("an absolute symlink target", member{name: "link", typeflag: tar.TypeSymlink, linkname: "/etc"}),
-		Entry("a relative symlink target that escapes", member{name: "sub/link", typeflag: tar.TypeSymlink, linkname: "../../outside"}),
 	)
+
+	DescribeTable("refuses a member name beyond PolicyStrict's bounds",
+		func(name, want string) {
+			root, base := sandbox()
+			placed, err := ExtractTar(bytes.NewReader(tarOf(member{name: name, typeflag: tar.TypeReg, body: "x", mode: 0o644})), root, pkgOpts)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(placed).To(BeNil())
+			ents, readErr := os.ReadDir(filepath.Join(base, "root"))
+			Expect(readErr).NotTo(HaveOccurred())
+			Expect(ents).To(BeEmpty())
+		},
+		Entry("a name longer than 4096 bytes", strings.Repeat("n", 4097), "is longer than 4096 bytes"),
+		Entry("a name with 65 segments", strings.Repeat("d/", 64)+"f", "has more than 64 path segments"),
+	)
+
+	It("accepts a name with exactly 64 segments", func() {
+		root, _ := sandbox()
+		name := strings.Repeat("d/", 63) + "f"
+		_, err := ExtractTar(bytes.NewReader(tarOf(member{name: name, typeflag: tar.TypeReg, body: "x", mode: 0o644})), root, pkgOpts)
+		Expect(err).NotTo(HaveOccurred())
+		got, err := root.ReadFile(name)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal("x"))
+	})
+
+	DescribeTable("refuses a symlink whose target could leave the root, as PolicyStrict does",
+		func(want string, members ...member) {
+			root, base := sandbox()
+			placed, err := ExtractTar(bytes.NewReader(tarOf(members...)), root, pkgOpts)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(placed).To(BeNil())
+			expectContained(base)
+		},
+		Entry("an absolute target", `symlink "link" has the absolute target "/etc"`,
+			member{name: "link", typeflag: tar.TypeSymlink, linkname: "/etc"}),
+		Entry("a relative target that escapes", `symlink "sub/link" target "../../outside" escapes the extraction root`,
+			member{name: "sub/link", typeflag: tar.TypeSymlink, linkname: "../../outside"}),
+		Entry("a '..' after a named segment, which can climb out through another link",
+			`symlink "x" target "up/.." climbs back out of a directory with '..'`,
+			member{name: "up", typeflag: tar.TypeSymlink, linkname: "."},
+			member{name: "x", typeflag: tar.TypeSymlink, linkname: "up/.."}),
+	)
+
+	It("keeps symlinks whose targets stay inside the root", func() {
+		root, _ := sandbox()
+		data := tarOf(
+			member{name: "lib/libfoo.so.1", typeflag: tar.TypeReg, body: "elf", mode: 0o755},
+			member{name: "lib/libfoo.so", typeflag: tar.TypeSymlink, linkname: "libfoo.so.1"},
+			member{name: "bin/foo", typeflag: tar.TypeSymlink, linkname: "../lib/./libfoo.so"},
+		)
+		_, err := ExtractTar(bytes.NewReader(data), root, pkgOpts)
+		Expect(err).NotTo(HaveOccurred())
+		target, err := root.Readlink("bin/foo")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(target).To(Equal("../lib/./libfoo.so"))
+	})
 
 	It("refuses a member routed through a symlink the archive created", func() {
 		root, base := sandbox()
@@ -274,11 +358,22 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 			member{name: "a/b", typeflag: tar.TypeReg, body: "x", mode: 0o644},
 		)
 		placed, err := ExtractTar(bytes.NewReader(data), root, pkgOpts)
-		Expect(err).To(MatchError(ContainSubstring("a/b passes through or replaces the symlink a")))
+		Expect(err).To(MatchError(ContainSubstring(`"a/b" passes through or replaces the symlink "a"`)))
 		Expect(placed).To(BeNil())
 		_, statErr := root.Lstat("c/b")
 		Expect(statErr).To(MatchError(fs.ErrNotExist))
 		expectContained(base)
+	})
+
+	It("refuses a member that needs a directory where the archive placed a file", func() {
+		root, _ := sandbox()
+		data := tarOf(
+			member{name: "a", typeflag: tar.TypeReg, body: "file", mode: 0o644},
+			member{name: "a/b", typeflag: tar.TypeReg, body: "x", mode: 0o644},
+		)
+		placed, err := ExtractTar(bytes.NewReader(data), root, pkgOpts)
+		Expect(err).To(MatchError(ContainSubstring(`mkdir "a/b": "a" exists and is not a directory`)))
+		Expect(placed).To(BeNil())
 	})
 
 	It("refuses to write through a symlink already under the root", func() {
@@ -287,7 +382,7 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 		Expect(os.Symlink(outside, filepath.Join(base, "root", "evil"))).To(Succeed())
 		data := tarOf(member{name: "evil/pwned", typeflag: tar.TypeReg, body: "x", mode: 0o644})
 		placed, err := ExtractTar(bytes.NewReader(data), root, pkgOpts)
-		Expect(err).To(MatchError(ContainSubstring("evil/pwned passes through or replaces the symlink evil")))
+		Expect(err).To(MatchError(ContainSubstring(`"evil/pwned" passes through or replaces the symlink "evil"`)))
 		Expect(placed).To(BeNil())
 		expectContained(base)
 	})
@@ -299,7 +394,7 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 		Expect(os.Symlink(victim, filepath.Join(base, "root", "evil"))).To(Succeed())
 		data := tarOf(member{name: "evil", typeflag: tar.TypeReg, body: "overwritten", mode: 0o644})
 		placed, err := ExtractTar(bytes.NewReader(data), root, pkgOpts)
-		Expect(err).To(MatchError(ContainSubstring("evil passes through or replaces the symlink evil")))
+		Expect(err).To(MatchError(ContainSubstring(`"evil" passes through or replaces the symlink "evil"`)))
 		Expect(placed).To(BeNil())
 		got, readErr := os.ReadFile(victim)
 		Expect(readErr).NotTo(HaveOccurred())

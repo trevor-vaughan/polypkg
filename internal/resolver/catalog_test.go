@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -242,7 +243,6 @@ var _ = Describe("BuildCatalog host filtering", func() {
 					entry("1.0", foreign),
 					entry("1.0", "windows/amd64"),
 					entry("1.0.0", "freebsd/amd64"),
-					entry("1.0.0", foreign),
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -280,6 +280,26 @@ var _ = Describe("BuildCatalog host filtering", func() {
 		Entry("the platform-agnostic build twice",
 			[]schema.IndexEntry{entry("1.0.0", ""), entry("1.0.0", "")},
 			`catalog: rg "1.0.0" for platform "any" is listed more than once`),
+		Entry("semver-equal spellings for one platform",
+			[]schema.IndexEntry{entry("1.0", testHost), entry("1.0.0", testHost)},
+			`catalog: rg "1.0.0" for platform "`+testHost+`" is listed more than once (also listed as "1.0")`),
+		Entry("spellings that differ only in build metadata, platform-agnostic",
+			[]schema.IndexEntry{entry("1.0.0+a", ""), entry("1.0.0+b", "")},
+			`catalog: rg "1.0.0+b" for platform "any" is listed more than once (also listed as "1.0.0+a")`),
+	)
+
+	DescribeTable("refuses names or versions that differ only in letter case",
+		func(packages map[string][]schema.IndexEntry, want string) {
+			_, err := build(packages)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(err.Error()).To(HavePrefix("catalog: "))
+		},
+		Entry("two names",
+			map[string][]schema.IndexEntry{"rg": {entry("1.0.0", "")}, "RG": {entry("1.0.0", "")}},
+			`package names "RG" and "rg" differ only in letter case`),
+		Entry("two versions of one name",
+			map[string][]schema.IndexEntry{"rg": {entry("1.0.0-rc1", testHost), entry("1.0.0-RC1", foreign)}},
+			`package "rg" versions "1.0.0-rc1" and "1.0.0-RC1" differ only in letter case`),
 	)
 
 	DescribeTable("refuses a version with both a platform-agnostic entry and platform entries",
@@ -292,6 +312,31 @@ var _ = Describe("BuildCatalog host filtering", func() {
 		Entry("agnostic and a foreign platform", []schema.IndexEntry{entry("1.0.0", ""), entry("1.0.0", foreign)}, foreign),
 		Entry("a foreign platform and agnostic", []schema.IndexEntry{entry("1.0.0", foreign), entry("1.0.0", "")}, foreign),
 	)
+
+	It("refuses an agnostic entry and a platform entry whose versions are semver-equal", func() {
+		_, err := build(map[string][]schema.IndexEntry{"rg": {entry("1.0", ""), entry("1.0.0", testHost)}})
+		Expect(err).To(MatchError(`catalog: rg "1.0.0" has both a platform-agnostic entry and a "` + testHost + `" entry (also listed as "1.0")`))
+	})
+
+	It("accepts semver-equal spellings for distinct platforms", func() {
+		_, err := build(map[string][]schema.IndexEntry{"rg": {entry("1.0", testHost), entry("1.0.0", foreign)}})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("admits many versions without comparing every pair", func() {
+		// A pairwise check takes minutes at this size; a keyed one, well
+		// under a second.
+		entries := make([]schema.IndexEntry, 0, 100_001)
+		for i := range 100_000 {
+			entries = append(entries, entry(fmt.Sprintf("1.%d.0", i), testHost))
+		}
+		start := time.Now()
+		_, err := build(map[string][]schema.IndexEntry{"rg": entries})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = build(map[string][]schema.IndexEntry{"rg": append(entries, entry("1.0", testHost))})
+		Expect(err).To(MatchError(`catalog: rg "1.0" for platform "` + testHost + `" is listed more than once (also listed as "1.0.0")`))
+		Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))
+	})
 
 	It("validates a foreign-platform entry before dropping it", func() {
 		bad := entry("1.0.0", foreign)

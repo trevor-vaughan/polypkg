@@ -3,6 +3,8 @@ package source
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/http"
 	"net/url"
 	"path"
 	"regexp"
@@ -33,7 +35,7 @@ var repoMetaNames = map[string]bool{
 // planner — printed the URL three times. We unwrap that here so the underlying
 // cause is reported once, cleanly.
 type FetchError struct {
-	Source  string // backend name, e.g. "native"
+	Source  string // the source's name in the profile (NativeBackendOpts.Source)
 	BaseURL string // the source's configured base URL
 	URL     string // the full URL that was fetched
 	Status  int    // HTTP status when the failure was a non-200 response, else 0
@@ -57,6 +59,11 @@ func (e *FetchError) Error() string {
 //     "xxxxx", user name included: a user-name-only token
 //     (https://TOKEN@host/) is as secret as a password, and url.Redacted
 //     masks only the password.
+//   - Every query value is replaced by "xxxxx" and only the parameter names
+//     are kept (a parameter with no value is replaced whole): tokens and
+//     signatures travel in the query under too many names to list.
+//   - A non-empty fragment is replaced whole by "xxxxx": it can carry a
+//     token too (#access_token=...).
 //   - A URL that does not parse, or that parses without a host but still
 //     contains '@' (an opaque "user:secret@host" or a scheme-less
 //     "TOKEN@host/path"), fails closed: only its scheme survives, as
@@ -70,6 +77,10 @@ func (e *FetchError) Error() string {
 func RedactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err == nil {
+		u.RawQuery = redactQuery(u.RawQuery)
+		if u.Fragment != "" {
+			u.Fragment, u.RawFragment = "xxxxx", ""
+		}
 		if u.User != nil {
 			u.User = url.User("xxxxx")
 			return u.String()
@@ -84,10 +95,35 @@ func RedactURL(rawURL string) string {
 	return "<redacted>"
 }
 
+// redactQuery keeps a raw query's parameter names and replaces every value
+// with "xxxxx". Query strings carry credentials under many names (token,
+// access_token, sig, X-Amz-Signature, ...), so no value is kept. A parameter
+// with no '=' may itself be the secret, so it is replaced whole.
+func redactQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	params := strings.Split(rawQuery, "&")
+	for i, p := range params {
+		if name, _, ok := strings.Cut(p, "="); ok {
+			params[i] = name + "=xxxxx"
+		} else {
+			params[i] = "xxxxx"
+		}
+	}
+	return strings.Join(params, "&")
+}
+
 // urlScheme is RFC 3986's scheme production.
 var urlScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*$`)
 
 func (e *FetchError) Unwrap() error { return e.Err }
+
+// NotFound reports whether the fetched file does not exist: an HTTP 404 from
+// a served source, or a missing file under a local one.
+func (e *FetchError) NotFound() bool {
+	return e.Status == http.StatusNotFound || errors.Is(e.Err, fs.ErrNotExist)
+}
 
 // IsArtifact reports whether the failed fetch targeted a listed package
 // artifact (or its signature) rather than repository metadata (index/trust and

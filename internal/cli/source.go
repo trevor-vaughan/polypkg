@@ -239,7 +239,7 @@ The default source type is "polypkg-native". Use --order-first to prepend this
 source to the preference list instead of appending it.
 
 Output honors --format json, emitting a cli-result/v2 envelope with the added source fields.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -256,7 +256,7 @@ Output honors --format json, emitting a cli-result/v2 envelope with the added so
 	cmd.Flags().StringVar(&fingerprint, "trust-root-fingerprint", "", "Expected key id of the trust root (hex, as printed by 'polypkg repo key show'); required with --trust-root-url when not on a TTY")
 	cmd.Flags().StringVar(&sourceType, "type", "polypkg-native", "Source backend type")
 	cmd.Flags().BoolVar(&orderFirst, "order-first", false, "Prepend this source to the preference order instead of appending")
-	_ = cmd.MarkFlagRequired("url")
+	requireFlags(cmd, "url")
 	return cmd
 }
 
@@ -285,7 +285,7 @@ func validateSourceName(name string) error {
 	if !sourceNamePattern.MatchString(name) {
 		return &CLIError{
 			Msg:  fmt.Sprintf("source name %q is not a valid slug", name),
-			Hint: "source names must match ^[a-zA-Z0-9_-]+$ (e.g. handtest)",
+			Hint: "source names must match ^[a-zA-Z0-9_-]+$ (e.g. team-mirror)",
 		}
 	}
 	return nil
@@ -360,6 +360,27 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL, 
 		return err
 	}
 
+	// The anchor is written before the profile edit, so a source that never
+	// makes it into the profile would leave one behind. Only an anchor this
+	// run created is ours to remove.
+	discardAnchor := func() {
+		if anchorPreExisted {
+			return
+		}
+		if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
+		}
+	}
+
+	warning, err := probeSource(cmd, p, name, sourceType, normalizedURL, trustRootPath)
+	if err != nil {
+		discardAnchor()
+		return err
+	}
+	if warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
+	}
+
 	_, err = profileedit.ApplySourceEdits(profilePath, []profileedit.SourceEdit{{
 		Name:       name,
 		Type:       sourceType,
@@ -378,25 +399,22 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL, 
 		return sourceExistsError(name)
 	}
 	if err != nil {
-		// The anchor was written before the edit, so a source that never made
-		// it into the profile would leave one behind. Only an anchor this run
-		// created is ours to remove.
-		if !anchorPreExisted {
-			if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
-			}
-		}
+		discardAnchor()
 		return &CLIError{Msg: fmt.Sprintf("cannot add source %q to profile", name), Err: err}
 	}
 
-	EmitResult(cmd, format, "source add",
-		map[string]any{
-			"name":        name,
-			"type":        sourceType,
-			"url":         normalizedURL,
-			"trust_root":  trustRootPath,
-			"order_first": orderFirst,
-		},
+	data := map[string]any{
+		"name":        name,
+		"type":        sourceType,
+		"url":         normalizedURL,
+		"trust_root":  trustRootPath,
+		"order_first": orderFirst,
+		"verified":    warning == "",
+	}
+	if warning != "" {
+		data["warning"] = warning
+	}
+	EmitResult(cmd, format, "source add", data,
 		func(w *bytes.Buffer, _ map[string]any) {
 			fmt.Fprintf(w, "added source %s\n", name)
 		})
@@ -422,7 +440,7 @@ If the source is not present in the profile a descriptive error is returned
 listing the names that are configured.
 
 Output honors --format json, emitting a cli-result/v2 envelope with the removed source name.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -483,9 +501,10 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 	}
 
 	// Clear the source's persisted anti-rollback floors so a later re-add of the
-	// same name re-pins from a clean trust-on-first-use baseline (spec §10.1
-	// recovery). Best-effort: a stale floor file left behind is a latent bug but
-	// not fatal to the removal that already succeeded, so warn rather than fail.
+	// same name re-pins from a clean trust-on-first-use baseline (the documented
+	// way to accept a legitimately re-created repository). Best-effort: a stale
+	// floor file left behind is a latent bug but not fatal to the removal that
+	// already succeeded, so warn rather than fail.
 	if err := trust.ForgetSeen(stateHome, name); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not clear trust state for source %q: %v\n", name, err)
 	}

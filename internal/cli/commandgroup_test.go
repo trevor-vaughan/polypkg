@@ -3,9 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 // runRoot drives the real command tree exactly as cmd/polypkg/main.go does:
@@ -80,11 +83,29 @@ var _ = Describe("command groups invoked without a subcommand", func() {
 		Expect(stderr).To(ContainSubstring("attestation report"))
 	})
 
-	It("leaves an unknown top-level command's behaviour unchanged", func() {
-		stdout, stderr, code := runRoot("bogus")
+	It("rejects an unknown top-level command with a hint", func() {
+		stdout, stderr, code := runRoot("statu")
 
 		Expect(code).To(Equal(1))
 		Expect(stdout).To(BeEmpty())
-		Expect(stderr).To(ContainSubstring(`unknown command "bogus" for "polypkg"`))
+		Expect(stderr).To(ContainSubstring(`unknown command "statu" for "polypkg"`))
+		Expect(stderr).To(ContainSubstring("did you mean `polypkg status`?"))
 	})
+
+	DescribeTable("reports an unknown top-level command in a cli-result envelope named for the root",
+		func(args ...string) {
+			stdout, stderr, code := runRoot(args...)
+
+			Expect(code).To(Equal(1))
+			env, err := schema.ParseCLIResult(strings.NewReader(stdout))
+			Expect(err).NotTo(HaveOccurred(), "stdout must be one valid envelope, got %q", stdout)
+			Expect(env.Command).To(Equal("polypkg"))
+			Expect(env.Status).To(Equal("error"))
+			Expect(env.Error).To(Equal(`unknown command "bogus" for "polypkg"`))
+			Expect(env.Hint).To(ContainSubstring("polypkg --help"))
+			Expect(stderr).To(ContainSubstring(`unknown command "bogus"`))
+		},
+		Entry("with --format before the name", "-f", "json", "bogus"),
+		Entry("with --format after the name", "bogus", "--format", "json"),
+	)
 })

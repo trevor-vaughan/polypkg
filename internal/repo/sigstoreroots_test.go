@@ -90,7 +90,7 @@ func TestSigstoreRootsFromPublicGoodTrustedRoot(t *testing.T) {
 		t.Fatalf("got %d roots, want one per Fulcio CA (2)", len(roots))
 	}
 
-	// Newest CA first, so a bundle from the CA-rotation overlap selects it.
+	// Newest CA first, so a bundle from the CA-rotation overlap tries it first.
 	if roots[0].ValidFrom != "2022-04-13T20:06:15Z" || roots[0].ValidUntil != "" {
 		t.Fatalf("roots[0] window = %q..%q, want 2022-04-13T20:06:15Z, open-ended", roots[0].ValidFrom, roots[0].ValidUntil)
 	}

@@ -30,7 +30,8 @@ func WithDirMode(mode os.FileMode) Option {
 type Factory func(root string, opts ...Option) (Substrate, error)
 
 // registry maps a substrate name (as written in scopes.<name>.substrate) to its
-// factory. M2 ships only the own-store; sysext (M7) will add one entry here.
+// factory. Only the own-store exists; another substrate (e.g. sysext) adds one
+// entry here.
 var registry = map[string]Factory{
 	"store": func(root string, opts ...Option) (Substrate, error) { return NewOwnStore(root, opts...) },
 }

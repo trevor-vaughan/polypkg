@@ -137,7 +137,7 @@ func (k *Keypair) SignRevocationList(serial uint64, data []byte) string {
 }
 
 // SignPoolManifest signs an export-bundle completeness manifest. It uses the
-// same key/role as the index (spec §10.9 E-2): the manifest attests which blobs
+// same key/role as the index: the manifest attests which blobs
 // a bundle contains, and is trusted iff the repo's index signature is trusted.
 func (k *Keypair) SignPoolManifest(serial uint64, data []byte) string {
 	return k.SignWithComment(data, "polypkg pool-manifest signature", fmt.Sprintf("serial=%d", serial))

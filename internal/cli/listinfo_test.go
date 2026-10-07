@@ -43,13 +43,7 @@ func makeListGen1State(storeRoot string) {
 
 var _ = Describe("list command", func() {
 	setup := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("HOME", dir)
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-		GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-		GinkgoT().Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-		GinkgoT().Setenv("XDG_BIN_HOME", filepath.Join(dir, "bin"))
+		dir = sandboxUserEnv(GinkgoTB())
 		GinkgoT().Setenv("POLYPKG_PROFILE", "")
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
@@ -65,6 +59,25 @@ var _ = Describe("list command", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.String()).To(ContainSubstring("no packages installed"))
 		Expect(out.String()).To(ContainSubstring("polypkg install <name>"))
+	})
+
+	It("prints the friendly message when the current generation holds no packages", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		// The generation an apply of an emptied profile commits.
+		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "manifest.json"), []byte(`{
+  "schema": "polypkg.manifest/v2",
+  "generation": 1,
+  "scope": "user",
+  "produced_by": {"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries": []
+}`), 0o600)).To(Succeed())
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(ContainSubstring("no packages installed"))
 	})
 
 	It("lists packages sorted by name with NAME  VERSION columns", func() {
@@ -222,9 +235,7 @@ packages:
 
 var _ = Describe("info command argument validation", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("returns CLIError when no package name is supplied", func() {
@@ -252,9 +263,7 @@ var _ = Describe("info command argument validation", func() {
 
 var _ = Describe("info command fetch-error path", func() {
 	setup := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -409,9 +418,7 @@ var _ = Describe("info command attestation rendering", func() {
 	// so info takes the offline-tolerance path (installed info only) — the
 	// attestation record comes from the installed manifest, not the catalog.
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		makeInfoAttestState(filepath.Join(dir, "data", "polypkg"))
 		profilePath := filepath.Join(GinkgoT().TempDir(), "profile.yaml")
 		Expect(os.WriteFile(profilePath, []byte(`schema: polypkg.spec/v1
@@ -554,9 +561,7 @@ var _ = Describe("resolveListScope system-prefix tiers", func() {
 	})
 
 	It("user-scope behavior is unchanged: returns XDG state home", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		c := &cobra.Command{Use: "list", RunE: func(*cobra.Command, []string) error { return nil }}
 		addScopeFlags(c)
 		Expect(c.ParseFlags(nil)).To(Succeed())
@@ -568,9 +573,7 @@ var _ = Describe("resolveListScope system-prefix tiers", func() {
 
 var _ = Describe("info command recommends/suggests rendering", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("renders Recommends and Suggests in text output", func() {

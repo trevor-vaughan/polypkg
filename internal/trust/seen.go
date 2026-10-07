@@ -30,7 +30,7 @@ type Seen struct {
 	TrustSerial uint64 `json:"trust_serial"`
 	IndexSerial uint64 `json:"index_serial"`
 	// BundleSerial and RevocationSerial are the highest serials observed for
-	// this source's optional trust bundle and revocation list (2c-0). Missing
+	// this source's optional trust bundle and revocation list. Missing
 	// from an older state file ⇒ 0 ⇒ never-seen (the trust-on-first-use
 	// baseline), which is why absence of the doc on the wire is only refused
 	// once one of these is above zero.
@@ -184,7 +184,7 @@ func StoreSeen(stateHome, source string, s Seen) error {
 
 // ForgetSeen removes the persisted serial floors for source. A missing file is
 // not an error: forgetting an already-absent source is a no-op. This is the
-// consumer half of the recovery story (spec §10.1): after `source remove`, a
+// consumer half of the recovery story: after `source remove`, a
 // later re-add of the same name re-pins from a clean trust-on-first-use
 // baseline instead of inheriting stale anti-rollback floors that would refuse a
 // legitimately re-created repository.

@@ -15,9 +15,7 @@ import (
 
 var _ = Describe("pin/unpin command errors", func() {
 	setup := func() (string, string) {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		return dir, filepath.Join(dir, "data", "polypkg")
 	}
 

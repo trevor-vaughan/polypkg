@@ -57,14 +57,16 @@ flowchart LR
   class build,bundle,repo sysB
 ```
 
-Generate the mirror's key first, then pull:
+Set the key password, generate the mirror's key, then pull. `repo init`
+encrypts the new key under that password and `mirror pull` unlocks it again,
+so the password has to be set before either runs:
 
 ```bash
+export POLYPKG_REPO_KEY_PASSWORD='...'   # or pass --key-password-file to both commands
 polypkg repo init ./mirror-scaffold --source mymirror --key-dir ./mirror-keys
 #   -> ./mirror-keys/mymirror.key   (the scaffold directory itself is disposable;
 #      `mirror pull` publishes its own tree and its own manifest)
 
-export POLYPKG_REPO_KEY_PASSWORD='...'   # mirror pull unlocks the key as well
 polypkg mirror pull \
   --source-url https://upstream.example/repo \
   --trust-root upstream-root.pub \
@@ -143,8 +145,10 @@ note: upstream https://upstream.example/repo: hello (linux/amd64): mirrored 1.1.
 ```
 
 Platform-agnostic packages keep the note shown above. An upstream index that
-lists the same name, version, and platform more than once fails the whole
-pull, including packages you did not select. `polypkg repo build` never
+lists the same name, version, and platform more than once (counting
+semver-equal spellings such as `1.0` and `1.0.0` as one version), or that
+holds two names, or two versions of one name, differing only in letter case,
+fails the whole pull, including packages you did not select. `polypkg repo build` never
 publishes such an index.
 
 Fetching and staging accept any well-formed platform, including an

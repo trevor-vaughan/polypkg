@@ -1,6 +1,9 @@
 package planner
 
 import (
+	"errors"
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -60,6 +63,56 @@ var _ = Describe("verifyArtifact platform binding", func() {
 	It("refuses a malformed platform claim as a non-staleable trust fault", func() {
 		staleable, err := verifyArtifact(data, "sig", claimed("../etc"), entry(""))
 		Expect(err).To(MatchError(ContainSubstring(`artifact signature comment: platform "../etc" is not <os>/<arch>`)))
+		Expect(staleable).To(BeFalse())
+	})
+})
+
+var _ = Describe("verifyArtifact refetch classification", func() {
+	data := []byte("artifact-bytes")
+	entry := resolver.Resolved{Name: "hello", Version: "1.0.0", Source: "native", ContentHash: blake3Hex(data)}
+	// claiming returns a keyring that verifies any bytes and claims name,
+	// version and hash for an agnostic artifact.
+	claiming := func(name, version, hash string) *fakeKeyring {
+		return &fakeKeyring{claims: trust.Claims{Values: map[string]string{
+			"name": name, "version": version, "hash": hash, "platform": "any",
+		}}}
+	}
+
+	It("marks a cryptographic signature mismatch staleable, since cached bytes may predate a republish", func() {
+		kr := &fakeKeyring{err: fmt.Errorf("%w: signature does not match data", trust.ErrSignatureMismatch)}
+		staleable, err := verifyArtifact(data, "sig", kr, entry)
+		var sigErr *ArtifactSignatureError
+		Expect(errors.As(err, &sigErr)).To(BeTrue(), "got %v", err)
+		Expect(staleable).To(BeTrue())
+	})
+
+	It("marks an authorization failure terminal", func() {
+		kr := &fakeKeyring{err: errors.New("key 0000 lacks role artifact")}
+		staleable, err := verifyArtifact(data, "sig", kr, entry)
+		Expect(err).To(MatchError(ContainSubstring("signature verification failed for hello-1.0.0")))
+		Expect(staleable).To(BeFalse())
+	})
+
+	// The signature verified over these bytes, so a refetch would have to serve
+	// different bytes under the same signature, which cannot verify: evicting
+	// and downloading again only wastes the download.
+	DescribeTable("marks a signed claim that disagrees with the index entry terminal",
+		func(kr *fakeKeyring, want string) {
+			staleable, err := verifyArtifact(data, "sig", kr, entry)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(staleable).To(BeFalse())
+		},
+		Entry("another name", claiming("other", "1.0.0", blake3Hex(data)), "artifact signature for hello-1.0.0 claims other-1.0.0/"),
+		Entry("another version", claiming("hello", "2.0.0", blake3Hex(data)), "artifact signature for hello-1.0.0 claims hello-2.0.0/"),
+		Entry("another hash", claiming("hello", "1.0.0", blake3Hex([]byte("other-bytes"))), "artifact signature for hello-1.0.0 claims hello-1.0.0/"+blake3Hex([]byte("other-bytes"))),
+	)
+
+	It("marks signed bytes whose hash differs from the signed, indexed hash terminal", func() {
+		other := blake3Hex([]byte("other-bytes"))
+		e := entry
+		e.ContentHash = other
+		staleable, err := verifyArtifact(data, "sig", claiming("hello", "1.0.0", other), e)
+		Expect(err).To(MatchError(ContainSubstring("hash mismatch for hello-1.0.0: index has " + other)))
 		Expect(staleable).To(BeFalse())
 	})
 })

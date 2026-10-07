@@ -73,17 +73,27 @@ var _ = Describe("resolveProfilePath", func() {
 		Expect(p).To(Equal(yaml))
 	})
 
-	It("returns a hinted CLIError when no profile exists, using the command path", func() {
+	It("hints at POLYPKG_PROFILE for a command with no profile argument or flag", func() {
+		// The test scaffold (Use: "x") takes no profile, like search or list.
 		_, err := resolveProfilePath(newScopedCmdForTest("user"), nil)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue())
 		Expect(ce.Msg).To(ContainSubstring("no profile found at"))
-		// cmd.CommandPath() for the test scaffold (Use: "x", no parent) is "x"
-		Expect(ce.Hint).To(ContainSubstring("x <profile-file>"))
+		Expect(ce.Hint).To(ContainSubstring("POLYPKG_PROFILE=<path>"))
+		Expect(ce.Hint).NotTo(ContainSubstring("<profile-file>"))
+	})
+
+	It("hints at --profile for a command with a --profile flag", func() {
+		cmd := newScopedCmdForTestNamed("install <package>...", "user")
+		cmd.Flags().String("profile", "", "")
+		_, err := resolveProfilePath(cmd, nil)
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue())
+		Expect(ce.Hint).To(ContainSubstring("--profile <path>"))
 	})
 
 	It("uses the command path in the hint for a plan-shaped command", func() {
-		planCmd := newScopedCmdForTestNamed("plan", "user")
+		planCmd := newScopedCmdForTestNamed("plan [profile-file]", "user")
 		_, err := resolveProfilePath(planCmd, nil)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue())
@@ -112,7 +122,7 @@ var _ = Describe("openProfileError", func() {
 		path := filepath.Join(dir, "missing.yaml")
 		_, ioErr := os.Open(path)
 		Expect(ioErr).To(HaveOccurred())
-		err := openProfileError(newScopedCmdForTestNamed("apply", "user"), path, ioErr)
+		err := openProfileError(newScopedCmdForTestNamed("apply [profile-file]", "user"), path, ioErr)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue())
 		Expect(ce.Msg).To(ContainSubstring("does not exist"))
@@ -125,7 +135,7 @@ var _ = Describe("openProfileError", func() {
 		path := filepath.Join(dir, "missing.yaml")
 		_, ioErr := os.Open(path)
 		Expect(ioErr).To(HaveOccurred())
-		err := openProfileError(newScopedCmdForTestNamed("plan", "user"), path, ioErr)
+		err := openProfileError(newScopedCmdForTestNamed("plan [profile-file]", "user"), path, ioErr)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue())
 		Expect(ce.Hint).To(ContainSubstring("plan <profile-file>"))
@@ -157,7 +167,7 @@ var _ = Describe("openProfileError", func() {
 
 	It("returns directory CLIError with file hint when path is a directory", func() {
 		dir := GinkgoT().TempDir()
-		err := openProfileError(newScopedCmdForTestNamed("apply", "user"), dir, syscall.EISDIR)
+		err := openProfileError(newScopedCmdForTestNamed("apply [profile-file]", "user"), dir, syscall.EISDIR)
 		var ce *CLIError
 		Expect(errors.As(err, &ce)).To(BeTrue())
 		Expect(ce.Msg).To(ContainSubstring("is a directory"))
@@ -194,9 +204,7 @@ var _ = Describe("installProfilePath hint (package actions)", func() {
 
 var _ = Describe("plan command with directory path", func() {
 	It("returns a CLIError naming the directory when passed a directory as profile", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"plan", dir})
 		root.SetOut(GinkgoWriter)
@@ -207,5 +215,19 @@ var _ = Describe("plan command with directory path", func() {
 		Expect(ce.Msg).To(ContainSubstring("is a directory"))
 		Expect(ce.Msg).To(ContainSubstring(dir))
 		Expect(ce.Hint).To(ContainSubstring("profile-file"))
+	})
+})
+
+var _ = Describe("search with no profile", func() {
+	It("hints at POLYPKG_PROFILE, not a <profile-file> argument search does not take", func() {
+		sandboxUserEnv(GinkgoTB())
+		GinkgoT().Setenv("POLYPKG_PROFILE", "")
+
+		_, err := runSource("", "search", "hello")
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(ContainSubstring("no profile found at"))
+		Expect(ce.Hint).To(ContainSubstring("POLYPKG_PROFILE=<path>"))
+		Expect(ce.Hint).NotTo(ContainSubstring("<profile-file>"))
 	})
 })

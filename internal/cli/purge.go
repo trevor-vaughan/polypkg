@@ -1,14 +1,12 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/lock"
@@ -125,10 +123,5 @@ func ensureNotActive(prior *schema.Ownership, pkg string) error {
 // confirms. Extracted for direct testing (TTY is unavailable under test).
 func confirmPurge(in io.Reader, out io.Writer, pkg string) (bool, error) {
 	fmt.Fprintf(out, "Permanently delete all persistent state for %s?\nThis cannot be undone.\nProceed? [y/N]: ", pkg)
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, err
-	}
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y", nil
+	return readYes(in)
 }

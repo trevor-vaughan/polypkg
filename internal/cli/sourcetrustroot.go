@@ -56,7 +56,7 @@ requires --trust-root-fingerprint.
 
 Output honors --format json, emitting a cli-result/v2 envelope with the old and
 new key ids.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {

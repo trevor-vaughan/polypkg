@@ -8,7 +8,8 @@ package action
 const NamePattern = `^[a-zA-Z0-9_-]+$`
 
 // ParamKind classifies an action parameter's expected literal value. Params whose
-// value is a computed !starlark expression are not type-checked (see Phase B).
+// value is a computed !starlark expression are not type-checked (see
+// internal/pkglint/params.go).
 type ParamKind int
 
 // The parameter kinds a ParamSpec can declare.
@@ -21,6 +22,26 @@ const (
 	KindStringList                  // a list of strings (a YAML sequence)
 )
 
+// Creation classifies what an action leaves at the path one of its params
+// names inside the package's own directory ($ACTIVE/<package>/).
+type Creation int
+
+// The Creation values a ParamSpec can declare.
+const (
+	// CreatesNothing: the param names no path the action creates in the
+	// package's directory: a source it reads, a path it only re-modes or
+	// records, or a name it places outside the directory.
+	CreatesNothing Creation = iota
+	// CreatesPath: the action creates the path, and any missing parents, as
+	// something a later action may still create paths below: a directory, or
+	// a symlink whose target the manifest chooses.
+	CreatesPath
+	// CreatesLeaf: the action creates the path, and any missing parents, as
+	// something nothing can be created below: a regular file, or a symlink
+	// out of the package's directory, which apply refuses to traverse.
+	CreatesLeaf
+)
+
 // ParamSpec declares one parameter's contract for an action.
 type ParamSpec struct {
 	Name     string
@@ -28,6 +49,10 @@ type ParamSpec struct {
 	Kind     ParamKind
 	Enum     []string // when Kind == KindEnum
 	Pattern  string   // optional regex for name-like fields
+	// Creates says what the action leaves at the path this param names.
+	// pkg lint reads it to find an earlier action that collides with an
+	// extract destination.
+	Creates Creation
 }
 
 // ConstraintKind classifies a cross-parameter rule.
@@ -81,7 +106,7 @@ var Registry = map[string]Spec{
 		Name: "install", FilePlacing: true, Handler: Install,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindPath},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 			{Name: "policy", Kind: KindEnum, Enum: []string{"symlink", "copy", "hardlink"}},
 		},
 	},
@@ -89,13 +114,13 @@ var Registry = map[string]Spec{
 		Name: "symlink", FilePlacing: true, Handler: Symlink,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindString},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesPath},
 		},
 	},
 	"dir": {
 		Name: "dir", FilePlacing: true, Handler: Dir,
 		Params: []ParamSpec{
-			{Name: "path", Required: true, Kind: KindPath},
+			{Name: "path", Required: true, Kind: KindPath, Creates: CreatesPath},
 			{Name: "mode", Kind: KindMode},
 		},
 	},
@@ -113,7 +138,7 @@ var Registry = map[string]Spec{
 		Name: "config", FilePlacing: true, Handler: Config,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindPath},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 			{Name: "policy", Kind: KindEnum, Enum: []string{"replace", "preserve", "preserve_warn", "three_way_merge"}},
 		},
 	},
@@ -126,7 +151,7 @@ var Registry = map[string]Spec{
 	"state": {
 		Name: "state", FilePlacing: true, Handler: State,
 		Params: []ParamSpec{
-			{Name: "path", Required: true, Kind: KindPath},
+			{Name: "path", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 		},
 	},
 	"path": {
@@ -175,7 +200,7 @@ var Registry = map[string]Spec{
 		Name: "extract", FilePlacing: true, MultiHandler: Extract,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindPath},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesPath},
 			{Name: "strip_components", Kind: KindInt},
 			{Name: "include", Kind: KindStringList},
 		},

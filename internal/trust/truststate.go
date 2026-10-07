@@ -39,9 +39,9 @@ func (v *minisignVerifier) LoadTrust(doc []byte, sig string, lastTrustSerial uin
 		return nil, 0, false, &SourceNameMismatchError{Doc: td.Source, Expected: v.source}
 	}
 	// Freshness (with grace) before serial logic: a stale document must not
-	// advance (or be compared against) the serial high-water mark (D13) — but
-	// grace relaxes only the WALL-CLOCK bound; the rollback check below still
-	// refuses a lower serial (spec §10.9 E-3).
+	// advance (or be compared against) the serial high-water mark — but grace
+	// relaxes only the WALL-CLOCK bound; the rollback check below still refuses
+	// a lower serial.
 	graced, err = CheckExpiry("trust document", td.Expires, acceptUntil)
 	if err != nil {
 		return nil, 0, false, err

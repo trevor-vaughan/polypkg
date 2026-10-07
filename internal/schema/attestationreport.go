@@ -21,8 +21,8 @@ const AttestationReportSchemaV1 = "polypkg.attestation-report/v1"
 // aggregates the provenance evidence already recorded and individually anchored
 // at install time (AttestationState + CarriedBinding). It is a FAITHFUL
 // AGGREGATION, not operator-signed — trust derives from the upstream signatures
-// each recorded hash verifies against, not from any consumer signature (spec
-// §10.9 E-7). An optional operator counter-signature (--sign) is deferred.
+// each recorded hash verifies against, not from any consumer signature. An
+// optional operator counter-signature (--sign) is deferred.
 type AttestationReport struct {
 	Schema        string            `json:"schema"`
 	GeneratedFrom ReportSource      `json:"generated_from"`

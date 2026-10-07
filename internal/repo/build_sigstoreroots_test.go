@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,8 +100,9 @@ func TestBuildPublishesSigstoreRoots(t *testing.T) {
 		t.Fatalf("published roots = %+v\nwant %+v", tb.SigstoreRoots, want)
 	}
 
-	// Consumer path: the signed bundle verifies under the repo key and selects
-	// the open-ended CA's root for a current bundle.
+	// Consumer path: the signed bundle verifies under the repo key, selects
+	// only the open-ended CA's root for a current bundle, and selects both CAs'
+	// roots, newest first, for a bundle from their 2022 overlap.
 	read := func(name string) []byte {
 		raw, rerr := os.ReadFile(filepath.Join(pub, name))
 		if rerr != nil {
@@ -116,9 +118,18 @@ func TestBuildPublishesSigstoreRoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
-	got, ok := bundle.SigstoreRootAt(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC))
-	if !ok || got.ValidFrom != "2022-04-13T20:06:15Z" {
-		t.Fatalf("SigstoreRootAt(2025) = %+v, %v; want the open-ended 2022 CA root", got, ok)
+	froms := func(roots []schema.SigstoreRoot) []string {
+		out := make([]string, 0, len(roots))
+		for _, r := range roots {
+			out = append(out, r.ValidFrom)
+		}
+		return out
+	}
+	if got := froms(bundle.SigstoreRootsAt(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC))); !slices.Equal(got, []string{"2022-04-13T20:06:15Z"}) {
+		t.Fatalf("SigstoreRootsAt(2025) valid_from = %q; want only the open-ended 2022 CA root", got)
+	}
+	if got := froms(bundle.SigstoreRootsAt(time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC))); !slices.Equal(got, []string{"2022-04-13T20:06:15Z", "2021-03-07T03:20:29Z"}) {
+		t.Fatalf("SigstoreRootsAt(2022-06) valid_from = %q; want both CA roots, newest first", got)
 	}
 
 	// A rebuild with nothing changed is a no-op: same serial, same bytes.
@@ -142,7 +153,10 @@ func TestBuildPublishesSigstoreRoots(t *testing.T) {
 func TestBuildMergesSigstoreRootsWithCarriedRoots(t *testing.T) {
 	root := t.TempDir()
 	converted := publicGoodRoots(t)
-	distinct := schema.SigstoreRoot{ValidFrom: "2019-01-01T00:00:00Z", FulcioCA: []string{"Q0Ex"}, RekorKeys: []string{"UjE="}}
+	// A real chain, so the build can fingerprint its root; the window alone
+	// makes it a distinct root.
+	distinct := converted[0]
+	distinct.ValidFrom = "2019-01-01T00:00:00Z"
 	// The carried bundle repeats one converted root (must publish once) and
 	// adds one the sigstore_roots file does not have.
 	sp := stageOnePrebuilt(t, root, "hello", bundleWithRoots(t, "1111111111111111", "QUFB", converted[1], distinct))
@@ -466,5 +480,137 @@ func TestSigstoreRootsEntryPathResolution(t *testing.T) {
 				t.Fatalf("published roots = %+v\nwant %+v", got, want)
 			}
 		})
+	}
+}
+
+// The public-good fixture's two Fulcio roots, in the order the conversion
+// publishes them (newest CA first): the SHA-256 of each root certificate's
+// DER.
+const (
+	publicGoodFulcioRoot2022 = "3ba7b6cc4e95469d4d334b49cb257ad8537076fa84b0ca87ff4ecfe6a54680c1"
+	publicGoodFulcioRoot2021 = "03a38ffb1f450100c2596d1d10b900ac4d504058006dda58199576bbeb9c73d0"
+)
+
+func TestBuildAndInspectorReportTheTrustBundleChange(t *testing.T) {
+	mPath, keyDir := newTestRepo(t)
+	build := func() Result {
+		t.Helper()
+		b, err := NewBuilder(mPath, keyDir, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := b.Build(BuildOptions{})
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		return r
+	}
+	pending := func() *TrustBundleChange {
+		t.Helper()
+		insp, err := NewInspector(mPath, keyDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := insp.TrustBundleChange()
+		if err != nil {
+			t.Fatalf("TrustBundleChange: %v", err)
+		}
+		return c
+	}
+
+	if r := build(); r.TrustBundle != nil {
+		t.Fatalf("a build with no sigstore_roots reported a trust bundle change: %+v", r.TrustBundle)
+	}
+
+	before := stageTrustedRoot(t, mPath)
+	published := &TrustBundleChange{Roots: []SigstoreRootSummary{
+		{FulcioRootSHA256: publicGoodFulcioRoot2022, ValidFrom: "2022-04-13T20:06:15Z"},
+		{FulcioRootSHA256: publicGoodFulcioRoot2021, ValidFrom: "2021-03-07T03:20:29Z", ValidUntil: "2022-12-31T23:59:59.999Z"},
+	}}
+	if got := pending(); !reflect.DeepEqual(got, published) {
+		t.Fatalf("pending change = %+v\nwant %+v", got, published)
+	}
+	if r := build(); !reflect.DeepEqual(r.TrustBundle, published) {
+		t.Fatalf("build reported %+v\nwant %+v", r.TrustBundle, published)
+	}
+	if got := pending(); got != nil {
+		t.Fatalf("after the build published the bundle, a change is still pending: %+v", got)
+	}
+	if r := build(); r.TrustBundle != nil {
+		t.Fatalf("an unchanged rebuild reported a trust bundle change: %+v", r.TrustBundle)
+	}
+
+	if err := os.WriteFile(mPath, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn := &TrustBundleChange{Withdrawn: true}
+	if got := pending(); !reflect.DeepEqual(got, withdrawn) {
+		t.Fatalf("pending change after dropping sigstore_roots = %+v, want %+v", got, withdrawn)
+	}
+	if r := build(); !reflect.DeepEqual(r.TrustBundle, withdrawn) {
+		t.Fatalf("build after dropping sigstore_roots reported %+v, want %+v", r.TrustBundle, withdrawn)
+	}
+}
+
+func TestTrustBundleSummaryListsBuilderKeysInPublishedOrder(t *testing.T) {
+	s := trustBundleSet{
+		keys: map[string]schema.BuilderKey{
+			"k2": {KeyID: "k2", ValidFrom: "2025-01-01T00:00:00Z"},
+			"k1": {KeyID: "k1", ValidFrom: "2024-01-01T00:00:00Z", ValidUntil: "2025-01-01T00:00:00Z"},
+		},
+		order: []string{"k2", "k1"},
+	}
+	got, err := s.summary(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &TrustBundleChange{BuilderKeys: []BuilderKeySummary{
+		{KeyID: "k2", ValidFrom: "2025-01-01T00:00:00Z"},
+		{KeyID: "k1", ValidFrom: "2024-01-01T00:00:00Z", ValidUntil: "2025-01-01T00:00:00Z"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("summary = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestTrustBundleSummaryRefusesAFulcioChainWithNoUsableRoot(t *testing.T) {
+	intermediateOnly := publicGoodRoots(t)[0]
+	intermediateOnly.FulcioCA = intermediateOnly.FulcioCA[1:]
+	for _, tc := range []struct {
+		name string
+		root schema.SigstoreRoot
+	}{
+		{"a certificate that is not base64", schema.SigstoreRoot{ValidFrom: "2024-01-01T00:00:00Z", FulcioCA: []string{"%%%"}, RekorKeys: []string{"k"}}},
+		{"a chain with no self-signed certificate", intermediateOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := trustBundleSet{roots: []schema.SigstoreRoot{tc.root}}
+			_, err := s.summary(true, false)
+			var pe *PublishError
+			if !errors.As(err, &pe) {
+				t.Fatalf("want a *PublishError, got %T: %v", err, err)
+			}
+			if !strings.Contains(pe.Msg, "has no usable Fulcio root certificate") {
+				t.Fatalf("Msg = %q", pe.Msg)
+			}
+		})
+	}
+}
+
+// A carried bundle keeps its upstream's chain order, which may list an
+// intermediate first: the fingerprint is of the self-signed root wherever it
+// sits in the chain.
+func TestTrustBundleSummaryFingerprintsTheSelfSignedRootInAnyChainOrder(t *testing.T) {
+	r := publicGoodRoots(t)[0]
+	if len(r.FulcioCA) < 2 {
+		t.Fatalf("the fixture's first root has %d certificates; the test needs a chain", len(r.FulcioCA))
+	}
+	r.FulcioCA = append(slices.Clone(r.FulcioCA[1:]), r.FulcioCA[0])
+	got, err := trustBundleSet{roots: []schema.SigstoreRoot{r}}.summary(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Roots[0].FulcioRootSHA256 != publicGoodFulcioRoot2022 {
+		t.Fatalf("fingerprint = %s, want the self-signed root %s", got.Roots[0].FulcioRootSHA256, publicGoodFulcioRoot2022)
 	}
 }

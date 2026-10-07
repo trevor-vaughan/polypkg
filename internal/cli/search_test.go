@@ -71,9 +71,7 @@ var _ = Describe("filterNames", func() {
 
 var _ = Describe("search command argument validation", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", dir+"/data")
-		GinkgoT().Setenv("XDG_STATE_HOME", dir+"/state")
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("returns CLIError when no search term is supplied", func() {
@@ -245,10 +243,7 @@ func searchLockEnv(out *bytes.Buffer) (cmd *cobra.Command, scope, stateHome stri
 	Expect(err).NotTo(HaveOccurred())
 	publicDir := filepath.Join(root, "public")
 
-	env := GinkgoT().TempDir()
-	GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(env, "data"))
-	GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(env, "state"))
-	GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(env, "config"))
+	env := sandboxUserEnv(GinkgoTB())
 
 	profilePath := filepath.Join(env, "profile.yaml")
 	Expect(os.WriteFile(profilePath, []byte(

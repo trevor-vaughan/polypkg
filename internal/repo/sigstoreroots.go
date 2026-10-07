@@ -37,10 +37,11 @@ const sigstoreRootsHint = "each sigstore_roots entry in polypkg-repo.yaml must n
 // one-window-per-root model polypkg mirrors; the CA window still bounds which
 // certificates verify.
 //
-// Roots are returned newest CA first. trust.SelectSigstoreRoot picks the first
-// root whose window contains a bundle's integrated time, and where CA windows
-// overlap (a CA rotation) a bundle signed during the overlap is far more likely
-// to chain to the newer CA.
+// Roots are returned newest CA first. Consumers try every root whose window
+// contains a bundle's integrated time (trust.SelectSigstoreRoots), in this
+// order, so the order decides only which CA is tried first: where CA windows
+// overlap (a CA rotation), a bundle signed during the overlap most likely
+// chains to the newer CA.
 //
 // Every converted root is loaded through attest.SigstoreTrustedMaterial before
 // it is returned, so a root consumers could not load fails the build here

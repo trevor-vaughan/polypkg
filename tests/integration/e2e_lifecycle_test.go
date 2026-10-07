@@ -72,7 +72,7 @@ var _ = Describe("fresh UX lifecycle journey", Ordered, func() {
 	})
 
 	It("step 1: init writes a profile carrying the remote source", func() {
-		out, err := runCmd("init", "--source-url", srvURL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srvURL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
 		Expect(out).To(ContainSubstring("wrote "))
 		raw, rerr := os.ReadFile(profile)

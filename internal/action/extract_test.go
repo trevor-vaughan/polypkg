@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -475,6 +476,71 @@ var _ = Describe("Extract", func() {
 		Entry("FIFO", extractMember{name: "app-1.0/fifo", typeflag: tar.TypeFifo, mode: 0o644}),
 		Entry("character device", extractMember{name: "app-1.0/null", typeflag: tar.TypeChar, mode: 0o644}),
 		Entry("duplicate member", extractMember{name: "app-1.0/bin/app", typeflag: tar.TypeReg, mode: 0o755, body: "second"}),
+	)
+})
+
+// The Creates value pkg lint reads is a claim about apply: extract can
+// create its dest below a CreatesPath placement and cannot below a
+// CreatesLeaf one. Each entry runs a creating action at $ACTIVE/hello/opt,
+// then extracts into $ACTIVE/hello/opt/tool, and checks the outcome against
+// the registry's declaration for that param. An earlier extract is left out:
+// whether a later dest below it exists depends on the archive's members.
+var _ = Describe("Extract below an earlier action's placement", func() {
+	createsOf := func(action, param string) Creation {
+		for _, p := range Registry[action].Params {
+			if p.Name == param {
+				return p.Creates
+			}
+		}
+		Fail(fmt.Sprintf("action %q declares no param %q", action, param))
+		return CreatesNothing
+	}
+
+	DescribeTable("succeeds exactly when the registry declares the placement CreatesPath",
+		func(action, param string, params func(scope Scope, at string) map[string]any) {
+			scope, src := extractFixture(extractTarGz(releaseMembers...))
+			scope.StateRoot = filepath.Join(filepath.Dir(scope.ActiveRoot), "state")
+			content := filepath.Join(scope.PackageRoot, "content")
+			Expect(os.WriteFile(filepath.Join(content, "app.conf"), []byte("key = value\n"), 0o644)).To(Succeed())
+			at := filepath.Join(scope.ActiveRoot, "hello", "opt")
+			inv := Invocation{Action: action, PackageName: "hello", Phase: PhasePostPlace, Params: params(scope, at)}
+			_, err := Registry[action].Handler(inv, scope)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = Extract(extractInv(src, filepath.Join(at, "tool"), nil), scope)
+			switch createsOf(action, param) {
+			case CreatesPath:
+				Expect(err).NotTo(HaveOccurred())
+			case CreatesLeaf:
+				// A regular file stops the walk with ENOTDIR; a link out of the
+				// package directory is refused by the confined root.
+				Expect(err).To(MatchError(Or(ContainSubstring("not a directory"), ContainSubstring("path escapes from parent"))))
+			default:
+				Fail(fmt.Sprintf("%s.%s creates a path but declares CreatesNothing", action, param))
+			}
+		},
+		Entry("a dir", "dir", "path", func(_ Scope, at string) map[string]any {
+			return map[string]any{"path": at}
+		}),
+		Entry("a symlink to a directory inside the package's directory", "symlink", "dest", func(scope Scope, at string) map[string]any {
+			Expect(os.MkdirAll(filepath.Join(scope.ActiveRoot, "hello", "real"), 0o755)).To(Succeed())
+			return map[string]any{"src": "real", "dest": at}
+		}),
+		Entry("an install that copies a file", "install", "dest", func(scope Scope, at string) map[string]any {
+			return map[string]any{"src": filepath.Join(scope.PackageRoot, "content", "app.conf"), "dest": at}
+		}),
+		Entry("an install that hardlinks a file", "install", "dest", func(scope Scope, at string) map[string]any {
+			return map[string]any{"src": filepath.Join(scope.PackageRoot, "content", "app.conf"), "dest": at, "policy": "hardlink"}
+		}),
+		Entry("an install that links a file", "install", "dest", func(scope Scope, at string) map[string]any {
+			return map[string]any{"src": filepath.Join(scope.PackageRoot, "content", "app.conf"), "dest": at, "policy": "symlink"}
+		}),
+		Entry("a config file", "config", "dest", func(scope Scope, at string) map[string]any {
+			return map[string]any{"src": filepath.Join(scope.PackageRoot, "content", "app.conf"), "dest": at}
+		}),
+		Entry("a state link", "state", "path", func(_ Scope, at string) map[string]any {
+			return map[string]any{"path": at}
+		}),
 	)
 })
 

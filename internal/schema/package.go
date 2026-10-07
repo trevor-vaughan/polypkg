@@ -161,7 +161,7 @@ func parsePackageYAML(data []byte) (*Package, error) {
 				// JSONC path's empty-input handling).
 				p = Package{}
 			} else {
-				return nil, fmt.Errorf("yaml decode: %w", err)
+				return nil, fmt.Errorf("yaml decode: %w", plainYAMLDecodeError(err))
 			}
 		}
 	}

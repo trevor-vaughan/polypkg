@@ -64,7 +64,7 @@ Two more recordings sit with the docs they belong to: [publishing a repository](
 - [Install](#install) — two paths; there is no tagged release yet
 - [Quickstart](#quickstart) — create a repository, import a tool from GitHub, install it; then `search`, `upgrade`, `rollback`
 - [Commands](#commands) — the full command reference · [Exit codes](#exit-codes)
-- [Scripting](#scripting) — which commands emit which JSON schema
+- [Scripting](#scripting) — which commands emit which JSON schema · [JSON output reference](docs/json-output.md)
 - [Environment](#environment) — `NO_COLOR`, `POLYPKG_*`, and the `XDG_*` directories
 - [Glossary](#glossary) — profile, generation, drift, scope, substrate, bridge
 - [How it works](#how-it-works-the-declarative-core) — profile format, weak dependencies, multiple sources
@@ -94,7 +94,7 @@ task build    # produces bin/polypkg
 task install  # copies it to ~/.local/bin/polypkg
 ```
 
-`task install` runs `build` first, then uses the system `install(1)` to place the binary at `~/.local/bin/polypkg` (mode 0755). Make sure `~/.local/bin` is on your `$PATH`.
+`task install` runs `build` first, then uses the system `install(1)` to place the binary at `~/.local/bin/polypkg` (mode 0755), creating `~/.local/bin` if it does not exist. Make sure `~/.local/bin` is on your `$PATH`.
 
 Run `task --list` to see all available targets.
 
@@ -151,7 +151,7 @@ polypkg repo add --manifest ./myrepo/polypkg-repo.yaml ./imports/gh/*/*
 
 # 4. Point your profile at the repository and install.
 polypkg init --source-url "$PWD/myrepo/public" \
-  --trust-root-file ./myrepo/public/trust_root.pub --source-name myrepo
+  --trust-root ./myrepo/public/trust_root.pub --source-name myrepo
 polypkg install gh
 ~/.local/bin/gh --version
 polypkg status -vv           # gh is tagged [attested] [carried: verified-offline]
@@ -178,10 +178,10 @@ polypkg remove <name>        # remove it from the profile and apply
 polypkg rollback             # revert to the previous generation
 ```
 
-**`polypkg init`**: writes a profile at the scope's default location (`~/.config/polypkg/profile.yaml` for user scope). Without `--source-url` and `--trust-root-file` it presents an interactive wizard on a TTY. For non-interactive or CI use:
+**`polypkg init`**: writes a profile at the scope's default location (`~/.config/polypkg/profile.yaml` for user scope). Without `--source-url` and `--trust-root` it presents an interactive wizard on a TTY. For non-interactive or CI use:
 
 ```
-polypkg init --source-url <URL> --trust-root-file <path>
+polypkg init --source-url <URL> --trust-root <path>
 ```
 
 A **trust root** is the repository's [minisign](https://jedisct1.github.io/minisign/) public key — a small `.pub` text file, published by whoever runs the repository, that every signature from that repository is checked against. minisign is a compact Ed25519 signing tool; the `.pub` file is the only part you need. polypkg calls this the trust root everywhere, and stores it in the profile as `trust_root`.
@@ -193,12 +193,12 @@ under a different name, pass `--source-name <name>` to match it — each source'
 name must equal the name embedded in its signed trust document, and a mismatch
 is refused at fetch time (with a hint naming the correct source).
 
-**Careful: `init` and `source add` spell the same two flags differently.** Copying a flag from one command into the other fails with `unknown flag`.
+**Careful: `init` and `source add` spell the repository URL flag differently** (`--source-url` and `--url`). Copying it from one command into the other fails with `unknown flag`. The trust-root flags are the same on both.
 
 | Concept | `polypkg init` | `polypkg source add` |
 |---|---|---|
 | repository URL | `--source-url` | `--url` |
-| trust root from a local file | `--trust-root-file` | `--trust-root` |
+| trust root from a local file | `--trust-root` | `--trust-root` |
 | trust root downloaded from a URL | `--trust-root-url` | `--trust-root-url` |
 | confirm a downloaded key without a prompt | `--trust-root-fingerprint <key id>` | `--trust-root-fingerprint <key id>` |
 
@@ -217,75 +217,101 @@ mismatch is refused. With a local file the fingerprint is optional and is checke
 
 **`polypkg remove <name>`**: removes the package from the profile and applies. All-or-nothing: if any named package is absent from the profile, nothing is written.
 
-**`polypkg rollback`**: activates the newest complete generation older than the current one. A generation that an interrupted `apply` left incomplete is skipped, and `--to <N>` refuses one. `polypkg status -v` marks such generations `[incomplete]`, and `gc` removes them. A generation whose manifest is damaged (possible corruption or tampering) is also skipped and refused; `status -v` marks it `[damaged]`, and `gc` keeps it for you to inspect. Pass `--to <N>` to target a specific generation number. Like `apply`, `rollback` fails immediately if another polypkg command holds the lock.
+**`polypkg rollback`**: activates the newest complete generation older than the current one. A generation that an interrupted `apply` left incomplete is skipped, and `--to <N>` refuses one. `polypkg status -v` marks such generations `[incomplete]`, and `gc` removes them. A generation whose manifest is damaged (possible corruption or tampering) is also skipped and refused; `status -v` marks it `[damaged]`, and `gc` keeps it for you to inspect. Pass `--to <N>` to target a specific generation number. `rollback` does not edit your profile: if the profile still asks for the state you rolled back from, `plan` reports it as pending and the next `apply` re-applies it, so edit the profile to keep the rolled-back state. Like `apply`, `rollback` fails immediately if another polypkg command holds the lock.
 
 ## Commands
 
-### Profile-editing
+Grouped and ordered as `polypkg --help` lists them. Each group heading below is
+the `--help` group title.
+
+### Getting started
 
 | Command | Description |
 |---|---|
-| `init` | Create a profile at the scope's default location (wizard or `--source-url`/`--trust-root-file` flags). |
-| `install` (alias: `add`) | Add packages to the profile and apply. |
-| `remove` (aliases: `rm`, `uninstall`) | Remove packages from the profile and apply. |
-| `upgrade` (alias: `update`) | Re-apply; bump exact pins to newest with named args. |
+| `init` | Create a profile at the scope's default location (wizard or `--source-url`/`--trust-root` flags). |
 
-### Inspection
+### Packages (find & change what's installed)
 
 | Command | Description |
 |---|---|
 | `search` | Search configured sources for packages matching a term. |
-| `list` (alias: `ls`) | List installed packages in the current generation. |
 | `info` (alias: `show`) | Show installed and available versions for a package, the platform of the artifact the newest would install (`any` when platform-agnostic), the other platforms that version is published for, and the installed package's platform when it has one. For a package published only for other platforms, a note names where it is published. |
-| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). `-vv` lists the installed packages, tagging each per-platform package with `[platform: <os>/<arch>]`. Exit 3 = an installed package's builder key has been revoked; exit 5 = an installed package carries a revoked attestation; exit 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4). |
-| `plan` | Compute the apply plan and report what would change. Exit 2 = changes pending, 0 = nothing to do. |
+| `list` (alias: `ls`) | List installed packages in the current generation. |
+| `install` (alias: `add`) | Add packages to the profile and apply. |
+| `remove` (aliases: `rm`, `uninstall`) | Remove packages from the profile and apply. |
+| `upgrade` (alias: `update`) | Re-apply; bump exact pins to newest with named args. |
 
-### Audit
-
-| Command | Description |
-|---|---|
-| `attestation report` | Aggregate recorded provenance for every installed package across all retained generations into a `polypkg.attestation-report/v1` document. |
-
-### Lifecycle
+### Profile & apply (declarative state)
 
 | Command | Description |
 |---|---|
 | `apply` | Apply the profile, creating a new generation. |
-| `rollback` | Activate the newest complete generation before the current one (or `--to <N>` for a specific one). |
-| `gc` | Remove old generations from the store (`--count`, `--age` flags) and any an interrupted apply left incomplete; never removes a damaged one, but names it; then prunes the extracted packages and cached downloads that no retained or pinned generation records (an attestation a generation does not record may be pruned and is re-downloaded and re-verified when next needed), listing what it removed (the first 20 of each kind in text; all of them under `--format json`). |
-| `generation pin` / `generation unpin` | Exempt or un-exempt a generation from automatic GC. |
+| `plan` | Compute the apply plan and report what would change. Exit 2 = changes pending, 0 = nothing to do. |
+| `accept-drift` | Adopt the current on-disk state of a managed path as the new baseline. |
 
-### Integration
+### Generations (history, rollback, cleanup)
+
+| Command | Description |
+|---|---|
+| `status` | Show retained generations, drift, and GC preview (`-v`, `-vv`, `-vvv` for more detail). `-vv` lists the installed packages, tagging each per-platform package with `[platform: <os>/<arch>]`. Exit 3 = an installed package's builder key has been revoked; exit 5 = an installed package carries a revoked attestation; exit 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4). |
+| `rollback` | Activate the newest complete generation before the current one (or `--to <N>` for a specific one). |
+| `generation pin` / `generation unpin` | Exempt or un-exempt a generation from automatic GC. |
+| `gc` | Remove old generations from the store (`--count`, `--age` flags) and any an interrupted apply left incomplete; never removes a damaged one, but names it; then prunes the extracted packages and cached downloads that no retained or pinned generation records (an attestation a generation does not record may be pruned and is re-downloaded and re-verified when next needed), listing what it removed (the first 20 of each kind in text; all of them under `--format json`). |
+
+### Integration (expose & arbitrate commands)
 
 | Command | Description |
 |---|---|
 | `link` | Symlink the current generation's commands into `~/.local/bin` — the [bridge](#glossary). |
 | `unlink` | Remove all polypkg-created command links from `~/.local/bin`. |
 | `alternatives` | Inspect and override which package provides a shared command name. |
-| `completion` | Generate shell autocompletion scripts (bash, fish, zsh, powershell). |
+
+### Sources & repositories
+
+| Command | Description |
+|---|---|
+| `source` | Manage package sources and their trust roots: `source list`, `source add`, `source remove`, `source set-trust-root`. See [Managing sources](#managing-sources). |
+| `repo` | Build and sign a repository clients install from: `repo init`, `repo add`, `repo remove`, `repo build`, `repo export-bundle`, `repo status`, `repo key show`, `repo revoke`. See [Publishing a repository](#publishing-a-repository). |
+
+### Offline mirrors
+
+| Command | Description |
+|---|---|
+| `mirror` | Offline mirror bundles: `mirror pull` fetches an upstream repository and re-publishes it locally; `mirror verify` checks a bundle's signature, freshness, and completeness. See [Mirroring a repository](docs/mirroring.md). |
+
+### Audit & evidence
+
+| Command | Description |
+|---|---|
+| `attestation report` | Aggregate recorded provenance for every installed package across all retained generations into a `polypkg.attestation-report/v1` document. |
+
+### Author packages
+
+| Command | Description |
+|---|---|
+| `pkg` | Author a package source: `pkg init`, `pkg import` (one source per platform from a GitHub release), `pkg lint`, `pkg build`, `pkg explain`. See [Authoring a package](#authoring-a-package). |
 
 ### Maintenance
 
 | Command | Description |
 |---|---|
 | `config reset` | Queue a config file for restore to package default on next apply. |
-| `accept-drift` | Adopt the current on-disk state of a managed path as the new baseline. |
 | `purge` | Delete a package's persistent state directory (destructive, irreversible; remove the package first). |
 
-### Sources, publishing, and mirrors
+### Additional commands
 
-These four are top-level command groups in `polypkg --help`, each with its own subcommands.
+`--help` lists these two under cobra's own "Additional Commands" heading.
 
 | Command | Description |
 |---|---|
-| `source` | Manage package sources and their trust roots: `source list`, `source add`, `source remove`. See [Managing sources](#managing-sources). |
-| `repo` | Build and sign a repository clients install from: `repo init`, `repo add`, `repo remove`, `repo build`, `repo export-bundle`, `repo status`, `repo key show`, `repo revoke`. See [Publishing a repository](#publishing-a-repository). |
-| `pkg` | Author a package source: `pkg init`, `pkg import` (one source per platform from a GitHub release), `pkg lint`, `pkg build`, `pkg explain`. See [Authoring a package](#authoring-a-package). |
-| `mirror` | Offline mirror bundles: `mirror pull` fetches an upstream repository and re-publishes it locally; `mirror verify` checks a bundle's signature, freshness, and completeness. See [Mirroring a repository](docs/mirroring.md). |
+| `help` | Show help for any command (`polypkg help <command>`, same as `<command> --help`). |
+| `completion` | Generate shell autocompletion scripts (bash, fish, zsh, powershell). |
 
 ## Exit codes
 
 `plan`: 0 = no changes pending, 2 = changes pending, 1 = error.
+
+`repo status`: 0 = the published repository is up to date, 2 = a `repo build` is pending, 1 = error. Under `--format json` the envelope reports `"status": "ok"` for both 0 and 2; `data.pending` says which, and `data.reason` says why.
 
 `status`: 0 = ok, 1 = error, 3 = an installed package's builder key has been revoked, 5 = an installed package carries a revoked attestation, 4 = an installed source's revocation list is expired and not under a grace window (precedence 3 > 5 > 4).
 
@@ -307,11 +333,13 @@ help text to stdout and exit 0.
 
 ## Scripting
 
-`--format json` is a persistent flag on the root command, so every invocation accepts it. What it *produces* falls into three groups.
+`--format json` is a persistent flag on the root command, so every invocation accepts it. What it *produces* falls into three groups. [JSON output for scripts](docs/json-output.md) is the full reference: every command's `data` fields, the schema files, and the stability policy (within one schema version, fields are only added).
 
-**Envelope commands** emit a versioned `polypkg.cli-result/v2` object: `schema`, `command`, `status`, and `data` on success; `schema`, `command`, `status: "error"`, and `error` on failure. Error objects carry a `hint` field when a suggested fix is available.
+**Envelope commands** emit a versioned `polypkg.cli-result/v2` object: `schema`, `command`, `status`, and `data` on success; `schema`, `command`, `status: "error"`, and `error` on failure. Error objects carry a `hint` field when a suggested fix is available. Every envelope command below includes `data` on success, but the schema marks it optional, so treat a missing `data` as `{}`.
 
-`accept-drift`, `alternatives auto`, `alternatives list`, `alternatives set`, `apply`, `config reset`, `gc`, `generation pin`, `generation unpin`, `info`, `init`, `install`, `link`, `list`, `mirror pull`, `mirror verify`, `pkg explain`, `pkg import`, `purge`, `remove`, `repo add`, `repo build`, `repo export-bundle`, `repo init`, `repo key show`, `repo remove`, `repo revoke`, `repo status`, `rollback`, `search`, `source add`, `source list`, `source remove`, `unlink`, `upgrade`.
+`accept-drift`, `alternatives auto`, `alternatives list`, `alternatives set`, `apply`, `config reset`, `gc`, `generation pin`, `generation unpin`, `info`, `init`, `install`, `link`, `list`, `mirror pull`, `mirror verify`, `pkg explain`, `pkg import`, `purge`, `remove`, `repo add`, `repo build`, `repo export-bundle`, `repo init`, `repo key show`, `repo remove`, `repo revoke`, `repo status`, `rollback`, `search`, `source add`, `source list`, `source remove`, `source set-trust-root`, `unlink`, `upgrade`.
+
+An envelope's `command` is the command path without `polypkg`, except for `generation pin` and `generation unpin`, which report `"command": "pin"` and `"command": "unpin"`, and an unknown command, which reports `"command": "polypkg"`. Put `--format json` before any other flag: parsing stops at an unknown flag, so a `--format` after it is never read and that error prints no envelope.
 
 **Own-schema commands** emit a purpose-built document instead of the envelope. An error that aborts the command is still reported as a `cli-result/v2` error envelope.
 
@@ -323,7 +351,7 @@ help text to stdout and exit 0.
 
 `status -v`/`-vv`/`-vvv` do not change the JSON: the full `status/v1` document is always emitted and the verbosity flags are ignored.
 
-**Commands that ignore the flag.** `pkg lint`, `pkg build`, and `pkg init` always print human-readable text; `--format json` is accepted and has no effect. `pkg lint` has its own machine format instead — `--sarif` emits canonical SARIF 2.1.0, and `-o <file>` writes it to a file. `completion` writes a shell script.
+**Commands that print text on success.** `pkg lint`, `pkg build`, and `pkg init` print human-readable text on success; under `--format json` a failure prints the error envelope like any other command, and the lint report moves to stderr so stdout holds only JSON. `pkg lint` has its own machine format instead — `--sarif` emits canonical SARIF 2.1.0, and `-o <file>` writes it to a file. `completion` writes a shell script.
 
 A command group invoked with no subcommand honors the flag: stdout gets the
 error envelope, stderr still gets the `error:`/`hint:` pair a human is reading.
@@ -333,7 +361,7 @@ $ polypkg repo --format json
 {"schema":"polypkg.cli-result/v2","command":"repo","status":"error","error":"polypkg repo requires a subcommand","hint":"run `polypkg repo --help` to list subcommands"}
 ```
 
-So a script cannot assume one uniform success predicate. Branch on `.schema`, not on `.status`:
+So a script cannot assume one uniform success predicate. Check `.schema` first to learn which document it got, then branch on the exit code and, for an envelope, `.status`; never match on the `error` or `hint` prose, which is reworded freely. [Reading a result](docs/json-output.md#reading-a-result) has the details:
 
 ```
 polypkg --format json plan profile.yaml   # polypkg.plan/v1; exit 2 when changes are pending
@@ -341,19 +369,8 @@ polypkg --format json list                # polypkg.cli-result/v2
 polypkg --format json status              # polypkg.status/v1; exit 3/4/5 carry meaning
 ```
 
-Platform fields in the envelope data:
-
-- `search`: each entry in `matches` has `versions` (installable on this machine)
-  and `unavailable_versions` (published only for other platforms). `versions`
-  can be empty when `unavailable_versions` is not, for a package published only
-  for other platforms, so check it before installing.
-- `info`: `platform` is the newest candidate's platform (`any` when
-  platform-agnostic), `other_platforms` the other platforms that version is
-  published for, and `installed_platform` the installed package's (`""` when not
-  installed). For a package published only for other platforms, `platform` is
-  `""`, `other_platforms` is non-empty, and `note` carries the reason (`<name>
-  <version> is published for <platforms>; this host is <os>/<arch>`).
-- `list`: each package carries `platform` (`any` when platform-agnostic).
+The platform fields of `search`, `info`, and `list`, like every other
+command's `data`, are described in [JSON output for scripts](docs/json-output.md#per-command-data).
 
 ## Environment
 
@@ -372,7 +389,7 @@ elsewhere in this README, and `pkg import` reads `GITHUB_TOKEN`/`GH_TOKEN`.
 | `POLYPKG_DESKTOP_ENABLED` | `false` stops polypkg writing `.desktop` entries into the applications directory. | `true` |
 | `POLYPKG_MIME_ENABLED` | `false` stops polypkg writing into the MIME packages directory. | `true` |
 | `POLYPKG_REVOCATION_NEAR_EXPIRY_THRESHOLD` | How early a revocation list counts as "expiring soon". Same forms as other age settings (`14d`, `2w`, `12h`). | `14d` |
-| `POLYPKG_REPO_KEY_PASSWORD` | Publisher-side only: unlocks the repository signing key for `repo build`, `repo revoke`, and `repo key show`. `--key-password-file <path>` takes precedence. See [docs/publishing.md](docs/publishing.md). | unset |
+| `POLYPKG_REPO_KEY_PASSWORD` | Publisher-side only: unlocks the repository signing key for every `repo` command except `repo status` (`init`, `add`, `remove`, `build`, `export-bundle`, `revoke`, `key show`) and for `mirror pull`. `--key-password-file <path>` takes precedence. See [docs/publishing.md](docs/publishing.md). | unset |
 | `GITHUB_TOKEN` | `pkg import` only: a GitHub token sent to the `--api-url` host, never to asset or attestation downloads, to raise GitHub's API rate limit. Never sent over plain http except to a loopback host, and never printed. | unset |
 | `GH_TOKEN` | Read by `pkg import` when `GITHUB_TOKEN` is unset (the variable `gh` uses). | unset |
 
@@ -608,13 +625,13 @@ polypkg source set-trust-root <name> --trust-root <path-to-.pub> --trust-root-fi
 polypkg source remove <name>
 ```
 
-`add` validates the URL and trust root before writing, and refuses a name that is already in the profile. The trust root can be a local `.pub` file (`--trust-root`) or downloaded from a URL (`--trust-root-url`: `https://`, `file://`, or an absolute path; plain `http://` is refused) and confirmed the first time you see it — trust on first use, or TOFU. On a TTY that confirmation is a prompt showing the key id; without one, pass `--trust-root-fingerprint <key id>` with the id the publisher gets from `polypkg repo key show`. With `--trust-root` the fingerprint is optional, and checked when given.
+`add` checks the source before writing. It fetches the source's signed trust document and refuses a source whose trust document is not signed by the trust root you gave, or names a different source (the hint names the right one); it also refuses an unsupported `--type` and a name that is already in the profile. When the check cannot complete (the source cannot be reached within 30 seconds, serves no trust document, or its trust document has expired), `add` prints a `warning:` naming why, adds the source anyway, and `polypkg plan` reports the problem until it is fixed. The trust root can be a local `.pub` file (`--trust-root`) or downloaded from a URL (`--trust-root-url`: `https://`, `file://`, or an absolute path; plain `http://` is refused) and confirmed the first time you see it — trust on first use, or TOFU. On a TTY that confirmation is a prompt showing the key id; without one, pass `--trust-root-fingerprint <key id>` with the id the publisher gets from `polypkg repo key show`. With `--trust-root` the fingerprint is optional, and checked when given.
 
 `remove` blocks removal of the last source because a profile with no sources is invalid; it also deletes the source's managed key copy, `<config>/trust/<name>.pub`, unless another source references it. Every route (`--trust-root`, `--trust-root-url`, `init`) pins that copy; the operator's original file is never touched, and neither is a hand-written `trust_root` outside `<config>/trust/`. Each named source must match the name embedded in its signed trust document.
 
 `set-trust-root` is the only way to change the key a source is pinned to. It shows the pinned and the new key ids and needs the same confirmation as `add` (a prompt on a TTY, otherwise `--trust-root-fingerprint`, which must match the new key). It saves the new key as `<config>/trust/<name>.pub`, keeps the source's URL and its place in the order, and clears the source's anti-rollback memory so that a repository rebuilt with restarted serials is accepted. It works on a profile with a single source. Supplying the key that is already pinned changes nothing, unless you add `--reset-state`: that clears the anti-rollback memory anyway, for a repository that was re-created with the same key and restarted its serials. Because it lowers rollback protection until the next fetch, `--reset-state` requires `--trust-root-fingerprint`.
 
-Remember that `source add` spells its flags `--url` and `--trust-root`, while `init` spells the same two `--source-url` and `--trust-root-file`. See the [table in the Quickstart](#quickstart).
+Remember that `source add` spells its URL flag `--url`, while `init` spells it `--source-url`. See the [table in the Quickstart](#quickstart).
 
 If a source is legitimately rebuilt from scratch and its serials reset, polypkg's
 anti-rollback memory refuses the fetch until the source is re-pinned with

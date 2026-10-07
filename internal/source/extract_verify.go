@@ -133,8 +133,7 @@ func archiveEntries(r io.Reader, lim archive.Limits) (map[string]archiveEntry, e
 			}
 			totalBytes += n
 			// Only the permission bits can be on disk: extraction refuses a
-			// mode with setuid/setgid/sticky (os.Root's OpenFile fails with
-			// "unsupported file mode"), and it always adds owner-read.
+			// mode with setuid/setgid/sticky, and it always adds owner-read.
 			e := archiveEntry{typeflag: tar.TypeReg, mode: os.FileMode(hdr.Mode&0o777) | 0o400, size: n}
 			// A duplicate regular entry is rewritten through O_TRUNC, which
 			// keeps the existing file's mode: the first entry's mode is the
