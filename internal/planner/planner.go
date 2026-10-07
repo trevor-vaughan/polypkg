@@ -80,6 +80,17 @@ type Options struct {
 	// RevocationNearExpiry is the window before a revocation list's expiry within
 	// which fetch emits a proactive near-expiry warning. Zero disables the warning.
 	RevocationNearExpiry time.Duration
+	// SkipMultiResultProjection leaves multi-result actions (extract) out of
+	// Result.Ownership instead of running their handlers to project them. Set
+	// it only when the caller never reads Result.Ownership: apply records the
+	// authoritative ownership from the runner, and projecting would unpack
+	// every archive an extra time.
+	SkipMultiResultProjection bool
+	// DirMode is the directory mode apply hands the runner's action scope for
+	// this scope. A multi-result action (extract) records each directory's
+	// mode, so its projection must use the same value or a converged system
+	// reports every directory as changed. Zero means the action default, 0o700.
+	DirMode os.FileMode
 }
 
 // progress calls opts.Progress when it is non-nil. Defined as a method so
@@ -94,7 +105,7 @@ func (o Options) progress(stage, detail string) {
 type Result struct {
 	Manifest  *schema.Manifest
 	Entries   []runner.RunEntry
-	Ownership *schema.Ownership // projected; Stat is zero. Target-carrying actions expand $ACTIVE against Options.BaselineActiveRoot (literal "$ACTIVE" when unset)
+	Ownership *schema.Ownership // projected; Stat is zero. Target-carrying actions expand $ACTIVE against Options.BaselineActiveRoot (literal "$ACTIVE" when unset). Omits multi-result actions under Options.SkipMultiResultProjection
 	Skipped   []resolver.SkippedRecommend
 	Suggests  []resolver.Suggestion
 	// AttestationWarnings lists packages installed unattested under the warn
@@ -410,7 +421,7 @@ func Plan(ctx context.Context, p *schema.Profile, opts Options) (*Result, error)
 		activeRoot = "$ACTIVE"
 	}
 	opts.progress("projecting", "")
-	own, err := ProjectOwnership(entries, activeRoot, ev, opts.Scope)
+	own, err := projectOwnership(entries, activeRoot, ev, opts)
 	if err != nil {
 		return nil, fmt.Errorf("project ownership: %w", err)
 	}

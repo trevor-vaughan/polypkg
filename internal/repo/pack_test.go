@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 )
 
 func writePkgSrc(t *testing.T, dir string) {
@@ -117,5 +120,31 @@ func TestPackArtifactRejectsSymlinkInContent(t *testing.T) {
 	_, _, err := PackArtifact(dir)
 	if err == nil {
 		t.Fatal("expected error for symlink in content/, got nil")
+	}
+}
+
+func TestPackArtifactRefusesAMemberOverTheLimit(t *testing.T) {
+	dir := t.TempDir()
+	writePkgSrc(t, dir)
+	big := filepath.Join(dir, "content", "big.tar.gz")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Sparse: Truncate grows the file without writing 1 GiB.
+	if err := os.Truncate(big, archive.DefaultLimits().MaxFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = PackArtifact(dir)
+	if err == nil {
+		t.Fatal("PackArtifact packed a member no install could unpack")
+	}
+	for _, want := range []string{"content/big.tar.gz", "1 GiB"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
 	}
 }

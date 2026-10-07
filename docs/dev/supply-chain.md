@@ -940,8 +940,9 @@ verifies, what it deliberately does not, and how it stages.
   - It is defense in depth mirroring the traversal rejection in `readTar`
     (`internal/mirror/verify.go`, the bundle reader), applied here to
     index-entry names instead of tar member names. The equivalent guard on the
-    consumer install path lives in `extractTarZst`
-    (`internal/source/extract.go`).
+    consumer install path lives in `archive.ExtractTar` (`internal/archive`),
+    which `source.ExtractTarZst` reaches through its unexported `extractTar`
+    helper.
 - **Native → carried-opaque re-classification on re-publish.**
   - A pull stages every attestation blob the upstream index references for a
     selected entry — the upstream's own native SARIF and polypkg-link

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 )
 
 // ErrExtractedTreeMismatch reports that a tree ExtractTarZst produced has been
@@ -48,12 +49,12 @@ func VerifyExtractedTarZst(r io.Reader, dest string) error {
 		return fmt.Errorf("zstd reader: %w", err)
 	}
 	defer dec.Close()
-	return verifyExtractedTar(dec, dest, defaultExtractLimits())
+	return verifyExtractedTar(dec, dest, archive.DefaultLimits())
 }
 
 // verifyExtractedTar is VerifyExtractedTarZst on an uncompressed tar stream,
 // split out like extractTar so the round trip can be fuzzed on raw tar bytes.
-func verifyExtractedTar(r io.Reader, dest string, lim extractLimits) error {
+func verifyExtractedTar(r io.Reader, dest string, lim archive.Limits) error {
 	want, err := archiveEntries(r, lim)
 	if err != nil {
 		return err
@@ -88,7 +89,7 @@ func verifyExtractedTar(r io.Reader, dest string, lim extractLimits) error {
 // archiveEntries reads the tar stream r and returns, per cleaned path, the
 // entry extraction materializes there. A later duplicate replaces an earlier
 // one, as extraction overwrites it; entry types extraction skips are omitted.
-func archiveEntries(r io.Reader, lim extractLimits) (map[string]archiveEntry, error) {
+func archiveEntries(r io.Reader, lim archive.Limits) (map[string]archiveEntry, error) {
 	tr := tar.NewReader(r)
 	want := map[string]archiveEntry{}
 	var totalBytes int64
@@ -102,8 +103,8 @@ func archiveEntries(r io.Reader, lim extractLimits) (map[string]archiveEntry, er
 			return nil, fmt.Errorf("tar next: %w", err)
 		}
 		entries++
-		if entries > lim.maxEntries {
-			return nil, fmt.Errorf("verification rejected: archive exceeds %d entries", lim.maxEntries)
+		if entries > lim.MaxEntries {
+			return nil, fmt.Errorf("verification rejected: archive exceeds %d entries", lim.MaxEntries)
 		}
 		name := filepath.Clean(hdr.Name)
 		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
@@ -119,11 +120,11 @@ func archiveEntries(r io.Reader, lim extractLimits) (map[string]archiveEntry, er
 		case tar.TypeDir:
 			want[name] = archiveEntry{typeflag: tar.TypeDir}
 		case tar.TypeReg:
-			if hdr.Size > lim.maxFileBytes {
-				return nil, fmt.Errorf("verification rejected: %s declares %d bytes, exceeds limit %d", hdr.Name, hdr.Size, lim.maxFileBytes)
+			if hdr.Size > lim.MaxFileBytes {
+				return nil, fmt.Errorf("verification rejected: %s declares %d bytes, exceeds limit %d", hdr.Name, hdr.Size, lim.MaxFileBytes)
 			}
-			if totalBytes+hdr.Size > lim.maxTotalBytes {
-				return nil, fmt.Errorf("verification rejected: total size would exceed limit %d", lim.maxTotalBytes)
+			if totalBytes+hdr.Size > lim.MaxTotalBytes {
+				return nil, fmt.Errorf("verification rejected: total size would exceed limit %d", lim.MaxTotalBytes)
 			}
 			h := sha256.New()
 			n, err := io.CopyN(h, tr, hdr.Size)
@@ -149,9 +150,9 @@ func archiveEntries(r io.Reader, lim extractLimits) (map[string]archiveEntry, er
 	}
 }
 
-// symlinkOnRoute mirrors extraction's refuseSymlinkRoute against the entries
-// read so far: it reports the first symlink among name's ancestors or name
-// itself.
+// symlinkOnRoute mirrors archive.ExtractTar's symlink-route refusal against
+// the entries read so far: it reports the first symlink among name's
+// ancestors or name itself.
 func symlinkOnRoute(want map[string]archiveEntry, name string) (string, bool) {
 	parts := strings.Split(name, string(filepath.Separator))
 	for i := range parts {

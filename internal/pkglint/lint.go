@@ -45,6 +45,7 @@ func Lint(dir string) (Result, error) {
 	res.Findings = append(res.Findings, checkIdentity(pkg, idx)...)
 	res.Findings = append(res.Findings, checkActionsAndParams(pkg, idx)...)
 	res.Findings = append(res.Findings, checkContent(pkg, idx, dir)...)
+	res.Findings = append(res.Findings, checkExtract(pkg, idx, dir)...)
 
 	// Sort deterministically by (line, ruleID, message) so human output and the
 	// later canonical SARIF are stable across runs.

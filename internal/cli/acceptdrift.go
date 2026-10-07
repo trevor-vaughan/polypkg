@@ -84,8 +84,8 @@ func runAcceptDriftInner(cmd *cobra.Command, requestedPaths []string, format For
 
 // writeAcceptedDrift validates each requested path against the prior ownership
 // index, captures the live state of each from activeRoot (including a fresh
-// content hash for install entries, so a content-drift refusal can be
-// accepted), and writes a merged polypkg.accepted-drift/v1 record at outPath.
+// content hash for install entries and extracted regular files, so a
+// content-drift refusal can be accepted), and writes a merged polypkg.accepted-drift/v1 record at outPath.
 // If outPath already exists for the same generation, its entries are merged
 // with the new ones; a stale (different generation) record is overwritten.
 func writeAcceptedDrift(outPath string, gen int, activeRoot string, prior *schema.Ownership, requestedPaths []string) error {
@@ -137,10 +137,11 @@ func writeAcceptedDrift(outPath string, gen int, activeRoot string, prior *schem
 		default: // regular
 			ap.Expected = schema.Expected{FileType: "regular", Mode: fmt.Sprintf("%#o", info.Mode().Perm())}
 		}
-		// For install entries, also capture the live content hash so a
-		// ReasonContent drift can be accepted. dir/symlink/perms actions do not
-		// drift on content, so they do not need it.
-		if owned.Action == "install" {
+		// For install entries and the regular files an extract placed, also
+		// capture the live content hash so a ReasonContent drift can be
+		// accepted. Directories, symlinks and perms entries do not drift on
+		// content, so they do not need it.
+		if owned.Action == "install" || (owned.Action == "extract" && fileType == "regular") {
 			hash, err := drift.HashLiveContent(root, p, fileType)
 			if err != nil {
 				return fmt.Errorf("hash %q: %w", p, err)

@@ -203,6 +203,8 @@ func inspectEntry(root *os.Root, e schema.OwnershipEntry) (*Entry, error) {
 		return inspectDir(e, info), nil
 	case "perms":
 		return inspectPerms(e, info), nil
+	case "extract":
+		return inspectExtract(root, e, info)
 	}
 	// Actions without a drift rule are not checked.
 	return nil, nil

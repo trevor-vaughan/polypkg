@@ -133,7 +133,8 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 	var appliedResets []string
 
 	// Pre-swap phases: a failure aborts the transaction.
-	for _, phase := range []string{"pre-place", "post-place", "pre-activate"} {
+	for _, p := range action.PreSwapPhases() {
+		phase := string(p)
 		for i, e := range entries {
 			r.opts.progress("placing", fmt.Sprintf("%s %d/%d", phase, i+1, len(entries)))
 			scope := action.Scope{
@@ -160,6 +161,7 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 			appliedResets = append(appliedResets, out.ResetPaths...)
 		}
 	}
+	SupersedeModes(own.Entries)
 
 	// Shared-path conflict check: runs after all pre-swap entries are assembled
 	// and before the irreversible commit/swap, so a refused apply leaves the
@@ -422,6 +424,11 @@ func (r *Runner) checkDrift(txID string) (*preApplyState, error) {
 		})
 		return nil, fmt.Errorf("load current ownership: %w", err)
 	}
+	// A generation committed before modes were superseded may still record
+	// an earlier action's stale mode for a path a later perms re-moded.
+	// Normalizing it here (idempotent for newer ones) keeps that first apply
+	// from being refused or re-healed.
+	SupersedeModes(own.Entries)
 	st := &preApplyState{
 		prior:           own,
 		liveRoot:        activeRoot,

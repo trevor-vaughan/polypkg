@@ -26,3 +26,5 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task fuzz FUZZTIME=180s
+      - run: task fuzz FUZZTARGET='^FuzzExtractTar$' FUZZPKG=./internal/archive/ FUZZTIME=180s
+      - run: task fuzz FUZZTARGET='^FuzzExtractArchive$' FUZZPKG=./internal/archive/ FUZZTIME=180s

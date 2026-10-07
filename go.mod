@@ -21,6 +21,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
+	github.com/ulikunitz/xz v0.5.17
 	go.starlark.net v0.0.0-20260522144826-ec58d4b459e2
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0

@@ -284,7 +284,7 @@ been modified on disk since it was installed:
 | `notify_preserve` | The drift is audited and the apply is not refused. This is what the `config` action selects for itself unless its `policy` is `replace`. |
 
 The `config`, `state`, and `unmanaged` actions choose their own drift policy, so
-a `drift:` you declare on one of those is ignored. On the other nine actions it
+a `drift:` you declare on one of those is ignored. On the other ten actions it
 takes effect as written.
 
 For `config` the split is one-sided: `policy: replace` gets `notify_heal`, and
@@ -311,6 +311,11 @@ it before touching the filesystem, and the error names the path and the mode.
 Lint cannot check a `mode` computed by `!starlark`, so `apply` is where that
 case is caught.
 
+A `perms` action can change the mode of a path an earlier action of the same
+package created, such as a `dir` or a file `extract` unpacked. Drift detection
+then checks that path against the mode of the last action that set it, and
+checks the earlier action only for the path's type and content.
+
 `install` with `policy: copy` creates the copy with the source file's read,
 write and execute bits, less the umask (`apply` uses `0022` in system scope),
 and never its setuid, setgid or sticky bits.
@@ -330,6 +335,94 @@ signed artifact and re-extracts a cache that was modified, so no policy lets an
 edit to the cache reach a new generation. Prefer `copy`. With `hardlink`, a
 `perms` action on the installed file also changes the cache's copy, and if it
 adds permission bits, every `apply` re-extracts the cache.
+
+#### Unpacking an archive: `extract`
+
+`extract` unpacks an archive shipped in `content/` into the package's
+directory when `polypkg apply` runs:
+
+```yaml
+actions:
+  - phase: post-place
+    action: extract
+    params:
+      src: $PKG/content/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz
+      dest: $ACTIVE/ripgrep/rg
+      strip_components: 1
+      include:
+        - rg
+        - doc/rg.1
+        - complete/*
+  - phase: post-place
+    action: path
+    params:
+      name: rg
+      source: $ACTIVE/ripgrep/rg/rg
+```
+
+| Param | Required | Meaning |
+| --- | --- | --- |
+| `src` | yes | The archive, under `$PKG/`. It must be a regular file, not a symlink and not under a symlinked directory: `repo build` refuses any symlink in `content/`, and `pkg lint` reports one (`PKG012`). It may be at most 1 GiB: every file in a package is limited to 1 GiB, so a larger archive could never install. |
+| `dest` | yes | The directory to unpack into, strictly below `$ACTIVE/<name>/`. It must not exist yet: `extract` creates it, along with any missing parent directories, and fails if an earlier action already placed something there. |
+| `strip_components` | no | An integer from `0` to `64` (the deepest member path an archive may hold), default `0`. Removes that many leading path segments from every member name, as `tar --strip-components` does. A member with too few segments is skipped; if that leaves no member at all, the apply fails. |
+| `include` | no | A list of `path.Match` patterns, default every member. A member is unpacked if a pattern matches its path after `strip_components`, or matches one of its parent directories. As in `path.Match`, `*` does not cross a `/`. A pattern that matches no member fails the apply, so a typo or a changed upstream layout is caught. It must be a literal list: `!starlark` computes a string, so `pkg lint` reports a computed `include` (`PKG010`). |
+
+polypkg recognizes the format from the file's first bytes, not from its
+name: `.tar.gz`, `.tar.zst`, `.tar.xz`, `.zip`, or an uncompressed `.tar`.
+A compressed file that does not hold a tar archive, such as a single
+gzip-compressed binary, is refused.
+
+Every unpacked file, directory and symlink is a real path in the
+generation, owned by the package and checked for drift: a file by its
+content hash and mode, a directory by its mode, a symlink by its target. A
+`drift:` on the action applies to each of them, and `status -vv` names the
+exact path that changed. Only what the archive placed is tracked: a file
+you add under `dest` later is not reported as drift, the same as a file
+added under a `dir`.
+
+An archive is untrusted input. `apply` refuses it, and places nothing from
+it, if:
+
+- any member name is empty, absolute, contains a `..` segment, a backslash
+  or a NUL byte, has a `:` in its first segment, is longer than 4096 bytes,
+  or has more than 64 segments;
+- a member it would unpack is a hard link, a device, a FIFO, a socket, or an
+  entry type polypkg does not know;
+- a symlink's target is empty, absolute, leads outside `dest`, or climbs
+  back out of a directory with `..` (`sub/../x`);
+- a member would be written through a symlink the archive placed;
+- two members have the same path after `strip_components`;
+- a file is larger than 1 GiB, the unpacked files total more than 2 GiB, or
+  the archive has more than 100 000 entries (members, plus the directories
+  created to hold them). Sizes are counted from the data actually unpacked,
+  not from the sizes the archive declares;
+- it is a `.tar.zst` that needs a decompression window larger than 64 MiB.
+
+File modes are normalized: a file with any execute bit becomes `0755`, every
+other file `0644`. Setuid, setgid, sticky, and group or other write bits are
+never applied. Directories get the mode polypkg uses for every directory it
+creates in that scope. Owners and modification times recorded in the archive
+are ignored.
+
+Like every action that places files, `extract` runs in `pre-place`,
+`post-place`, or `pre-activate`.
+
+**`extract` or `install`?** Use `install` for files you put in `content/`
+yourself: a binary you built, a script, a config file. Use `extract` when you
+ship an upstream release archive unchanged. The file in `content/` then stays
+byte-for-byte what upstream published, so a checksum or provenance statement
+upstream made about that archive still describes what your package carries.
+You could unpack the archive into `content/` yourself and `install` the
+pieces, but the package would then carry a tree you assembled rather than
+upstream's file. The cost of `extract` is disk: the archive sits packed in the
+extract cache and unpacked in the generation.
+
+`polypkg pkg lint` checks the parameter values and that no earlier action
+creates `dest` (`PKG010`), and that a `src` present in the source is a
+regular file of at most 1 GiB, not a symlink, that starts like an archive
+`apply` can unpack (`PKG012`). It does not decompress the archive,
+so a damaged or non-tar payload inside a valid compressed stream is caught by
+`apply`.
 
 ## Reference: `polypkg pkg explain`
 
@@ -354,14 +447,19 @@ each finding with a `PKGxxx` rule ID and a source location:
 - **structure** — the file parses and satisfies the JSON Schema (`PKG000`).
 - **action** — the phase and action names are real and legal together.
 - **parameter** — required params are present, typed, and within their enums,
-  and every `mode` stays within `0755` (`PKG010`; see [File modes](#file-modes)).
+  every `mode` stays within `0755` (`PKG010`; see [File modes](#file-modes)),
+  and an `extract` action's `src`, `dest`, `strip_components`, and `include`
+  hold values `apply` accepts (`PKG010`; see
+  [Unpacking an archive](#unpacking-an-archive-extract)).
 - **identity** — every relation name is an ASCII slug (`PKG007`), no two
   identifiers in the recipe collide when case-folded (`PKG008`), and a
   declared `platform:` is an `<os>/<arch>` pair the toolchain that built
   polypkg can publish, as listed by `go tool dist list` (`PKG011`; see
   [Platforms](#platforms-per-platform-or-fat-artifacts)).
 - **content-reference** — every literal `$PKG/...` param resolves to a file
-  that actually exists in the source (`PKG006`).
+  that actually exists in the source (`PKG006`), and an `extract` action's
+  `src` is a regular file of at most 1 GiB, not a symlink, that starts like
+  an archive `apply` can unpack (`PKG012`).
 
 A clean source says so, and exits `0`:
 

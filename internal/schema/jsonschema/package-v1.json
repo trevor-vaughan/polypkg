@@ -41,7 +41,7 @@
           },
           "action": {
             "type": "string",
-            "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime"]
+            "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime", "extract"]
           },
           "drift": {
             "type": "string",

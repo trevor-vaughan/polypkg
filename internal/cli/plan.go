@@ -164,6 +164,7 @@ func runPlan(cmd *cobra.Command, profilePath string, format Format) error {
 		AttestationPolicy:    attestationPolicy(p),
 		PriorManifest:        priorManifest,
 		RevocationNearExpiry: nearExpiry,
+		DirMode:              scopeDirMode(scope),
 	})
 	if err != nil {
 		return planExecError(err)

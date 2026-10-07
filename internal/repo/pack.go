@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
@@ -72,6 +73,12 @@ func PackArtifact(dir string) (artifact []byte, pkg *schema.Package, err error) 
 			info, infoErr := d.Info()
 			if infoErr != nil {
 				return infoErr
+			}
+			// Every install unpacks the artifact under this per-member limit,
+			// so a larger file would publish a package that can never install.
+			if limit := archive.DefaultLimits().MaxFileBytes; info.Size() > limit {
+				return fmt.Errorf("%s is %d bytes; package members are limited to %d GiB, so the package could never install",
+					filepath.ToSlash(rel), info.Size(), limit>>30)
 			}
 			entries = append(entries, entry{arcName: filepath.ToSlash(rel), abs: p, mode: int64(info.Mode().Perm())})
 			return nil

@@ -285,6 +285,9 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 		AttestationPolicy:    attestationPolicy(p),
 		PriorManifest:        priorManifest,
 		RevocationNearExpiry: nearExpiry,
+		DirMode:              dirMode,
+		// apply never reads planRes.Ownership; the runner records the real one.
+		SkipMultiResultProjection: true,
 	})
 	if err != nil {
 		return nil, planExecError(err)

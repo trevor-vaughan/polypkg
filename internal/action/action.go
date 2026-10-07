@@ -234,14 +234,30 @@ func IsFilePlacing(name string) bool {
 	return Registry[name].FilePlacing
 }
 
+// PreSwapPhases returns the phases that run before the atomic generation
+// swap, in the order the runner runs them; within a phase, actions run in
+// declaration order. It is the one definition of that order, shared by the
+// runner, the planner's projection and pkg lint. Each call returns a fresh
+// slice.
+func PreSwapPhases() []Phase {
+	return []Phase{PhasePrePlace, PhasePostPlace, PhasePreActivate}
+}
+
+// PhaseRank returns phase's position in PreSwapPhases, and false when phase
+// is not a pre-swap phase.
+func PhaseRank(phase string) (int, bool) {
+	for i, p := range PreSwapPhases() {
+		if string(p) == phase {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 // IsPreSwapPhase reports whether phase runs before the atomic generation swap.
 // File-placing actions may run only in these phases so the committed ownership
-// index is complete (see apply-semantics §5.3).
+// index is complete.
 func IsPreSwapPhase(phase string) bool {
-	switch Phase(phase) {
-	case PhasePrePlace, PhasePostPlace, PhasePreActivate:
-		return true
-	default:
-		return false
-	}
+	_, ok := PhaseRank(phase)
+	return ok
 }

@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 )
 
 // rawEntry is a tar member with an exact header mode; buildTar substitutes
@@ -108,7 +109,7 @@ var roundTripShapes = map[string]roundTripShape{
 }
 
 var _ = Describe("extraction and verification round trip", func() {
-	lim := extractLimits{maxFileBytes: 4 << 10, maxTotalBytes: 64 << 10, maxEntries: 256}
+	lim := archive.Limits{MaxFileBytes: 4 << 10, MaxTotalBytes: 64 << 10, MaxEntries: 256}
 
 	// The same invariant FuzzExtractTarZst enforces on mutated input: only
 	// where extraction succeeds, since a seed may be refused for good reason.

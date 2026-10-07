@@ -23,6 +23,7 @@ var expectedActions = []string{
 	"completion",
 	"desktop",
 	"mime",
+	"extract",
 }
 
 // expectedFilePlacing is an INDEPENDENT anti-drift oracle for the
@@ -45,10 +46,11 @@ var expectedFilePlacing = map[string]bool{
 	"completion":   true,
 	"desktop":      true,
 	"mime":         true,
+	"extract":      true,
 }
 
 var _ = Describe("Registry", func() {
-	It("declares exactly the expected 12 actions", func() {
+	It("declares exactly the expected 13 actions", func() {
 		keys := make([]string, 0, len(Registry))
 		for name := range Registry {
 			keys = append(keys, name)
@@ -87,7 +89,8 @@ var _ = Describe("Registry", func() {
 	It("is well-formed for every entry", func() {
 		for key, spec := range Registry {
 			Expect(spec.Name).To(Equal(key), "Spec.Name must equal its map key for %q", key)
-			Expect(spec.Handler).ToNot(BeNil(), "Handler must be non-nil for %q", key)
+			Expect((spec.Handler != nil) != (spec.MultiHandler != nil)).To(BeTrue(),
+				"exactly one of Handler and MultiHandler must be set for %q", key)
 
 			declared := make(map[string]bool, len(spec.Params))
 			for _, p := range spec.Params {

@@ -105,11 +105,11 @@ flowchart LR
    `internal/runner/runner.go`) takes the per-scope `lock`, opens a `substrate`
    transaction, checks for `drift` against the active generation, runs `conflict`
    detection to refuse colliding ownership, dispatches each package's `action`s
-   (the 12 registered actions — `install`, `symlink`, `dir`, `perms`, `config`,
-   `unmanaged`, `state`, `path`, `alternatives`, `completion`, `desktop`, `mime`)
-   into the substrate, commits the manifest as a new immutable generation, writes
-   the `audit` record, and releases the lock. The commit's durability order is
-   described in [Generation commits and incomplete
+   (the 13 registered actions — `install`, `symlink`, `dir`, `perms`, `config`,
+   `unmanaged`, `state`, `path`, `alternatives`, `completion`, `desktop`, `mime`,
+   `extract`) into the substrate, commits the manifest as a new immutable
+   generation, writes the `audit` record, and releases the lock. The commit's
+   durability order is described in [Generation commits and incomplete
    generations](#generation-commits-and-incomplete-generations).
 
 3. **Integrate** — after the generation commits, `apply` reconciles the
@@ -117,6 +117,52 @@ flowchart LR
    `$PATH`, and the `completion`, `desktop`, and `mime` integrators install shell
    completions, `.desktop` entries, and shared-mime-info files. `rollback` and
    `gc` re-run the same integration against whichever generation they activate.
+
+### Actions that place many paths
+
+Each `Spec` in `action.Registry` sets exactly one of two handlers. `Handler`
+returns one `Result`; `MultiHandler` returns a slice, one `Result` per path
+the action placed. A registry test fails if a `Spec` sets both or neither.
+The runner's dispatch (`internal/runner/dispatch.go`) turns either form into
+a slice and records each `Result` as its own ownership entry, keyed by its
+path relative to the active root. Conflict detection works on ownership
+entries alone, so a multi-result action gets it per path with no code of its
+own. Rollback and `gc` do not remove anything path by path: they work on
+whole generations (rollback repoints the active symlink at an older
+generation, and `gc` deletes generation directories), so an extracted tree
+comes and goes with its generation and needs nothing special. Rollback reads
+the restored generation's entries only to re-point `alternatives` links.
+
+When two of a package's actions record a mode for one path (a `perms` after
+the `dir` or `extract` that created it), `runner.SupersedeModes` keeps only
+the last one's mode. "Last" is apply's run order: phase by phase in
+`action.PreSwapPhases` order, then declaration order. The runner applies it
+to the ownership it records and to the prior generation before checking
+drift, and the planner projects in the same order and applies it too.
+
+`extract` is the multi-result action. It returns a `dir` entry for `dest`,
+then one entry per member it unpacked: a `regular` entry (content hash and
+mode), a `symlink` entry (target), or a `dir` entry (mode). Those are the
+shapes `install` with `policy: copy` (which records no mode), `symlink`, and
+`dir` record, so drift and `accept-drift` each need only a small
+extract-aware branch: `drift.inspectExtract` (`internal/drift/extract.go`)
+picks the dir, symlink, or install rule by the entry's `Expected.FileType`
+and adds a mode check for regular files, and `accept-drift` captures a
+content hash for an extract entry that is a regular file, as it does for
+`install`. Only the paths the archive placed are owned; a file later added
+under `dest` is not drift, as under a `dir`.
+
+The action unpacks into a temporary directory beside `dest`, inside the
+package's `os.Root`, and renames that into place only once the whole archive
+has been accepted, so a refused archive leaves nothing at `dest`. `plan`
+predicts an extract's ownership entries by running the handler against a
+throwaway `.project-*` directory in the scope's extract store
+(`<state home>/pkg-extract`), with the directory mode `apply` would use
+(`planner.Options.DirMode`), and removes it afterwards; one a crash leaves
+behind is reclaimed by the extract-store sweep. `apply` sets
+`planner.Options.SkipMultiResultProjection` to skip that prediction, because
+the runner records the real entries and the archive would otherwise be
+unpacked twice.
 
 ### Generation commits and incomplete generations
 
@@ -198,7 +244,8 @@ because generation ids are never reused.
 | `trust` | minisign signature verification for indexes, artifacts, and attestations (per-role keyring) plus the metadata freshness check (`CheckExpiry`). Also owns the two extra anchor-signed documents: the trust bundle (`LoadBundle`, then the temporal lookups `BuilderKeyAt`/`BuilderKey`/`SigstoreRootAt`/`SelectSigstoreRoot`) and the revocation list (`LoadRevocationList`, `IsBuilderKeyRevoked`, `IsAttestationRevoked`). |
 | `planner` | The load-and-resolve pipeline (`Plan`): fetch, verify (signatures, attestations, policy gate, downgrade guard), extract → manifest + run entries + ownership. |
 | `extractstore` | The content-addressed extracted-package store under `<stateHome>/pkg-extract`: dir naming (`Root`, `Dir`, `DirName`, `LegacyDirName`) and the manifest-driven `Sweep` (see "The extract store" below). |
-| `action` | The declarative install-time actions — 12 entries in `action.Registry` (`install`, `symlink`, `dir`, `perms`, `config`, `unmanaged`, `state`, `path`, `alternatives`, `completion`, `desktop`, `mime`) — with scope enforcement. |
+| `archive` | Archive unpacking into an `os.Root`, shared by package extraction and the `extract` action. `Detect` names the format from the first `DetectHeaderLen` bytes (tar.gz, tar.zst, tar.xz, zip, tar); `Extract` decompresses and unpacks it, and `ExtractTar` walks an uncompressed tar stream. Both enforce `Limits` (`DefaultLimits`: 1 GiB per file, 2 GiB in total, 100 000 entries, counting the bytes actually written) and one of two policies: `PolicyPackage` is how `source.ExtractTarZst` unpacks polypkg's own `.tar.zst` artifacts, and `PolicyStrict` is the `extract` action's stricter rule set (see [authoring.md](../authoring.md#unpacking-an-archive-extract)). Imports neither `source` nor `action`. |
+| `action` | The declarative install-time actions — 13 entries in `action.Registry` (`install`, `symlink`, `dir`, `perms`, `config`, `unmanaged`, `state`, `path`, `alternatives`, `completion`, `desktop`, `mime`, `extract`) — with scope enforcement. |
 | `runner` | Coordinates one transaction: lock, begin, drift check, action dispatch, commit, audit, release. |
 | `substrate` | Substrate-backend interface plus the own-store content-store backend. |
 | `conflict` | Pure cross-package collision detection over a generation's ownership set (no I/O, no policy). |
@@ -243,7 +290,9 @@ version.
 `<stateHome>/pkg-extract` before the runner ever opens a transaction. The
 `install` action copies from that tree into the generation by default; under
 `policy: symlink` (or `hardlink`) the generation instead links into it and
-depends on it for as long as the generation is retained.
+depends on it for as long as the generation is retained. The `extract` action
+reads its archive from that tree and writes real files into the generation,
+so the generation does not depend on the store afterwards.
 
 Ownership is split. `internal/extractstore` is the naming-and-sweep library:
 it exports `Root`, `DirName`, `LegacyDirName`, `Dir`, `Sweep`, and

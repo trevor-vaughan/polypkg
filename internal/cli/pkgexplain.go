@@ -150,6 +150,8 @@ func paramKindName(k action.ParamKind) string {
 		return "int"
 	case action.KindEnum:
 		return "enum"
+	case action.KindStringList:
+		return "list"
 	default:
 		return "string"
 	}

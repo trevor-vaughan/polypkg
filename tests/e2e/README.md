@@ -110,6 +110,7 @@ fixtures/  ─┐                       (bind-mounted, ro)
 | `user/40-drift` | tamper a placed file → `status` drift → `apply --heal-drift`; `accept-drift` of a drifted config path |
 | `user/50-anti-rollback` | `repo add`/`repo build` to bump serial, fetch; serve a stale lower-serial index → consumer rejects |
 | `user/55-deps` | `install` resolves and pulls a declared `depends` |
+| `user/58-extract` | the `extract` action: a package whose content is a `.tar.gz` (built at test time with the runner's `tar`) is published, linted clean, and installed; `strip_components: 1` drops the archive's top directory, the unpacked `bin/hello` is a regular executable file (not a link into the extract cache), the `path`-exposed command runs from `~/.local/bin`, and `rollback` removes both the unpacked tree and the command |
 | `user/60-gc-pin` | `generation pin`, `gc --count`, pinned generation survives |
 | `user/70-edge-cases` | missing package; unsatisfiable constraint; `plan` dry-run; `generation list` wart; idempotent install; `purge` (remove-then-purge, non-TTY abort); `config reset` |
 | `user/80-attestation` | install verifies + records attestation (`info`/`status -vv`); tampered `.att.json` refused; `require` refuses / `warn` warns on an unattested (`--skip-attestations`) repo. Expired-metadata refusal is NOT here — D13's 5-minute skew tolerance makes it unobservable without sleeping out the window; it lives in `tests/integration/e2e_freshness_test.go` (full CLI, deterministic clock) |

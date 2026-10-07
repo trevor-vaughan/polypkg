@@ -12,11 +12,12 @@ type ParamKind int
 
 // The parameter kinds a ParamSpec can declare.
 const (
-	KindString ParamKind = iota // arbitrary string
-	KindPath                    // a path (scope-confined by the handler)
-	KindMode                    // an octal mode string, e.g. "0o755"
-	KindInt                     // an integer (may arrive int/int64/float64/string)
-	KindEnum                    // one of Enum
+	KindString     ParamKind = iota // arbitrary string
+	KindPath                        // a path (scope-confined by the handler)
+	KindMode                        // an octal mode string, e.g. "0o755"
+	KindInt                         // an integer (may arrive int/int64/float64/string)
+	KindEnum                        // one of Enum
+	KindStringList                  // a list of strings (a YAML sequence)
 )
 
 // ParamSpec declares one parameter's contract for an action.
@@ -50,12 +51,25 @@ type Constraint struct {
 }
 
 // Spec is an action's complete declaration: how to run it and what it accepts.
+// Exactly one of Handler and MultiHandler is set. Handler serves an action that
+// places one path per invocation; MultiHandler serves an action that places many
+// (extract), returning one Result per placed path. The runner records every
+// Result as its own ownership entry, whichever handler produced it.
+//
+// The planner projects a MultiHandler action by running it against a throwaway
+// Scope that sets only ActiveRoot, PackageName, PackageRoot and DirMode, and an
+// Invocation carrying only Action, PackageName, Phase and Params. A
+// MultiHandler must therefore depend on nothing else (not LiveRoot,
+// PriorGenDir, StateRoot or AltRoot, nor config's preserve/reset inputs), and
+// its Results must not embed ActiveRoot outside Path, or the projection and
+// the applied ownership diverge.
 type Spec struct {
-	Name        string
-	FilePlacing bool
-	Params      []ParamSpec
-	Constraints []Constraint
-	Handler     func(Invocation, Scope) (Result, error)
+	Name         string
+	FilePlacing  bool
+	Params       []ParamSpec
+	Constraints  []Constraint
+	Handler      func(Invocation, Scope) (Result, error)
+	MultiHandler func(Invocation, Scope) ([]Result, error)
 }
 
 // Registry is the single source of truth for polypkg's actions, consumed by the
@@ -154,6 +168,15 @@ var Registry = map[string]Spec{
 		Name: "mime", FilePlacing: true, Handler: Mime,
 		Params: []ParamSpec{
 			{Name: "source", Required: true, Kind: KindPath},
+		},
+	},
+	"extract": {
+		Name: "extract", FilePlacing: true, MultiHandler: Extract,
+		Params: []ParamSpec{
+			{Name: "src", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "strip_components", Kind: KindInt},
+			{Name: "include", Kind: KindStringList},
 		},
 	},
 }

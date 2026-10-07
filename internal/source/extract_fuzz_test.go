@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 )
 
 // FuzzExtractTarZst feeds arbitrary (mutated) tar bytes to the extractor and
@@ -32,7 +34,7 @@ func FuzzExtractTarZst(f *testing.F) {
 
 	// Small limits keep each iteration cheap; the path-confinement logic under
 	// test is independent of the caps.
-	lim := extractLimits{maxFileBytes: 4 << 10, maxTotalBytes: 64 << 10, maxEntries: 256}
+	lim := archive.Limits{MaxFileBytes: 4 << 10, MaxTotalBytes: 64 << 10, MaxEntries: 256}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		base := t.TempDir()

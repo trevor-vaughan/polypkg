@@ -61,3 +61,24 @@ var _ = Describe("IsPreSwapPhase", func() {
 		Entry("bogus is not pre-swap", "bogus", false),
 	)
 })
+
+var _ = Describe("pre-swap phase order", func() {
+	It("lists the pre-swap phases in the order the runner runs them", func() {
+		Expect(PreSwapPhases()).To(Equal([]Phase{PhasePrePlace, PhasePostPlace, PhasePreActivate}))
+	})
+
+	It("ranks each pre-swap phase by that order and nothing else", func() {
+		for want, p := range PreSwapPhases() {
+			got, ok := PhaseRank(string(p))
+			Expect(ok).To(BeTrue(), string(p))
+			Expect(got).To(Equal(want), string(p))
+		}
+		_, ok := PhaseRank("post-activate")
+		Expect(ok).To(BeFalse())
+	})
+
+	It("returns a fresh slice each call", func() {
+		PreSwapPhases()[0] = "mutated"
+		Expect(PreSwapPhases()[0]).To(Equal(PhasePrePlace))
+	})
+})

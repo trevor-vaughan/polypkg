@@ -150,6 +150,29 @@ and on-disk formats may change in breaking ways.
   - Packages without `platform:` work as before on every host. See
     [docs/authoring.md](docs/authoring.md) for when to prefer per-platform
     artifacts over one artifact that selects files with `!starlark`.
+- The `extract` action unpacks an archive shipped in a package's `content/`
+  into the package's directory at apply time, so a package can carry an
+  upstream release archive byte for byte. It takes `src`, `dest`, and the
+  optional `strip_components` and `include`; recognizes `.tar.gz`,
+  `.tar.zst`, `.tar.xz`, `.zip`, and `.tar` by content, not file name; and
+  records every unpacked file, directory, and symlink as an owned,
+  drift-checked path. An archive with an unsafe member (an absolute or `..`
+  path, a symlink leaving `dest`, a hard link, a device, a duplicate path) or
+  over the size limits is refused, and nothing from it is placed. See
+  [docs/authoring.md](docs/authoring.md#unpacking-an-archive-extract).
+  - `pkg lint` checks `extract`'s parameter values and reports a `dest` an
+    earlier action already creates (PKG010), and refuses a `src` that is not
+    an archive `apply` can unpack (new rule PKG012).
+  - Every file in a package is limited to 1 GiB, the most an install will
+    unpack. `pkg lint` reports an `extract` `src` over the limit (PKG012),
+    and packing a package (`pkg build`, and `repo build`, which `repo add` runs)
+    refuses any `content/` file over it, naming the file, so a package that
+    could never install is not published.
+  - `pkg lint` now also reports a fractional value for any integer
+    parameter, such as an `alternatives` `priority` of `10.5`, which `apply`
+    would have truncated (PKG010).
+  - New dependency: `github.com/ulikunitz/xz` v0.5.17 (BSD-3-Clause, no
+    transitive dependencies) reads `.tar.xz`.
 
 ### Changed
 
@@ -261,6 +284,12 @@ and on-disk formats may change in breaking ways.
 
 ### Fixed
 
+- A `perms` action that changes the mode of a path an earlier action of the
+  same package created (`dir`, or a file `extract` unpacked) no longer leaves
+  that path drifting forever. Both actions recorded a mode, so every apply saw
+  the earlier one disagree with the disk: a `refuse` policy refused every
+  apply and `notify_heal` healed on every run. The last action to set a path's
+  mode now owns it; the earlier one still checks the path's type and content.
 - An older polypkg reading state a newer polypkg wrote now says so —
   `<path> was written by a newer polypkg (polypkg.ownership/v2; this version
   reads v1); upgrade polypkg` — instead of failing with a schema-validation
