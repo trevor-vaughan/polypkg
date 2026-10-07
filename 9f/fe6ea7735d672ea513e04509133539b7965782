@@ -1,0 +1,23 @@
+.tool-versions
+  s_976d6ae9a5c17c::t_7a9351d3e1b36b 1-4
+.github/workflows/release.yml
+  s_976d6ae9a5c17c::t_7a9351d3e1b36b 87
+.github/workflows/release-snapshot.yml
+  s_976d6ae9a5c17c::t_7a9351d3e1b36b 42,47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ffe6ea7735d672ea513e04509133539b7965782",
+  "prompts": {},
+  "sessions": {
+    "s_976d6ae9a5c17c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f30fce28-3a8e-40d9-b544-b8123b0fd3a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
