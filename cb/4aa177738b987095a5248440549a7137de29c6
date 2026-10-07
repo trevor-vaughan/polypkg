@@ -1,0 +1,19 @@
+.lycheeignore
+  s_96cc67e7484105::t_fc64860e8f804c 23-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb4aa177738b987095a5248440549a7137de29c6",
+  "prompts": {},
+  "sessions": {
+    "s_96cc67e7484105": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af3f8cd0-4a49-43e5-931f-c65a8426e8b8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
