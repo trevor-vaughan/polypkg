@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/kucherenko/jscpd/master/packages/jscpd/schema.json",
+  "$schema": "https://www.schemastore.org/jscpd.json",
   "threshold": 5,
   "ignore": [
     "**/*_test.go"

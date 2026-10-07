@@ -4,40 +4,103 @@ on:
   push:
     tags: ["v*"]
 
+# One publish per tag at a time; a second run waits rather than cancelling
+# a release mid-upload.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
+  # The gates run on the tagged commit itself: a tag can name any commit,
+  # not only one CI has already seen as a branch head.
+  lint:
+    uses: ./.github/workflows/lint.yml
+  test:
+    uses: ./.github/workflows/test.yml
+  integration:
+    uses: ./.github/workflows/integration.yml
+  # govulncheck only. Calling the security workflow would also run CodeQL,
+  # whose security-events: write this release does not need.
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Cache off, as in the publish job, so a module cache poisoned by
+          # an earlier run cannot decide what govulncheck sees. The lint,
+          # test and integration workflows called above keep their cache.
+          cache: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task vuln
+
   goreleaser:
     name: Release
+    needs: [lint, test, integration, vuln]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Protection rules (tag filter, reviewers) are set on this environment in
+    # the repository settings; see docs/dev/README.md.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Guards against tagging the wrong commit by mistake. It is not a
+      # security control: whoever can push a tag can also change this file.
+      - name: Refuse a tag that is not on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main; refusing to publish"
+            exit 1
+          fi
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           # Disable the build cache for releases: a cache poisoned by an earlier
           # workflow run must not influence the published release artifacts.
           cache: false
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Install syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: "~> v2"
+          version-file: .tool-versions
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Verify the published signature exactly as docs/verifying.md tells
+      # users to, so a signing change that users could not verify fails this
+      # run instead of surfacing in a bug report. Keep the flags in step with
+      # that document.
+      - name: Verify the checksums signature as a user would
+        run: |
+          cosign verify-blob \
+            --bundle dist/checksums.txt.sigstore.json \
+            --certificate-identity-regexp '^https://github\.com/trevor-vaughan/polypkg/\.github/workflows/release\.yml@refs/tags/v[^/]+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/checksums.txt
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           # SBOMs are attested alongside the archives they describe. Without
           # them here nothing binds an SBOM to the release, so a consumer has

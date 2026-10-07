@@ -2,6 +2,8 @@ package repo
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -181,6 +183,29 @@ func TestPackArtifactRefusesAMemberTooDeepToExtract(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), "more than 64 path segments") {
 			t.Fatalf("%d segments: PackArtifact = %v, want the depth refusal", tc.segments, err)
+		}
+	}
+}
+
+// TestPackArtifactRefusesANonUTF8Name pins that PackArtifact refuses a
+// content file whose name is not valid UTF-8, as extraction does, and names
+// the file in a PackRefusal.
+func TestPackArtifactRefusesANonUTF8Name(t *testing.T) {
+	for _, name := range []string{"\x80\xffg", "a\x9bb"} {
+		dir := t.TempDir()
+		writePkgSrc(t, dir)
+		if err := os.WriteFile(filepath.Join(dir, "content", name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := PackArtifact(dir)
+		var refusal *PackRefusal
+		if !errors.As(err, &refusal) {
+			t.Fatalf("%q: PackArtifact = %v, want a *PackRefusal", name, err)
+		}
+		for _, want := range []string{fmt.Sprintf("%q is not valid UTF-8", "content/"+name), "rename"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%q: error %q does not mention %q", name, err, want)
+			}
 		}
 	}
 }

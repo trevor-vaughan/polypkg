@@ -120,6 +120,12 @@ and on-disk formats may change in breaking ways.
   fuzzing, and the shared MegaLinter policy), Dependabot dependency updates, and
   a GoReleaser release pipeline producing Cosign-signed checksums, per-archive
   Syft SBOMs, and GitHub SLSA build-provenance attestations.
+- Reproducible release archives: rebuilding a release commit with the same Go
+  toolchain and GoReleaser version yields byte-identical archives, and
+  `polypkg --version` reports the commit's date instead of the build time.
+  The Syft SBOMs are the exception: Syft stamps each with its creation time
+  and a random document namespace, so a rebuilt `checksums.txt` differs from
+  the published one in the SBOM lines only.
 - `polypkg source set-trust-root <name>` replaces the key a source is pinned
   to. It shows the pinned and new key ids, needs confirmation
   (`--trust-root-fingerprint <key id>`, or a prompt on a TTY), keeps the
@@ -630,3 +636,11 @@ and on-disk formats may change in breaking ways.
   output size.
 - URLs in errors and warnings show every query value as `xxxxx` and a fragment
   as `#xxxxx`, in addition to hiding userinfo.
+- Archive member names must be valid UTF-8. Package extraction and the
+  `extract` action refuse any other name, and `pkg build` and `repo build`
+  refuse a `content/` file whose path is not UTF-8. A raw byte in 0x80–0x9F
+  decoded as U+FFFD, so it passed the control-character check, yet an 8-bit
+  terminal reads it as a C1 control code (0x9B is CSI).
+- Dependencies raised past known CVEs: `golang.org/x/crypto` v0.57.0,
+  `golang.org/x/text` v0.42.0, `golang.org/x/mod` v0.41.0, and
+  `google.golang.org/grpc` v1.83.2.

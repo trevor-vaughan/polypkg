@@ -6,7 +6,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/trevor-vaughan/polypkg.svg)](https://pkg.go.dev/github.com/trevor-vaughan/polypkg)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-`polypkg` is a declarative package manager for Linux, macOS, and FreeBSD. You describe what should be installed in a profile file; `polypkg apply` makes the system match it. Each apply creates an immutable generation, so if something breaks you can return to the previous state with a single command.
+`polypkg` is a declarative package manager for Linux, with less-tested builds for macOS and FreeBSD (see [Platform support](#platform-support)). You describe what should be installed in a profile file; `polypkg apply` makes the system match it. Each apply creates an immutable generation, so if something breaks you can return to the previous state with a single command.
 
 ## Demo
 
@@ -62,6 +62,7 @@ Two more recordings sit with the docs they belong to: [publishing a repository](
 - [Demo](#demo) — recorded terminal sessions: install and rollback, refused signatures, drift, upgrade
 - [Background](#background) — why this exists
 - [Install](#install) — two paths; there is no tagged release yet
+- [Platform support](#platform-support) — Linux is tested; macOS and FreeBSD much less so
 - [Quickstart](#quickstart) — create a repository, import a tool from GitHub, install it; then `search`, `upgrade`, `rollback`
 - [Commands](#commands) — the full command reference · [Exit codes](#exit-codes)
 - [Scripting](#scripting) — which commands emit which JSON schema · [JSON output reference](docs/json-output.md)
@@ -128,6 +129,20 @@ $ go version -m "$(command -v polypkg)" | awk '$1=="mod"{print; exit}'
 ```
 
 Built from a working tree with uncommitted changes, that line gains a `+dirty` suffix (`...-7c59b0ffb958+dirty`) — worth reporting as-is, since it says the binary does not match the named commit.
+
+## Platform support
+
+polypkg is developed and tested on Linux. It also builds for macOS and FreeBSD, but those platforms get far less testing. There is no Windows build.
+
+| Platform | Support level | What backs it |
+|---|---|---|
+| Linux (amd64, arm64) | **Tested** | CI runs the unit and in-process integration suite on `linux/amd64`, and a container end-to-end tier that drives the built binary through user and system scope on CentOS, Ubuntu, and Alpine. An opt-in VM tier checks for denials under enforcing SELinux and AppArmor. `linux/arm64` is compiled in CI, but no tests run on it. |
+| macOS (amd64, arm64) | **User scope, unit-tested** | CI runs the same unit and in-process integration suite on GitHub's `macos-latest` runner, which is arm64; no tests run on macOS amd64. No end-to-end tier runs there. Only polypkg's own config, data, state, and cache directories follow macOS conventions (under `~/Library`); the bridge (`~/.local/bin`) and the completion, desktop, and MIME directories stay under `~/.local` and `~/.config` (see [XDG directories](#xdg-directories)). System scope is untested and uses the Linux locations `/etc/polypkg`, `/var/lib/polypkg`, and `/usr/local/bin`. |
+| FreeBSD (amd64, arm64) | **Builds, untested** | CI cross-compiles it and the release archives include it, but no test runs on FreeBSD. |
+
+One safety limit is weaker off Linux. A package recipe's `!starlark` expressions are evaluated in a child process with step, output, wall-clock, and memory limits. On Linux, polypkg kills that child once its resident memory passes the memory limit. macOS and FreeBSD have no such check, so only Go's soft memory target and the step and wall-clock limits bound it there.
+
+Bug reports from macOS and FreeBSD are welcome, and they are how those rows improve.
 
 ## Quickstart
 

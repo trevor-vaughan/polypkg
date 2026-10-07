@@ -16,10 +16,11 @@ RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ovh/venom/cmd/venom@${VENOM_V
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# CGO-free so the binary runs on glibc (CentOS/Ubuntu) AND musl (Alpine).
-RUN CGO_ENABLED=0 go build -trimpath -o /out/polypkg ./cmd/polypkg
-# The fake GitHub the `pkg import` suite runs as the github-fake service.
-RUN CGO_ENABLED=0 go build -trimpath -o /out/ghfake ./tests/e2e/ghfake
+# CGO-free so the binaries run on glibc (CentOS/Ubuntu) AND musl (Alpine).
+# ghfake is the fake GitHub the `pkg import` suite runs as the github-fake
+# service.
+RUN CGO_ENABLED=0 go build -trimpath -o /out/polypkg ./cmd/polypkg \
+    && CGO_ENABLED=0 go build -trimpath -o /out/ghfake ./tests/e2e/ghfake
 
 # --- runtime: matrix base ------------------------------------------------
 FROM ${BASE_IMAGE}

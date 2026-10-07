@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Member-name bounds. Both policies refuse a name beyond them, which also
@@ -22,13 +23,23 @@ const (
 	MaxMemberDepth = 64
 )
 
-// CheckNameBounds refuses a member name longer than 4096 bytes or with more
-// than MaxMemberDepth path segments, as both extraction policies do. It is
-// exported so an archive writer can refuse such a name before it ships an
+// ErrNameNotUTF8 is the cause CheckNameBounds wraps when a member name is not
+// valid UTF-8.
+var ErrNameNotUTF8 = errors.New("is not valid UTF-8")
+
+// CheckNameBounds refuses a member name longer than 4096 bytes, that is not
+// valid UTF-8, or with more than MaxMemberDepth path segments, as both
+// extraction policies do. A name that is not UTF-8 is refused because its raw
+// bytes 0x80-0x9F are C1 control codes to an 8-bit terminal (0x9B is CSI), yet
+// decode as U+FFFD, so the control-character check alone would pass them. It
+// is exported so an archive writer can refuse such a name before it ships an
 // archive no extraction would accept.
 func CheckNameBounds(name string) error {
 	if len(name) > maxMemberName {
 		return fmt.Errorf("member name %q... is longer than %d bytes", name[:64], maxMemberName)
+	}
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("member name %q %w", name, ErrNameNotUTF8)
 	}
 	if len(memberSegments(name)) > MaxMemberDepth {
 		return fmt.Errorf("member name %q has more than %d path segments", name, MaxMemberDepth)
@@ -204,8 +215,8 @@ func (x *strictExtractor) countEntry() error {
 // --strip-components does. Segments are counted before cleaning, so
 // "./pkg/bin" has three, matching GNU tar. A ".." segment is refused wherever
 // it appears, even in a part that strip would remove. Names are also refused
-// when they are too long or deep, hold a NUL byte or another control or
-// format character (checkNameRunes), or carry a ':' in the
+// when they are too long or deep, are not valid UTF-8, hold a NUL byte or
+// another control or format character (checkNameRunes), or carry a ':' in the
 // first segment of the path placed, which Windows reads as a drive
 // ("C:evil"); that check runs after strip and cleaning, so neither a
 // leading "./" nor a stripped prefix hides it.

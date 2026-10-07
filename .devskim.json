@@ -1,0 +1,27 @@
+{
+  "RespectGitIgnore": true,
+  "Globs": [
+    "**/.cache/**",
+    "**/.git/**",
+    "**/bin/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/__pycache__/**",
+    "**/node_modules/**",
+    "**/megalinter-reports/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/.specify/**",
+    "**/.opencode/**",
+    "**/.claude/**",
+    "**/.uf/**",
+    "**/.test-output/**",
+    "**/*_test.go",
+    "**/testdata/**",
+    "**/tests/**"
+  ],
+  "IgnoreRuleIds": [
+    "DS137138",
+    "DS162092"
+  ]
+}

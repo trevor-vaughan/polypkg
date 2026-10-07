@@ -58,7 +58,7 @@ var (
 	windowsTokens = []string{"windows", "win32", "win64"}
 	osPackageExts = []string{".deb", ".rpm", ".apk", ".msi", ".pkg", ".dmg", ".snap", ".appimage"}
 	metadataExts  = []string{
-		".sha256", ".sha512", ".sha512sum", ".sha1", ".md5", ".sig", ".asc", ".pem", ".crt", ".cert", ".pub",
+		".sha256", ".sha512", ".sha512sum", ".sha1", ".md5", ".sig", ".asc", ".pem", ".crt", ".cert", ".pub", // DevSkim: ignore DS126858 -- file extensions, not hashing
 		".minisig", ".sigstore", ".sbom", ".spdx", ".cdx.xml", ".json", ".jsonl", ".intoto.jsonl", ".txt", ".bundle",
 	}
 	arm32Tokens = []string{"armv6", "armv7", "armhf", "arm"}

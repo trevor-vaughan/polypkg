@@ -12,6 +12,13 @@ builds:
     binary: polypkg
     env:
       - CGO_ENABLED=0
+    # Reproducible builds: one commit, built with the same Go toolchain and
+    # GoReleaser version, yields byte-identical binaries and archives.
+    # -trimpath drops the builder's checkout path, and the binary's mtime and
+    # the Date ldflag below come from the commit, not the wall clock.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin
@@ -23,13 +30,31 @@ builds:
       - -s -w
       - -X github.com/trevor-vaughan/polypkg/internal/cli.Version={{ .Version }}
       - -X github.com/trevor-vaughan/polypkg/internal/cli.Commit={{ .ShortCommit }}
-      - -X github.com/trevor-vaughan/polypkg/internal/cli.Date={{ .Date }}
+      - -X github.com/trevor-vaughan/polypkg/internal/cli.Date={{ .CommitDate }}
 
 archives:
   - id: polypkg
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Archive members otherwise copy owner and mtime from the checkout, which
+    # differ between machines and clones. Pin them so the archive bytes depend
+    # only on the commit. The files are GoReleaser's default set for this repo.
+    builds_info:
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info: &doc_info
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info: *doc_info
+      - src: CHANGELOG.md
+        info: *doc_info
 
 checksum:
   name_template: checksums.txt

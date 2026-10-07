@@ -21,7 +21,7 @@ vars:
   # builder-current's deterministic public key (ed25519), printed as
   # allow_key= by `go run ./tests/e2e/provenancegen` — if the fixture seed
   # ever changes this literal must be regenerated too.
-  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q='
+  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=' # gitleaks:allow -- ed25519 public key, not a secret
   home: '/tmp/u99-g1'
   px: 'env HOME=/tmp/u99-g1 XDG_DATA_HOME=/tmp/u99-g1/data XDG_CONFIG_HOME=/tmp/u99-g1/cfg XDG_STATE_HOME=/tmp/u99-g1/state XDG_CACHE_HOME=/tmp/u99-g1/cache /usr/local/bin/polypkg'
   profile: '/tmp/u99-g1/profile.yaml'

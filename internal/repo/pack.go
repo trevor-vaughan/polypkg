@@ -3,6 +3,7 @@ package repo
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -79,10 +80,11 @@ func PackArtifact(dir string) (artifact []byte, pkg *schema.Package, err error) 
 				return relErr
 			}
 			if err := archive.CheckNameBounds(filepath.ToSlash(rel)); err != nil {
-				return &PackRefusal{
-					Msg:  fmt.Sprintf("%v, so no install could extract it", err),
-					Hint: "shorten the path under content/ (fewer or shorter directory names) and build again",
+				hint := "shorten the path under content/ (fewer or shorter directory names) and build again"
+				if errors.Is(err, archive.ErrNameNotUTF8) {
+					hint = "rename it, and any directory above it, to valid UTF-8 and build again"
 				}
+				return &PackRefusal{Msg: fmt.Sprintf("%v, so no install could extract it", err), Hint: hint}
 			}
 			if d.Type()&fs.ModeType != 0 {
 				return &PackRefusal{

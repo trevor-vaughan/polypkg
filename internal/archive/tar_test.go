@@ -306,6 +306,8 @@ var _ = Describe("ExtractTar under PolicyPackage", func() {
 		},
 		Entry("a name longer than 4096 bytes", strings.Repeat("n", 4097), "is longer than 4096 bytes"),
 		Entry("a name with 65 segments", strings.Repeat("d/", 64)+"f", "has more than 64 path segments"),
+		Entry("a name that is not valid UTF-8", "\x80\xffg", `member name "\x80\xffg" is not valid UTF-8`),
+		Entry("a name holding a raw C1 byte", "a\x9bb", `member name "a\x9bb" is not valid UTF-8`),
 	)
 
 	It("accepts a name with exactly 64 segments", func() {

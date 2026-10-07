@@ -59,7 +59,8 @@ could unpack the result:
 - a file whose mode carries setuid, setgid or sticky bits (clear them with
   `chmod u-s,g-s,-t`; polypkg never installs a privileged file);
 - a path, counted from the package directory (`content/bin/hello` is three
-  segments), longer than 4096 bytes or of more than 64 segments;
+  segments), longer than 4096 bytes or of more than 64 segments, or that is
+  not valid UTF-8;
 - a file larger than 1 GiB;
 - more than 100 000 entries, counting the directories that hold the files.
 
@@ -601,7 +602,8 @@ it, if:
 - any member name is empty, absolute, contains a `..` segment, a backslash,
   a control character (C0, C1 or DEL, including NUL, tab and newline) or a
   Unicode format character (such as a bidi override), has a `:` in its
-  first segment, is longer than 4096 bytes, or has more than 64 segments;
+  first segment, is not valid UTF-8, is longer than 4096 bytes, or has more
+  than 64 segments;
 - a member it would unpack is a hard link, a device, a FIFO, a socket, or an
   entry type polypkg does not know;
 - a symlink's target is empty, absolute, leads outside `dest`, or climbs

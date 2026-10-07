@@ -214,7 +214,7 @@ func releaseStatement(repo, tag, assetName string, sum [32]byte) ([]byte, error)
 		"subject": []map[string]any{
 			{
 				"uri":    "pkg:github/" + repo + "@" + tag,
-				"digest": map[string]string{"sha1": hex.EncodeToString(commit[:20])},
+				"digest": map[string]string{"sha1": hex.EncodeToString(commit[:20])}, // DevSkim: ignore DS126858 -- fake git commit id label; the value is SHA-256
 			},
 			{
 				"name":   assetName,

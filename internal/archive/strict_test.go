@@ -166,6 +166,22 @@ func strictCases() []strictCase {
 			wantErr: "contains the control character U+009B",
 		},
 		{
+			name:    "invalid UTF-8 in a directory name",
+			members: []fixtureMember{{name: "\x80\xffg/", kind: fixtureDir}},
+			wantErr: `member name "\x80\xffg/" is not valid UTF-8`,
+		},
+		{
+			name:    "raw C1 byte in a name",
+			members: []fixtureMember{{name: "a\x9bb", kind: fixtureFile, body: "x"}},
+			wantErr: `member name "a\x9bb" is not valid UTF-8`,
+		},
+		{
+			name:    "invalid UTF-8 in a part strip removes",
+			members: []fixtureMember{{name: "top\x80/a", kind: fixtureFile, body: "x"}},
+			strip:   1,
+			wantErr: "is not valid UTF-8",
+		},
+		{
 			name:    "Unicode format character in a symlink name",
 			members: []fixtureMember{{name: "a\u202egnp.exe", kind: fixtureSymlink, target: "b"}},
 			wantErr: "contains the format character U+202E",

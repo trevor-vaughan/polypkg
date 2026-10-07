@@ -8,7 +8,8 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/starlarkeval"
 )
 
-// Version, Commit, and Date are set at build time via -ldflags.
+// Version, Commit, and Date are set at build time via -ldflags. Date is the
+// commit's date, not the build's, so rebuilding a release reproduces it.
 var (
 	Version = "0.1.0-dev"
 	Commit  = "unknown"

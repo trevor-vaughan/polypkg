@@ -13,20 +13,27 @@ jobs:
   megalint:
     name: MegaLinter
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Run shared MegaLinter policy
         id: megalint
-        uses: trevor-vaughan/megalint-config@8b5ce2be9e617c78a137a7b3b6cea2a9f74856c4 # v0.3.0
+        uses: trevor-vaughan/megalint-config@83c123e0ea29070700374acb20170515e61d391c # v0.6.0
         with:
           validate-all-codebase: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # TruffleHog re-clones the checkout to scan history. The checkout
+          # holds no LFS objects, so the clone's smudge of docs/demo/*.gif
+          # fails and aborts the scan. Skipping smudge leaves the GIFs as
+          # pointer files, which carry nothing a secret scanner needs.
+          extra-env-vars: GIT_LFS_SKIP_SMUDGE
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_LFS_SKIP_SMUDGE: "1"
       - name: Upload MegaLinter SARIF
         if: always() && steps.megalint.outputs.sarif-has-results == 'true'
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: ${{ steps.megalint.outputs.sarif-file }}

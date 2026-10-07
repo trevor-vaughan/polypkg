@@ -20,6 +20,24 @@ upgrade before reporting.
 | latest `main`  | :white_check_mark: |
 | anything older | :x:                |
 
+## Supported platforms
+
+Reports are accepted for every platform polypkg builds for. The platforms are
+not tested equally, though, and the README's
+[Platform support](README.md#platform-support) section says how each is
+covered:
+
+| Platform | Support level             |
+|----------|---------------------------|
+| Linux    | Tested                    |
+| macOS    | User scope, unit-tested   |
+| FreeBSD  | Builds, untested          |
+
+That section also describes the one security-relevant difference. Off Linux,
+nothing kills a recipe's `!starlark` evaluation when it passes its memory
+limit. Please say which platform you found an issue on, and whether it
+reproduces on Linux.
+
 ## Reporting a vulnerability
 
 **Do not open a public issue for a security vulnerability.**
