@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -324,18 +325,35 @@ var _ = Describe("BuildCatalog host filtering", func() {
 	})
 
 	It("admits many versions without comparing every pair", func() {
-		// A pairwise check takes minutes at this size; a keyed one, well
-		// under a second.
-		entries := make([]schema.IndexEntry, 0, 100_001)
-		for i := range 100_000 {
-			entries = append(entries, entry(fmt.Sprintf("1.%d.0", i), testHost))
+		// Quadrupling the input quadruples a keyed check's cost and
+		// multiplies a pairwise one's by sixteen. Comparing two sizes timed
+		// on the same machine cancels the uniform slowdown (-race, coverage,
+		// a shared runner) that made an absolute time bound flaky.
+		versions := func(n int) []schema.IndexEntry {
+			entries := make([]schema.IndexEntry, 0, n+1)
+			for i := range n {
+				entries = append(entries, entry(fmt.Sprintf("1.%d.0", i), testHost))
+			}
+			return entries
 		}
-		start := time.Now()
-		_, err := build(map[string][]schema.IndexEntry{"rg": entries})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = build(map[string][]schema.IndexEntry{"rg": append(entries, entry("1.0", testHost))})
+		// bestOf3 takes the fastest of three runs to shed GC and scheduler noise.
+		bestOf3 := func(n int) time.Duration {
+			entries := versions(n)
+			best := time.Duration(math.MaxInt64)
+			for range 3 {
+				start := time.Now()
+				_, err := build(map[string][]schema.IndexEntry{"rg": entries})
+				Expect(err).NotTo(HaveOccurred())
+				best = min(best, time.Since(start))
+			}
+			return best
+		}
+		small, large := bestOf3(10_000), bestOf3(40_000)
+		Expect(float64(large)/float64(small)).To(BeNumerically("<", 10),
+			"40k entries took %s against %s for 10k: growth is superlinear", large, small)
+
+		_, err := build(map[string][]schema.IndexEntry{"rg": append(versions(1_000), entry("1.0", testHost))})
 		Expect(err).To(MatchError(`catalog: rg "1.0" for platform "` + testHost + `" is listed more than once (also listed as "1.0.0")`))
-		Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))
 	})
 
 	It("validates a foreign-platform entry before dropping it", func() {

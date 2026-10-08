@@ -20,6 +20,9 @@ permissions:
 jobs:
   test:
     strategy:
+      # One OS failing must not cancel the other: both results are needed to
+      # tell a portability failure from a general one.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
