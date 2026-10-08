@@ -1,0 +1,20 @@
+internal/action/install_test.go
+  s_c0071ac247433b::t_18ab80c00701f3 341-354,365-367,371-372
+  s_c0071ac247433b::t_0e995cc28f9b67 16-22,24-27,29-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b19407e8473f915cf625c4719758d4190b206a16",
+  "prompts": {},
+  "sessions": {
+    "s_c0071ac247433b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e612f497-3f51-4677-8261-24928e7f19b7",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
