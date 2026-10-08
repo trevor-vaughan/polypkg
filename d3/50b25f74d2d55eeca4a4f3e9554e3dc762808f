@@ -1,0 +1,23 @@
+.github/workflows/test.yml
+  s_c0071ac247433b::t_994853abf08d89 23-25
+internal/resolver/catalog_test.go
+  s_c0071ac247433b::t_c837ab374277d7 5
+  s_c0071ac247433b::t_b30ac440df8e11 328-337,339-351,353-355
+  s_c0071ac247433b::t_983e77b5d94bb6 352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d350b25f74d2d55eeca4a4f3e9554e3dc762808f",
+  "prompts": {},
+  "sessions": {
+    "s_c0071ac247433b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e612f497-3f51-4677-8261-24928e7f19b7",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
