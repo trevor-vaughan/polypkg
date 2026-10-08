@@ -13,13 +13,23 @@ import (
 	"lukechampine.com/blake3"
 )
 
-// fifoFDs counts the descriptors in this process that refer to path.
+// maxScannedFD bounds fifoFDs's descriptor scan. The kernel hands out the
+// lowest free number, so a test process's descriptors stay far below this.
+const maxScannedFD = 4096
+
+// fifoFDs counts the descriptors in this process that refer to the file at
+// path, by matching device and inode. It avoids /proc/self/fd, which macOS
+// lacks, and stays safe to call from a goroutine (no assertions).
 func fifoFDs(path string) int {
-	fds, err := os.ReadDir("/proc/self/fd")
-	Expect(err).NotTo(HaveOccurred())
+	var want syscall.Stat_t
+	if syscall.Stat(path, &want) != nil {
+		return 0
+	}
 	n := 0
-	for _, fd := range fds {
-		if target, err := os.Readlink(filepath.Join("/proc/self/fd", fd.Name())); err == nil && target == path {
+	for fd := range maxScannedFD {
+		var st syscall.Stat_t
+		// Dev is int32 on darwin and uint64 on linux; widen both sides alike.
+		if syscall.Fstat(fd, &st) == nil && uint64(st.Dev) == uint64(want.Dev) && st.Ino == want.Ino {
 			n++
 		}
 	}
@@ -328,6 +338,20 @@ var _ = Describe("Install", func() {
 		go func() {
 			defer GinkgoRecover()
 			defer close(done)
+			// fdCount polls until cond holds for the FIFO's descriptor count,
+			// giving up after 5s. Giving up returns the goroutine, whose
+			// closed writer fd then gives Install's read an EOF: a failed
+			// spec instead of a read that blocks until go test's timeout.
+			fdCount := func(cond func(int) bool) bool {
+				giveUp := time.Now().Add(5 * time.Second)
+				for !cond(fifoFDs(src)) {
+					if time.Now().After(giveUp) {
+						return false
+					}
+					time.Sleep(time.Millisecond)
+				}
+				return true
+			}
 			for _, body := range [][]byte{copied, later} {
 				deadline := time.Now().Add(500 * time.Millisecond)
 				for {
@@ -338,13 +362,14 @@ var _ = Describe("Install", func() {
 						// open(2); hold on until its fd exists, write, close,
 						// then wait for it to close, so the next body can only
 						// reach a later open, never this reader's stream.
-						for fifoFDs(src) < 2 {
-							time.Sleep(time.Millisecond)
+						if !fdCount(func(n int) bool { return n >= 2 }) {
+							_ = syscall.Close(fd)
+							return
 						}
 						_, _ = syscall.Write(fd, body)
 						_ = syscall.Close(fd)
-						for fifoFDs(src) > 0 {
-							time.Sleep(time.Millisecond)
+						if !fdCount(func(n int) bool { return n == 0 }) {
+							return
 						}
 						break
 					}
