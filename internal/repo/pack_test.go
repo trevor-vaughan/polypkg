@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -195,6 +196,9 @@ func TestPackArtifactRefusesANonUTF8Name(t *testing.T) {
 		dir := t.TempDir()
 		writePkgSrc(t, dir)
 		if err := os.WriteFile(filepath.Join(dir, "content", name), []byte("x"), 0o644); err != nil {
+			if errors.Is(err, syscall.EILSEQ) {
+				t.Skipf("this filesystem refuses non-UTF-8 names: %v", err)
+			}
 			t.Fatal(err)
 		}
 		_, _, err := PackArtifact(dir)

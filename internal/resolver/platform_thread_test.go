@@ -4,15 +4,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 var _ = Describe("platform threading", func() {
 	It("carries an index entry's platform through Candidate into Resolved", func() {
-		// The platform-specific entry names this host so the test keeps
-		// passing once BuildCatalog filters by host.
-		host := platform.Host()
+		// The platform-specific entry names testHost, the platform build()
+		// filters the catalog for, so it survives host filtering on any runner.
+		host := testHost
 		cat := build(map[string][]schema.IndexEntry{
 			"tool": {{Version: "1.0.0", ContentHash: "blake3:t1", Artifact: "pool/t1.tar.zst", Platform: host}},
 			"lib":  {{Version: "1.0.0", ContentHash: "blake3:l1", Artifact: "pool/l1.tar.zst"}},
