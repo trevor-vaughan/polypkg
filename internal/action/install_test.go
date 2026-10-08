@@ -28,8 +28,7 @@ func fifoFDs(path string) int {
 	n := 0
 	for fd := range maxScannedFD {
 		var st syscall.Stat_t
-		// Dev is int32 on darwin and uint64 on linux; widen both sides alike.
-		if syscall.Fstat(fd, &st) == nil && uint64(st.Dev) == uint64(want.Dev) && st.Ino == want.Ino {
+		if syscall.Fstat(fd, &st) == nil && st.Dev == want.Dev && st.Ino == want.Ino {
 			n++
 		}
 	}
