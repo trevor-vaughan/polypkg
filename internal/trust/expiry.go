@@ -6,8 +6,8 @@ import (
 )
 
 // ExpirySkew bounds acceptable consumer clock drift when enforcing metadata
-// expiry (D13). Rejection triggers only when now exceeds expires by more than
-// this tolerance.
+// expiry. Rejection triggers only when now exceeds expires by more than this
+// tolerance.
 const ExpirySkew = 5 * time.Minute
 
 // timeNow is indirected for tests.
@@ -30,7 +30,7 @@ func SetTimeNowForTesting(f func() time.Time) (restore func()) {
 // validly-signed serial forever.
 //
 // acceptUntil is an optional per-source RFC3339 freshness-grace deadline
-// (phase 2e-1, spec §10.9 E-3). When the document is expired but now is at or
+// (accept_expiry_until). When the document is expired but now is at or
 // before acceptUntil, the document is ACCEPTED and graced is true — the
 // wall-clock bound is relaxed for a frozen air-gap mirror. Grace relaxes
 // wall-clock ONLY; the caller's monotonic serial-floor check is a separate

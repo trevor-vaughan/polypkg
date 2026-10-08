@@ -1,14 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://polypkg.dev/schemas/index-v2.json",
+  "$id": "https://polypkg.dev/schemas/index-v3.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "expires", "packages"],
   "properties": {
-    "schema": { "const": "polypkg.index/v2" },
+    "schema": { "const": "polypkg.index/v3" },
     "expires": { "type": "string", "format": "date-time" },
     "packages": {
       "type": "object",
+      "propertyNames": { "pattern": "^[a-zA-Z0-9_-]+$" },
       "additionalProperties": {
         "type": "array",
         "items": { "$ref": "#/$defs/entry" }
@@ -45,6 +46,7 @@
       "required": ["version", "content_hash", "artifact"],
       "properties": {
         "version": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$" },
         "content_hash": { "type": "string", "pattern": "^blake3:[0-9a-f]+$" },
         "artifact": { "type": "string", "minLength": 1 },
         "revision": { "type": "integer", "minimum": 1 },

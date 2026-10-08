@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -99,9 +98,7 @@ var _ = Describe("altNameKnown", func() {
 
 var _ = Describe("alternatives invalid --scope error", func() {
 	It("returns CLIError for an unrecognised scope", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"alternatives", "list", "--scope", "bogus"})
 		err := root.Execute()
@@ -115,9 +112,7 @@ var _ = Describe("alternatives invalid --scope error", func() {
 
 var _ = Describe("alternatives list no-generation error", func() {
 	It("returns CLIError with apply hint when no generation exists", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"alternatives", "list"})
 		err := root.Execute()

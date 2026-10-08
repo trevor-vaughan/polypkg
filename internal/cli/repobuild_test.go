@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 // writeHelloPkgSource writes a minimal package source dir under root/pkgs/hello.
@@ -191,7 +193,7 @@ func initHelloRepo(t *testing.T) (mPath, keyDir string) {
 	return mPath, keyDir
 }
 
-// Finding 12: a non-positive --valid-for was silently replaced by the 720h
+// A non-positive --valid-for used to be silently replaced by the 720h
 // default, so the operator got something entirely different from what they
 // typed and no indication of it.
 func TestRepoBuildRejectsNonPositiveValidFor(t *testing.T) {
@@ -208,7 +210,7 @@ func TestRepoBuildRejectsNonPositiveValidFor(t *testing.T) {
 	}
 }
 
-// Finding 12: a positive but absurdly short window publishes metadata that
+// A positive but absurdly short window publishes metadata that
 // consumers treat as expired almost immediately. That is legal (an operator may
 // want it) but must not be silent.
 func TestRepoBuildWarnsOnVeryShortValidFor(t *testing.T) {
@@ -221,11 +223,15 @@ func TestRepoBuildWarnsOnVeryShortValidFor(t *testing.T) {
 	if !strings.Contains(out, "warning: --valid-for 1s is shorter than") {
 		t.Fatalf("expected a short-window warning, got:\n%s", out)
 	}
+	if strings.Contains(out, "exit 4") || !strings.Contains(out, "5m0s clock-skew allowance") {
+		t.Fatalf("the warning must name the real consequence and the skew allowance, got:\n%s", out)
+	}
 }
 
-// Finding 13: a no-op rebuild reuses the still-fresh published window (correct,
-// D13 half-life reuse) but used to exit 0 saying "already up to date" while
-// silently discarding an explicitly-passed --valid-for.
+// A no-op rebuild reuses the still-fresh published window (correct:
+// a window still above its half-life is not renewed) but used to exit 0 saying
+// "already up to date" while silently discarding an explicitly-passed
+// --valid-for.
 func TestRepoBuildNotesValidForNotAppliedOnNoOpRebuild(t *testing.T) {
 	mPath, keyDir := initHelloRepo(t)
 	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
@@ -268,7 +274,7 @@ func TestRepoBuildDoesNotNoteValidForWhenApplied(t *testing.T) {
 	}
 }
 
-// TestRepoStatusHalfLifeUsesBuiltWindow pins that the D13 expiry-refresh
+// TestRepoStatusHalfLifeUsesBuiltWindow pins that the expiry-refresh
 // half-life is measured against the window the build actually stamped, not
 // against the 720h default. `repo status` has no --valid-for flag, so it used to
 // assume the default: any build with a window under 720h reported
@@ -303,5 +309,78 @@ func TestRepoStatusHalfLifeUsesBuiltWindow(t *testing.T) {
 				t.Fatalf("status reported nothing pending, so the bare rebuild must be a no-op; got:\n%s", out)
 			}
 		})
+	}
+}
+
+// A sigstore_roots edit widens what consumers trust, so repo status and repo
+// build show what the new trust bundle vouches for, not just that it changed.
+func TestRepoBuildAndStatusShowTheTrustBundleChange(t *testing.T) {
+	mPath, keyDir := initHelloRepo(t)
+	env := map[string]string{"POLYPKG_REPO_KEY_PASSWORD": "pw"}
+	if out, err := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir); err != nil {
+		t.Fatalf("first build: %v (out=%s)", err, out)
+	}
+	if out, _ := runRepo(t, env, "repo", "build", "--manifest", mPath, "--key-dir", keyDir); strings.Contains(out, "trust bundle") {
+		t.Fatalf("a build that leaves the trust bundle alone mentioned it:\n%s", out)
+	}
+
+	fixture, err := os.ReadFile(filepath.Join("..", "repo", "testdata", "sigstore-public-good-trusted-root.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoDir := filepath.Dir(mPath)
+	if err := os.WriteFile(filepath.Join(repoDir, "trusted_root.json"), fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := os.ReadFile(mPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mPath, append(manifest, "sigstore_roots:\n    - ./trusted_root.json\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRepo(t, nil, "repo", "status", "--manifest", mPath, "--key-dir", keyDir)
+	if code := exitCodeOf(err); code != 2 {
+		t.Fatalf("status: want exit 2, got %d (err %v, out %s)", code, err, out)
+	}
+	for _, want := range []string{
+		"The trust bundle would vouch for:",
+		"sigstore root: Fulcio root sha256:3ba7b6cc4e95469d4d334b49cb257ad8537076fa84b0ca87ff4ecfe6a54680c1, valid 2022-04-13T20:06:15Z to open-ended",
+		"sigstore root: Fulcio root sha256:03a38ffb1f450100c2596d1d10b900ac4d504058006dda58199576bbeb9c73d0, valid 2021-03-07T03:20:29Z to 2022-12-31T23:59:59.999Z",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status output lacks %q:\n%s", want, out)
+		}
+	}
+
+	out, err = runRepo(t, env, "--format", "json", "repo", "build", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("build: %v (out=%s)", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	res, err := schema.ParseCLIResult(strings.NewReader(lines[len(lines)-1]))
+	if err != nil {
+		t.Fatalf("parse result: %v (out=%s)", err, out)
+	}
+	tb, ok := res.Data["trust_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("data.trust_bundle missing from %s", out)
+	}
+	roots, _ := tb["sigstore_roots"].([]any)
+	if len(roots) != 2 {
+		t.Fatalf("data.trust_bundle.sigstore_roots = %v, want two roots", tb["sigstore_roots"])
+	}
+	first, _ := roots[0].(map[string]any)
+	if first["fulcio_root_sha256"] != "3ba7b6cc4e95469d4d334b49cb257ad8537076fa84b0ca87ff4ecfe6a54680c1" {
+		t.Fatalf("first root = %v", first)
+	}
+
+	out, err = runRepo(t, env, "--format", "json", "repo", "build", "--manifest", mPath, "--key-dir", keyDir)
+	if err != nil {
+		t.Fatalf("rebuild: %v (out=%s)", err, out)
+	}
+	if strings.Contains(out, "trust_bundle") {
+		t.Fatalf("an unchanged rebuild reported a trust bundle: %s", out)
 	}
 }

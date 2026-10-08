@@ -225,7 +225,7 @@ var _ = Describe("LoadBundle", func() {
 		})
 	})
 
-	Describe("SigstoreRootAt", func() {
+	Describe("SigstoreRootsAt", func() {
 		roots := []schema.SigstoreRoot{{
 			ValidFrom:  "2026-01-01T00:00:00Z",
 			ValidUntil: "2027-01-01T00:00:00Z",
@@ -246,51 +246,77 @@ var _ = Describe("LoadBundle", func() {
 
 		It("returns the roots valid at the given time", func() {
 			b := load()
-			r, ok := b.SigstoreRootAt(mustParse("2026-06-01T00:00:00Z"))
-			Expect(ok).To(BeTrue())
-			Expect(r.FulcioCA).To(Equal([]string{"ZnVsY2lv"}))
+			live := b.SigstoreRootsAt(mustParse("2026-06-01T00:00:00Z"))
+			Expect(live).To(HaveLen(1))
+			Expect(live[0].FulcioCA).To(Equal([]string{"ZnVsY2lv"}))
 		})
 
-		It("returns false when no roots cover the given time", func() {
+		It("returns no roots when none cover the given time", func() {
 			b := load()
-			_, ok := b.SigstoreRootAt(mustParse("2030-06-01T00:00:00Z"))
-			Expect(ok).To(BeFalse())
+			Expect(b.SigstoreRootsAt(mustParse("2030-06-01T00:00:00Z"))).To(BeEmpty())
 		})
 	})
 })
 
-var _ = Describe("SelectSigstoreRoot", func() {
+var _ = Describe("SelectSigstoreRoots", func() {
 	mkRoot := func(from, until string) schema.SigstoreRoot {
 		return schema.SigstoreRoot{ValidFrom: from, ValidUntil: until, FulcioCA: []string{"ca"}, RekorKeys: []string{"rk"}}
 	}
+	froms := func(roots []schema.SigstoreRoot) []string {
+		out := make([]string, 0, len(roots))
+		for _, r := range roots {
+			out = append(out, r.ValidFrom)
+		}
+		return out
+	}
 
-	It("returns the first root whose window contains the instant", func() {
+	It("returns only the roots whose window contains the instant", func() {
 		roots := []schema.SigstoreRoot{
 			mkRoot("2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z"),
 			mkRoot("2024-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
 		}
-		r, ok := SelectSigstoreRoot(roots, mustParse("2025-06-01T00:00:00Z"))
-		Expect(ok).To(BeTrue())
-		Expect(r.ValidFrom).To(Equal("2024-01-01T00:00:00Z"))
+		Expect(froms(SelectSigstoreRoots(roots, mustParse("2025-06-01T00:00:00Z")))).To(Equal([]string{"2024-01-01T00:00:00Z"}))
 	})
 
-	It("returns not-found when the instant is outside every window", func() {
+	// The public-good Fulcio CAs overlap from 2022-04-13 to 2022-12-31: a
+	// bundle from that span chains to only one of them, so the caller needs
+	// every root live at the instant, not just the first.
+	It("returns every root whose window contains the instant, in their given order", func() {
+		roots := []schema.SigstoreRoot{
+			mkRoot("2022-04-13T00:00:00Z", ""),
+			mkRoot("2019-01-01T00:00:00Z", "2020-01-01T00:00:00Z"),
+			mkRoot("2021-03-07T00:00:00Z", "2022-12-31T23:59:59Z"),
+		}
+		Expect(froms(SelectSigstoreRoots(roots, mustParse("2022-06-01T00:00:00Z")))).To(Equal([]string{
+			"2022-04-13T00:00:00Z", "2021-03-07T00:00:00Z",
+		}))
+	})
+
+	It("includes both window bounds", func() {
 		roots := []schema.SigstoreRoot{mkRoot("2024-01-01T00:00:00Z", "2026-01-01T00:00:00Z")}
-		_, ok := SelectSigstoreRoot(roots, mustParse("2000-01-01T00:00:00Z"))
-		Expect(ok).To(BeFalse())
+		Expect(SelectSigstoreRoots(roots, mustParse("2024-01-01T00:00:00Z"))).To(HaveLen(1))
+		Expect(SelectSigstoreRoots(roots, mustParse("2026-01-01T00:00:00Z"))).To(HaveLen(1))
 	})
 
-	It("skips a root whose window fails to parse (fail closed)", func() {
-		roots := []schema.SigstoreRoot{mkRoot("not-a-timestamp", "")}
-		_, ok := SelectSigstoreRoot(roots, mustParse("2025-06-01T00:00:00Z"))
-		Expect(ok).To(BeFalse())
+	It("returns no roots when the instant is outside every window", func() {
+		roots := []schema.SigstoreRoot{mkRoot("2024-01-01T00:00:00Z", "2026-01-01T00:00:00Z")}
+		Expect(SelectSigstoreRoots(roots, mustParse("2000-01-01T00:00:00Z"))).To(BeEmpty())
+	})
+
+	It("skips a root whose window fails to parse but keeps the parseable ones (fail closed)", func() {
+		roots := []schema.SigstoreRoot{
+			mkRoot("not-a-timestamp", ""),
+			mkRoot("2024-01-01T00:00:00Z", "also-not-a-timestamp"),
+			mkRoot("2024-01-01T00:00:00Z", ""),
+		}
+		live := SelectSigstoreRoots(roots, mustParse("2025-06-01T00:00:00Z"))
+		Expect(live).To(HaveLen(1))
+		Expect(live[0].ValidUntil).To(BeEmpty())
 	})
 
 	It("treats an empty valid_until as open-ended", func() {
 		roots := []schema.SigstoreRoot{mkRoot("2024-01-01T00:00:00Z", "")}
-		r, ok := SelectSigstoreRoot(roots, mustParse("2099-01-01T00:00:00Z"))
-		Expect(ok).To(BeTrue())
-		Expect(r.ValidFrom).To(Equal("2024-01-01T00:00:00Z"))
+		Expect(froms(SelectSigstoreRoots(roots, mustParse("2099-01-01T00:00:00Z")))).To(Equal([]string{"2024-01-01T00:00:00Z"}))
 	})
 })
 

@@ -1,0 +1,58 @@
+{
+  "note": "Representative fixture: asset names reconstructed from the release naming of gh 2.60.1 (cli/cli), not recorded from the GitHub API.",
+  "assets": [
+    "gh_2.60.1_checksums.txt",
+    "gh_2.60.1_linux_386.deb",
+    "gh_2.60.1_linux_386.rpm",
+    "gh_2.60.1_linux_386.tar.gz",
+    "gh_2.60.1_linux_amd64.deb",
+    "gh_2.60.1_linux_amd64.rpm",
+    "gh_2.60.1_linux_amd64.tar.gz",
+    "gh_2.60.1_linux_arm64.deb",
+    "gh_2.60.1_linux_arm64.rpm",
+    "gh_2.60.1_linux_arm64.tar.gz",
+    "gh_2.60.1_linux_armv6.deb",
+    "gh_2.60.1_linux_armv6.rpm",
+    "gh_2.60.1_linux_armv6.tar.gz",
+    "gh_2.60.1_macOS_amd64.zip",
+    "gh_2.60.1_macOS_arm64.zip",
+    "gh_2.60.1_macOS_universal.pkg",
+    "gh_2.60.1_windows_386.msi",
+    "gh_2.60.1_windows_386.zip",
+    "gh_2.60.1_windows_amd64.msi",
+    "gh_2.60.1_windows_amd64.zip",
+    "gh_2.60.1_windows_arm64.msi",
+    "gh_2.60.1_windows_arm64.zip"
+  ],
+  "cases": [
+    {
+      "name": "heuristics only",
+      "chosen": {
+        "darwin/amd64": "gh_2.60.1_macOS_amd64.zip",
+        "darwin/arm64": "gh_2.60.1_macOS_arm64.zip",
+        "linux/386": "gh_2.60.1_linux_386.tar.gz",
+        "linux/amd64": "gh_2.60.1_linux_amd64.tar.gz",
+        "linux/arm64": "gh_2.60.1_linux_arm64.tar.gz"
+      },
+      "skipped": {
+        "gh_2.60.1_checksums.txt": "signature, checksum or metadata file",
+        "gh_2.60.1_linux_386.deb": "OS package",
+        "gh_2.60.1_linux_386.rpm": "OS package",
+        "gh_2.60.1_linux_amd64.deb": "OS package",
+        "gh_2.60.1_linux_amd64.rpm": "OS package",
+        "gh_2.60.1_linux_arm64.deb": "OS package",
+        "gh_2.60.1_linux_arm64.rpm": "OS package",
+        "gh_2.60.1_linux_armv6.deb": "OS package",
+        "gh_2.60.1_linux_armv6.rpm": "OS package",
+        "gh_2.60.1_linux_armv6.tar.gz": "32-bit ARM (platform variants are not supported)",
+        "gh_2.60.1_macOS_universal.pkg": "OS package",
+        "gh_2.60.1_windows_386.msi": "Windows asset",
+        "gh_2.60.1_windows_386.zip": "Windows asset",
+        "gh_2.60.1_windows_amd64.msi": "Windows asset",
+        "gh_2.60.1_windows_amd64.zip": "Windows asset",
+        "gh_2.60.1_windows_arm64.msi": "Windows asset",
+        "gh_2.60.1_windows_arm64.zip": "Windows asset"
+      }
+    }
+  ]
+}

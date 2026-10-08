@@ -29,7 +29,7 @@ func Mime(inv Invocation, scope Scope) (Result, error) {
 	}
 	// base is the source basename; the ownership path is mime/<base> and the
 	// recorded target is the $ACTIVE-expanded source. The planner mirrors both in
-	// projectExpected/ProjectOwnership ("mime" case) — keep in sync.
+	// projectExpected/projectOwnership ("mime" case) — keep in sync.
 	base := filepath.Base(source)
 	stem := strings.TrimSuffix(base, ".xml")
 	if stem == base || !mimeIDRe.MatchString(stem) {

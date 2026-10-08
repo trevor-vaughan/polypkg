@@ -78,6 +78,51 @@ var _ = Describe("UserStateHome", func() {
 	})
 })
 
+var _ = Describe("UserCacheHome", func() {
+	It("on Linux defaults to ~/.cache/polypkg when XDG_CACHE_HOME is unset", func() {
+		if runtime.GOOS != "linux" {
+			Skip("Linux-specific path test")
+		}
+		GinkgoT().Setenv("XDG_CACHE_HOME", "")
+		home, err := os.UserHomeDir()
+		Expect(err).NotTo(HaveOccurred())
+		got, err := UserCacheHome()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(filepath.Join(home, ".cache", "polypkg")))
+	})
+
+	It("on Linux ignores a relative XDG_CACHE_HOME and falls back to the default", func() {
+		if runtime.GOOS != "linux" {
+			Skip("Linux-specific path test")
+		}
+		GinkgoT().Setenv("XDG_CACHE_HOME", "relative/cache")
+		home, err := os.UserHomeDir()
+		Expect(err).NotTo(HaveOccurred())
+		got, err := UserCacheHome()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(filepath.Join(home, ".cache", "polypkg")))
+	})
+
+	It("on macOS defaults to ~/Library/Caches/polypkg when XDG_CACHE_HOME is unset", func() {
+		if runtime.GOOS != "darwin" {
+			Skip("macOS-specific path test")
+		}
+		GinkgoT().Setenv("XDG_CACHE_HOME", "")
+		home, err := os.UserHomeDir()
+		Expect(err).NotTo(HaveOccurred())
+		got, err := UserCacheHome()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(filepath.Join(home, "Library", "Caches", "polypkg")))
+	})
+
+	It("uses XDG_CACHE_HOME when set to an absolute path", func() {
+		GinkgoT().Setenv("XDG_CACHE_HOME", "/custom/cache")
+		got, err := UserCacheHome()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal("/custom/cache/polypkg"))
+	})
+})
+
 var _ = Describe("UserConfigHome", func() {
 	It("on Linux defaults to ~/.config/polypkg when XDG_CONFIG_HOME is unset", func() {
 		if runtime.GOOS != "linux" {

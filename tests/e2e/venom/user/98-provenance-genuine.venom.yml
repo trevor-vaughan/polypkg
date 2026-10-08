@@ -1,4 +1,4 @@
-name: Genuine carried provenance installs builder-verified (2f-4)
+name: Genuine carried provenance installs builder-verified
 # Reads the deterministic provenancegen-minted served repo (read-only,
 # bind-mounted at /e2e/provenance-fixtures/genuine/public — see
 # tests/e2e/provenancegen and tests/e2e/compose.yaml's runner-user mount): a
@@ -6,7 +6,7 @@ name: Genuine carried provenance installs builder-verified (2f-4)
 # under the fixed builder key "builder-current". Two rows:
 #   1. an explicit allow-list naming that key installs and is surfaced as
 #      builder-verified in the full recorded state (info + status -vv).
-#   2. an EMPTY allow-list (source-governance trust, spec §10.7) still
+#   2. an EMPTY allow-list (source-governance trust) still
 #      installs — the absence of an allow-list is not a refusal.
 # Each testcase uses its own HOME/XDG isolation so state never collides.
 vars:
@@ -14,7 +14,7 @@ vars:
   # builder-current's deterministic public key (ed25519), printed as
   # allow_key= by `go run ./tests/e2e/provenancegen` — if the fixture seed
   # ever changes this literal must be regenerated too.
-  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q='
+  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=' # gitleaks:allow -- ed25519 public key, not a secret
   home1: '/tmp/u98-allow'
   px1: 'env HOME=/tmp/u98-allow XDG_DATA_HOME=/tmp/u98-allow/data XDG_CONFIG_HOME=/tmp/u98-allow/cfg XDG_STATE_HOME=/tmp/u98-allow/state XDG_CACHE_HOME=/tmp/u98-allow/cache /usr/local/bin/polypkg'
   profile1: '/tmp/u98-allow/profile.yaml'
@@ -111,7 +111,7 @@ testcases:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "applied generation 1"
 
-  # G4 positive/selection half (spec §11 / §5.3 "all-overlap-must-agree"): the
+  # G4 positive/selection half ("all-overlap-must-agree"): the
   # carried SLSA subject offers BOTH sha256 and sha512 of content/bin/app, both
   # matching the installed bytes, so it binds and installs builder-verified —
   # proving the multi-algo agreement path is accepted, not spuriously refused.
@@ -155,7 +155,7 @@ testcases:
           - result.code ShouldEqual 0
           - 'result.systemout ShouldContainSubstring "carried: https://slsa.dev/provenance/v1 — builder-verified [builder-current]"'
 
-  # G6 positive (spec §11 / §5.5 / §7): a genuine offline sigstore bundle carried
+  # G6 positive: a genuine offline sigstore bundle carried
   # as attestations/sigstore.json, whose SigstoreRoot is published in the served
   # trust bundle's sigstore_roots, verifies OFFLINE (inclusion proof + Fulcio
   # chain + Rekor key) and binds verified-offline with the recorded Fulcio SAN and

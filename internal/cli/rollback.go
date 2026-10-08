@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/alternatives"
-	"github.com/trevor-vaughan/polypkg/internal/paths"
+	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/substrate"
 )
 
@@ -20,13 +24,19 @@ func newRollbackCmd() *cobra.Command {
 the packages and links active at that moment. rollback activates a previous
 generation without running apply again, making that snapshot the current state.
 
-With no arguments, rollback activates the generation immediately before the
-current one. Use --to to target a specific generation by id. Run
-'polypkg status -v' to list the generation ids retained in the store and
-choose one.
+With no arguments, rollback activates the newest complete generation older
+than the current one. A generation that an interrupted apply left incomplete
+(it has no manifest) is skipped, and --to refuses one. So is a generation
+whose manifest is damaged (corruption or tampering), with a warning. Use --to
+to target a specific generation by id. Run 'polypkg status -v' to list the
+generation ids retained in the store and choose one.
 
 After rollback, alternatives and host-integration links (bin, completions,
-desktop entries, MIME types) are reconciled to match the activated generation.`,
+desktop entries, MIME types) are reconciled to match the activated generation.
+
+rollback does not edit your profile. If the profile still asks for the state
+you rolled back from, 'polypkg plan' reports it as pending and the next
+'polypkg apply' re-applies it; edit the profile to keep the rolled-back state.`,
 		Example: "  # Roll back to the generation before the current one\n" +
 			"  polypkg rollback\n\n" +
 			"  # List retained generations, then roll back to a specific one\n" +
@@ -47,14 +57,23 @@ desktop entries, MIME types) are reconciled to match the activated generation.`,
 
 func runRollback(cmd *cobra.Command, format Format) error {
 	to, _ := cmd.Flags().GetInt("to")
-	dataHome, err := paths.UserDataHome()
+	dataHome, stateHome, err := scopeHomes("user", "")
 	if err != nil {
 		return err
 	}
-	sub, err := substrate.NewOwnStore(dataHome)
+	sub, err := substrate.New("store", dataHome)
 	if err != nil {
-		return err
+		return fmt.Errorf("open substrate: %w", err)
 	}
+	genDir := func(id int) string { return filepath.Join(dataHome, "generations", strconv.Itoa(id)) }
+	lockPath := filepath.Join(stateHome, "apply.lock")
+	l, err := lock.Acquire(cmd.Context(), lockPath,
+		lock.Options{TxID: "rollback", Command: "polypkg rollback"})
+	if err != nil {
+		return lockError(lockPath, err)
+	}
+	defer func() { _ = l.Release() }()
+
 	current, err := sub.CurrentGeneration()
 	if err != nil {
 		if errors.Is(err, substrate.ErrNoCurrentGeneration) || errors.Is(err, fs.ErrNotExist) {
@@ -68,7 +87,38 @@ func runRollback(cmd *cobra.Command, format Format) error {
 	}
 	target := to
 	if target == 0 {
-		target = current - 1
+		// Walk newest-first below current and stop at the first complete
+		// generation, reading only the manifests needed (ListGenerations would
+		// also parse every other manifest and size every generation).
+		ids, lerr := sub.GenerationIDs()
+		if lerr != nil {
+			return fmt.Errorf("list generations: %w", lerr)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(ids)))
+		for _, id := range ids {
+			if id >= current {
+				continue
+			}
+			_, merr := sub.ReadManifest(id)
+			switch {
+			case merr == nil:
+				target = id
+			case errors.Is(merr, substrate.ErrIncompleteGeneration):
+				continue
+			case errors.Is(merr, substrate.ErrDamagedGeneration):
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: skipping generation %d: its manifest is damaged; inspect %s\n", id, genDir(id))
+				continue
+			default:
+				return generationManifestError(id, genDir(id), "activated", merr)
+			}
+			break
+		}
+		if target == 0 && current > 1 {
+			return &CLIError{
+				Msg:  fmt.Sprintf("nothing to roll back: no complete generation older than generation %d is retained", current),
+				Hint: "run `polypkg status -v` to list retained generations",
+			}
+		}
 	}
 	if target < 1 {
 		return &CLIError{
@@ -76,7 +126,29 @@ func runRollback(cmd *cobra.Command, format Format) error {
 			Hint: "run `polypkg status -v` to list retained generations",
 		}
 	}
+	if to != 0 {
+		// Check an explicit target here rather than only through sub.Rollback,
+		// whose error cannot tell a manifest read failure from a failed swap.
+		if _, serr := os.Stat(genDir(target)); serr != nil {
+			if errors.Is(serr, fs.ErrNotExist) {
+				return &CLIError{
+					Msg:  fmt.Sprintf("generation %d does not exist", target),
+					Hint: "run `polypkg status -v` to list retained generations",
+					Err:  serr,
+				}
+			}
+			return fmt.Errorf("target generation %d: %w", target, serr)
+		}
+		if _, merr := sub.ReadManifest(target); merr != nil {
+			return generationManifestError(target, genDir(target), "activated", merr)
+		}
+	}
 	if err := sub.Rollback(target); err != nil {
+		// The checks above ran under the apply lock, so only a change made
+		// outside polypkg can still land here.
+		if errors.Is(err, substrate.ErrIncompleteGeneration) || errors.Is(err, substrate.ErrDamagedGeneration) {
+			return generationManifestError(target, genDir(target), "activated", err)
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return &CLIError{
 				Msg:  fmt.Sprintf("generation %d does not exist", target),

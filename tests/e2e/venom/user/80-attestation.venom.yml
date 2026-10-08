@@ -21,7 +21,7 @@ testcases:
   - name: install verifies the published attestation and records it
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -49,7 +49,7 @@ testcases:
   - name: a tampered attestation blob is refused under the default policy
     steps:
       - type: exec
-        script: '{{.pxt}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.pxt}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -81,7 +81,7 @@ testcases:
         # consumer's local cache still holds the corrupted blob it fetched.
         script: |
           set -e
-          {{.pxv}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user
+          {{.pxv}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user
           {{.pxv}} install hello
         assertions:
           - result.code ShouldEqual 0
@@ -105,10 +105,10 @@ testcases:
         script: 'cat {{.pub}}/noatt/public/index.json'
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "polypkg.index/v2"
+          - result.systemout ShouldContainSubstring "polypkg.index/v3"
           - result.systemout ShouldNotContainSubstring "attestations"
       - type: exec
-        script: '{{.pxr}} init --source-url {{.source_url}}/noatt/public --trust-root-file {{.pub}}/noatt/public/trust_root.pub --scope user'
+        script: '{{.pxr}} init --source-url {{.source_url}}/noatt/public --trust-root {{.pub}}/noatt/public/trust_root.pub --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -129,7 +129,7 @@ testcases:
   - name: policy warn installs the unattested package with a warning
     steps:
       - type: exec
-        script: '{{.pxw}} init --source-url {{.source_url}}/noatt/public --trust-root-file {{.pub}}/noatt/public/trust_root.pub --scope user'
+        script: '{{.pxw}} init --source-url {{.source_url}}/noatt/public --trust-root {{.pub}}/noatt/public/trust_root.pub --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -152,7 +152,7 @@ testcases:
           - result.code ShouldEqual 0
           - 'result.systemout ShouldContainSubstring "attestation: unattested (policy warn at install)"'
 
-  # Expired-metadata refusal is deliberately NOT tested here: D13 grants a
+  # Expired-metadata refusal is deliberately NOT tested here: consumers get a
   # 5-minute clock-skew tolerance, so a real binary cannot observe "expired"
   # without sleeping out the skew window. The scenario lives in
   # tests/integration/e2e_freshness_test.go, which drives the full CLI against

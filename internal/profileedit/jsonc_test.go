@@ -362,7 +362,7 @@ var _ = Describe("Apply (JSONC)", func() {
 		})
 	})
 
-	Describe("malformed packages node (I1)", func() {
+	Describe("malformed packages node", func() {
 		It("returns a friendly error when packages is not an object", func() {
 			// "packages": [] — array, not object; hujson.Patch would panic with
 			// "invalid array index: user" without the pre-check.

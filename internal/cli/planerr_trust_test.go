@@ -43,3 +43,36 @@ var _ = Describe("planExecError trust translation", func() {
 		})
 	})
 })
+
+var _ = Describe("planExecError artifact identity translation", func() {
+	DescribeTable("frames a recipe/index disagreement as a publisher fault",
+		func(field, got, want, wantMsg string) {
+			aie := &planner.ArtifactIdentityError{
+				Name: "hello", Version: "1.0.0", Source: "native",
+				Field: field, Got: got, Want: want,
+			}
+			res := planExecError(aie)
+			var ce *CLIError
+			Expect(errors.As(res, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", res, res)
+			Expect(ce.Msg).To(Equal(wantMsg))
+			Expect(ce.Hint).To(ContainSubstring("does not match the index entry"))
+			Expect(ce.Hint).To(ContainSubstring("nothing was installed"))
+			Expect(ce.Hint).To(ContainSubstring("contact the repository operator"))
+			var unwrapped *planner.ArtifactIdentityError
+			Expect(errors.As(ce, &unwrapped)).To(BeTrue(), "the typed cause must stay in the chain")
+		},
+		Entry("name", "name", "other", "hello",
+			`artifact for hello 1.0.0 from source "native" declares name "other", but the index lists "hello"`),
+		Entry("version", "version", "1.0.1", "1.0.0",
+			`artifact for hello 1.0.0 from source "native" declares version "1.0.1", but the index lists "1.0.0"`),
+		Entry("platform", "platform", "linux/amd64", "any",
+			`artifact for hello 1.0.0 from source "native" declares platform "linux/amd64", but the index lists "any"`),
+	)
+
+	It("still matches when the planner error is wrapped", func() {
+		aie := &planner.ArtifactIdentityError{Name: "hello", Version: "1.0.0", Source: "native", Field: "name", Got: "other", Want: "hello"}
+		var ce *CLIError
+		Expect(errors.As(planExecError(fmt.Errorf("plan: %w", aie)), &ce)).To(BeTrue())
+		Expect(ce.Msg).To(HavePrefix("artifact for hello 1.0.0"))
+	})
+})

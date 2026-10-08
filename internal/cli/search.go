@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"charm.land/huh/v2"
+	cterm "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/trevor-vaughan/polypkg/internal/planner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
@@ -21,8 +23,11 @@ func newSearchCmd() *cobra.Command {
 		Use:   "search <term>",
 		Short: "Search the configured sources for packages",
 		Long: `Fetches the catalog and returns every package whose name contains the search
-term (case-insensitive). When run on an interactive terminal, a multi-select
-picker lets you install packages directly from the results.`,
+term (case-insensitive), listing each version once. Versions published only for
+other platforms follow in an "[other platforms only: …]" column; a package with
+no artifact for this host is still listed but cannot be picked for install.
+When run on an interactive terminal, a multi-select picker lets you install
+packages directly from the results.`,
 		Example: "  # Find all packages whose name contains \"editor\"\n" +
 			"  polypkg search editor",
 		Args: needsArgs(1, 1, "<term>"),
@@ -40,9 +45,10 @@ picker lets you install packages directly from the results.`,
 
 // searchMatch is one result row from the search command.
 type searchMatch struct {
-	Name      string
-	Versions  []string
-	Installed string // empty when the package is not installed
+	Name        string
+	Versions    []string // installable on this host, newest first
+	Unavailable []string // published only for other platforms, newest first
+	Installed   string   // empty when the package is not installed
 }
 
 // runSearch implements the search command.
@@ -97,14 +103,15 @@ func searchRows(
 			if fr.Catalog == nil {
 				return nil
 			}
-			matched := filterNames(fr.Catalog.Names(), term)
+			matched := filterNames(fr.Catalog.PublishedNames(), term)
 
 			rows = make([]searchMatch, 0, len(matched))
 			for _, name := range matched {
 				rows = append(rows, searchMatch{
-					Name:      name,
-					Versions:  fr.Catalog.Versions(name),
-					Installed: installedVersion(manifest, name),
+					Name:        name,
+					Versions:    fr.Catalog.Versions(name),
+					Unavailable: fr.Catalog.UnavailableVersions(name),
+					Installed:   installedVersion(manifest, name),
 				})
 			}
 			return nil
@@ -116,18 +123,15 @@ func searchRows(
 	return rows, nil
 }
 
-// interactiveTTY reports whether both stdin and stdout of cmd are TTYs.
-// The picker is only shown when this returns true, which requires that both
-// cmd.InOrStdin() and cmd.OutOrStdout() are *os.File values backed by
-// character devices. In-process tests wiring bytes.Buffer I/O always return
-// false, satisfying the non-TTY regression contract.
+// interactiveTTY reports whether both stdin and stdout of cmd are terminals.
+// The picker is only shown when this returns true: stdout must be an
+// *os.File that is a terminal (not merely a character device such as
+// /dev/null), and stdin must pass isInteractive. In-process tests wiring
+// bytes.Buffer I/O always return false, satisfying the non-TTY regression
+// contract.
 func interactiveTTY(cmd *cobra.Command) bool {
 	outFile, ok := cmd.OutOrStdout().(*os.File)
-	if !ok {
-		return false
-	}
-	outInfo, err := outFile.Stat()
-	if err != nil || outInfo.Mode()&os.ModeCharDevice == 0 {
+	if !ok || !cterm.IsTerminal(outFile.Fd()) {
 		return false
 	}
 	return isInteractive(cmd)
@@ -145,7 +149,8 @@ func searchOptionLabel(name string, versions []string) string {
 
 // runSearchPicker presents the interactive multi-select picker after the plain
 // table has been emitted. It is called only when interactiveTTY is true,
-// format is FormatText, and there is at least one match.
+// format is FormatText, and at least one row is installable on this host;
+// rows is already filtered by installableRows.
 //
 // On empty selection it exits cleanly. On a non-empty selection it invokes
 // runInstall for the chosen package names (bare-name semantics: each becomes
@@ -208,9 +213,10 @@ func emitSearchResult(
 	matchList := make([]any, len(rows))
 	for i, r := range rows {
 		matchList[i] = map[string]any{
-			"name":      r.Name,
-			"versions":  r.Versions,
-			"installed": r.Installed,
+			"name":                 r.Name,
+			"versions":             r.Versions,
+			"unavailable_versions": r.Unavailable,
+			"installed":            r.Installed,
 		}
 	}
 
@@ -221,24 +227,48 @@ func emitSearchResult(
 			writeNoMatchLine(w, term)
 			return
 		}
+		// When any row has an installed cell, a row without one gets an empty
+		// cell before its other-platforms cell so that column lines up.
+		anyInstalled := slices.ContainsFunc(rows, func(r searchMatch) bool { return r.Installed != "" })
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, r := range rows {
+			line := r.Name + "\t" + formatVersionList(r.Versions)
 			if r.Installed != "" {
-				fmt.Fprintf(tw, "%s\t%s\t[installed: %s]\n",
-					r.Name, formatVersionList(r.Versions), r.Installed)
-			} else {
-				fmt.Fprintf(tw, "%s\t%s\n", r.Name, formatVersionList(r.Versions))
+				line += "\t[installed: " + r.Installed + "]"
+			} else if anyInstalled && len(r.Unavailable) > 0 {
+				line += "\t"
 			}
+			if len(r.Unavailable) > 0 {
+				line += "\t[other platforms only: " + formatVersionList(r.Unavailable) + "]"
+			}
+			fmt.Fprintln(tw, line)
 		}
 		_ = tw.Flush()
 	})
 
-	// Interactive picker: only when both stdin and stdout are TTYs, format is
-	// text, and there is at least one match. All other paths are no-ops here.
-	if format == FormatText && len(rows) > 0 && interactiveTTY(cmd) {
-		return runSearchPicker(cmd, rows, format)
+	// Interactive picker: only when both stdin and stdout are TTYs and format
+	// is text, offering only rows with a version installable on this host. All
+	// other paths are no-ops here.
+	if format == FormatText && interactiveTTY(cmd) {
+		if installable := installableRows(rows); len(installable) > 0 {
+			return runSearchPicker(cmd, installable, format)
+		}
 	}
 	return nil
+}
+
+// installableRows returns, in order, the rows with at least one version
+// installable on this host. A package published only for other platforms
+// stays in the table but is not offered by the picker: picking it could only
+// fail in install.
+func installableRows(rows []searchMatch) []searchMatch {
+	out := make([]searchMatch, 0, len(rows))
+	for _, r := range rows {
+		if len(r.Versions) > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // filterNames returns the elements of names whose lowercased form contains

@@ -17,7 +17,7 @@
           "path": { "type": "string", "minLength": 1 },
           "package": { "type": "string", "minLength": 1 },
           "version": { "type": "string" },
-          "action": { "type": "string", "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime"] },
+          "action": { "type": "string", "enum": ["install", "symlink", "dir", "perms", "config", "unmanaged", "state", "path", "alternatives", "completion", "desktop", "mime", "extract"] },
           "expected": {
             "type": "object",
             "additionalProperties": false,

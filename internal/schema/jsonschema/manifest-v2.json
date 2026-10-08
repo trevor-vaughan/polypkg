@@ -30,6 +30,11 @@
           "name": { "type": "string" },
           "version": { "type": "string" },
           "content_hash": { "type": "string" },
+          "platform": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$",
+            "description": "Platform (<os>/<arch>[/<variant>], Go GOOS/GOARCH names) the installed artifact was published for, recorded at apply. Absent means the artifact is platform-agnostic (any); generations written before this field existed carry none and read as any. The empty string and the literal any are invalid: omit the field instead. Additive to polypkg.manifest/v2 without a version bump, because the polypkg that writes a generation is the one that reads it."
+          },
           "source_url": { "type": "string", "format": "uri" },
           "depends_on": {
             "type": "array",

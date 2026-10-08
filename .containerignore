@@ -1,0 +1,17 @@
+# Build context for tests/e2e/Containerfile, which compiles polypkg from the
+# working tree. Nothing excluded here is an input to that build. .git must stay
+# out: the image's git cannot read a checkout that uses a newer repository
+# extension, and go build's VCS stamping then fails the build.
+.git
+# Gitignored build and test output.
+.test-output
+.task
+bin
+dist
+polypkg
+tests/vm/.bin
+# Local tool and editor state that is never committed.
+.claude
+.codegraph
+.headroom
+.worktrees

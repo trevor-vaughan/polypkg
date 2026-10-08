@@ -518,7 +518,7 @@ var _ = Describe("init verb end-to-end", func() {
 	})
 
 	It("writes a valid profile to the user config dir and reports it", func() {
-		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 		Expect(out).To(ContainSubstring("wrote "))
 		Expect(out).To(ContainSubstring("next steps:"))
@@ -532,15 +532,15 @@ var _ = Describe("init verb end-to-end", func() {
 	})
 
 	It("errors with already-exists when run twice on the same scope", func() {
-		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "first init failed: %s", out)
-		out2, err2 := runCmd("init", "--source-url", srv.URL, "--trust-root-file", trustRoot)
+		out2, err2 := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err2).To(HaveOccurred(), "second init must fail; output: %s", out2)
 		Expect(err2.Error()).To(ContainSubstring("profile already exists at"))
 	})
 
 	It("emits JSON output when --format json", func() {
-		out, err := runCmd("init", "--format", "json", "--source-url", srv.URL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--format", "json", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 		result := parseLastCLIResult(out)
 		Expect(result.Status).To(Equal("ok"))
@@ -553,7 +553,7 @@ var _ = Describe("init verb end-to-end", func() {
 	})
 
 	It("init profile is usable: plan detects hello as a pending change", func() {
-		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 
 		// Append hello package to the written profile.
@@ -860,5 +860,47 @@ var _ = Describe("upgrade verb end-to-end", func() {
 			Expect(err).To(HaveOccurred(), "upgrade of missing package must fail; output: %s", out)
 			Expect(err.Error()).To(ContainSubstring("not in the profile"))
 		})
+	})
+})
+
+var _ = Describe("upgrade post-edit rollback", func() {
+	It("restores the bumped pin when the apply of the new version fails", func() {
+		t := GinkgoTB()
+		IsolatedEnv(t)
+
+		// 1.0.0 installs cleanly; 1.1.0 resolves and publishes fine but its
+		// apply fails, after upgrade has already written the =1.1.0 pin.
+		repoDir := t.TempDir()
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: buildHelloPackage(t)},
+			indexPkg{name: "hello", version: "1.1.0", artifact: buildHelloMissingSource(t, "1.1.0")},
+		)
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		DeferCleanup(srv.Close)
+
+		profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+		Expect(os.WriteFile(profilePath, []byte(profileWithTwoVersions(srv.URL, trustRoot)), 0o644)).To(Succeed())
+		GinkgoT().Setenv("POLYPKG_PROFILE", profilePath)
+
+		out, err := runCmd("apply", profilePath)
+		Expect(err).NotTo(HaveOccurred(), "initial apply failed: %s", out)
+		before, rerr := os.ReadFile(profilePath)
+		Expect(rerr).NotTo(HaveOccurred())
+
+		out, err = runCmd("upgrade", "hello")
+		Expect(err).To(HaveOccurred(), "upgrade must fail when the new version's apply fails; output: %s", out)
+		Expect(err.Error()).To(ContainSubstring("content/bin/missing"),
+			"the failure must be the fixture's missing install source, not some other error")
+		Expect(err.Error()).To(ContainSubstring("the profile was not changed"))
+
+		after, aerr := os.ReadFile(profilePath)
+		Expect(aerr).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before),
+			"the profile must be restored to its =1.0.0 pin, not left at a version that never applied")
+
+		listOut, listErr := runCmd("list")
+		Expect(listErr).NotTo(HaveOccurred(), "list: %s", listOut)
+		Expect(listOut).To(ContainSubstring("1.0.0"), "the installed version must still be 1.0.0")
+		Expect(listOut).NotTo(ContainSubstring("1.1.0"))
 	})
 })

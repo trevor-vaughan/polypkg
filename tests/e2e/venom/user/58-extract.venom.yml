@@ -1,0 +1,132 @@
+name: extract action — an archive in content/ unpacked at apply
+# A package whose only payload is a .tar.gz holding hello-1.0.0/bin/hello,
+# unpacked by the extract action with strip_components: 1 and exposed on
+# $PATH by the path action. Proves the real binary unpacks a real archive into
+# owned regular files (not links into the extract cache), the bridged command
+# runs, and rollback takes both away.
+#
+# The archive is built here with the runner's tar and gzip (present on the
+# CentOS, Ubuntu and Alpine bases) instead of being committed as a binary
+# fixture. The package source lives on the shared /repo volume, not /tmp: the
+# repo manifest records it as the package's source, and a later rebuild from
+# another container must still find it.
+vars:
+  source_url: 'http://repo-server:8080'
+  trust_root: '/repo/public/trust_root.pub'
+  manifest: '/repo/polypkg-repo.yaml'
+  keys: '/keys'
+  scratch: '/repo/scratch/extract-hello'
+  home: '/tmp/u58'
+  active: '/tmp/u58/data/polypkg/active'
+  px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
+
+testcases:
+  - name: publish a package whose content is a .tar.gz
+    steps:
+      - type: exec
+        script: |
+          set -e
+          rm -rf {{.scratch}}
+          mkdir -p {{.scratch}}/content
+          stage=$(mktemp -d)
+          mkdir -p "$stage/hello-1.0.0/bin"
+          printf '#!/bin/sh\necho "hello from an extracted archive"\n' > "$stage/hello-1.0.0/bin/hello"
+          chmod 0755 "$stage/hello-1.0.0/bin/hello"
+          tar -C "$stage" -czf {{.scratch}}/content/hello-1.0.0.tar.gz hello-1.0.0
+          rm -rf "$stage"
+          cat > {{.scratch}}/polypkg.yaml <<'EOF'
+          schema: polypkg.package/v1
+          name: extract-hello
+          version: 1.0.0
+          description: hello shipped as a .tar.gz and unpacked by the extract action
+          actions:
+            - phase: post-place
+              action: extract
+              params:
+                src: $PKG/content/hello-1.0.0.tar.gz
+                dest: $ACTIVE/extract-hello/hello
+                strip_components: 1
+            - phase: post-place
+              action: path
+              params:
+                name: hello
+                source: $ACTIVE/extract-hello/hello/bin/hello
+          EOF
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '/usr/local/bin/polypkg pkg lint {{.scratch}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "clean: no findings"'
+      - type: exec
+        script: 'POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo add {{.scratch}} --manifest {{.manifest}} --key-dir {{.keys}}'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Added extract-hello@1.0.0"
+
+  - name: init the sandbox and install a baseline generation
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} install goodbye'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+
+  - name: install unpacks the archive and the exposed command runs
+    steps:
+      - type: exec
+        script: '{{.px}} install extract-hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "applied generation"
+      - type: exec
+        script: '{{.home}}/.local/bin/hello'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "hello from an extracted archive"
+
+  - name: the unpacked file is a real, stripped, executable file in the generation
+    steps:
+      - type: exec
+        # strip_components: 1 drops hello-1.0.0/, so bin/hello lands directly
+        # under dest. The file must be a regular file, never a symlink into
+        # the user-writable extract cache.
+        script: |
+          f={{.active}}/extract-hello/hello/bin/hello
+          if [ -f "$f" ] && [ ! -L "$f" ]; then echo REGULAR_FILE; fi
+          if [ -x "$f" ]; then echo EXECUTABLE; fi
+          if [ -e {{.active}}/extract-hello/hello/hello-1.0.0 ]; then echo UNSTRIPPED; else echo STRIPPED; fi
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring REGULAR_FILE
+          - result.systemout ShouldContainSubstring EXECUTABLE
+          - result.systemout ShouldContainSubstring STRIPPED
+          - result.systemout ShouldNotContainSubstring UNSTRIPPED
+
+  - name: rollback removes the unpacked tree and the exposed command
+    steps:
+      - type: exec
+        script: '{{.px}} rollback'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        # -L as well as -e: a dangling bridge link left behind is a failure.
+        script: |
+          b={{.home}}/.local/bin/hello
+          if [ -e "$b" ] || [ -L "$b" ]; then echo BIN_PRESENT; else echo BIN_GONE; fi
+          if [ -e {{.active}}/extract-hello ]; then echo TREE_PRESENT; else echo TREE_GONE; fi
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring BIN_GONE
+          - result.systemout ShouldContainSubstring TREE_GONE
+      - type: exec
+        script: '{{.px}} --format json list'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "goodbye"
+          - result.systemout ShouldNotContainSubstring "extract-hello"

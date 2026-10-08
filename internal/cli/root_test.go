@@ -106,8 +106,8 @@ var _ = Describe("root command", func() {
 	})
 
 	It("key cold-path commands have non-empty Example strings", func() {
-		// Curated guard: these commands had Examples added in UX plan 3.
-		// If Example is empty the text is gone and the guard fires.
+		// Curated guard: these commands carry Examples. If Example is empty
+		// the text is gone and the guard fires.
 		root := NewRootCmd()
 
 		find := func(path ...string) *cobra.Command {
@@ -193,14 +193,22 @@ var _ = Describe("subcommand grouping", func() {
 			"revoke":        "Revocation:",
 		},
 		"source": {
-			"list":   "Inspect:",
-			"add":    "Modify:",
-			"remove": "Modify:",
+			"list":           "Inspect:",
+			"add":            "Modify:",
+			"remove":         "Modify:",
+			"set-trust-root": "Modify:",
 		},
 		"alternatives": {
 			"list": "Inspect:",
 			"set":  "Override:",
 			"auto": "Override:",
+		},
+		"pkg": {
+			"init":    "Getting started:",
+			"import":  "Getting started:",
+			"lint":    "Author loop:",
+			"build":   "Author loop:",
+			"explain": "Reference:",
 		},
 	}
 

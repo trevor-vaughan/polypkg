@@ -61,7 +61,7 @@ var _ = Describe("manage sources with `polypkg source` and install from an added
 		// <root>/config/polypkg/profile.yaml (source "native").
 		out, err := runCmd("init",
 			"--source-url", "file://"+nativePublicDir,
-			"--trust-root-file", nativeTrustRoot,
+			"--trust-root", nativeTrustRoot,
 		)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
 

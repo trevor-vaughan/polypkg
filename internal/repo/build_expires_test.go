@@ -12,7 +12,7 @@ import (
 // dir so publishedExpires/computeExpires can probe it like real Build output.
 func writePublishedIndex(t *testing.T, dir, expires string) {
 	t.Helper()
-	body := `{"schema":"polypkg.index/v2","expires":"` + expires + `","packages":{}}`
+	body := `{"schema":"polypkg.index/v3","expires":"` + expires + `","packages":{}}`
 	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestBuildStampsSharedExpiresIntoIndexAndTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if idx.Schema != "polypkg.index/v2" || td.Schema != "polypkg.trust/v2" {
+	if idx.Schema != "polypkg.index/v3" || td.Schema != "polypkg.trust/v2" {
 		t.Fatalf("schemas = %q / %q, want v2 pair", idx.Schema, td.Schema)
 	}
 	if idx.Expires == "" {

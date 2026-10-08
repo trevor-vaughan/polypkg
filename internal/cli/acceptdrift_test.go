@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"lukechampine.com/blake3"
 
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -78,6 +80,57 @@ var _ = Describe("writeAcceptedDrift", func() {
 		Expect(got.Generation).To(Equal(5))
 		Expect(got.Paths).To(HaveKey("hello/bin"))
 		Expect(got.Paths).To(HaveKey("hello/share"))
+	})
+
+	It("captures the live content hash for a regular file an extract placed", func() {
+		tmp := GinkgoT().TempDir()
+		active := filepath.Join(tmp, "active")
+		file := filepath.Join(active, "hello/dist/bin/app")
+		Expect(os.MkdirAll(filepath.Dir(file), 0o755)).To(Succeed())
+		Expect(os.WriteFile(file, []byte("tampered\n"), 0o755)).To(Succeed())
+		prior := &schema.Ownership{
+			Schema: "polypkg.ownership/v1", Scope: "user",
+			Entries: []schema.OwnershipEntry{{
+				Path: "hello/dist/bin/app", Package: "hello", Version: "1.0.0", Action: "extract",
+				Expected:    schema.Expected{FileType: "regular", ContentHash: "blake3:00", Mode: "0755"},
+				DriftPolicy: "refuse",
+			}},
+		}
+
+		outPath := filepath.Join(tmp, "accepted-drift.json")
+		Expect(writeAcceptedDrift(outPath, 3, active, prior, []string{"hello/dist/bin/app"})).To(Succeed())
+
+		data, err := os.ReadFile(filepath.Clean(outPath))
+		Expect(err).NotTo(HaveOccurred())
+		var got schema.AcceptedDrift
+		Expect(json.Unmarshal(data, &got)).To(Succeed())
+		h := blake3.New(32, nil)
+		_, _ = h.Write([]byte("tampered\n"))
+		Expect(got.Paths["hello/dist/bin/app"].Expected.ContentHash).To(Equal("blake3:" + hex.EncodeToString(h.Sum(nil))))
+		Expect(got.Paths["hello/dist/bin/app"].Expected.FileType).To(Equal("regular"))
+	})
+
+	It("captures no content hash for a directory an extract placed", func() {
+		tmp := GinkgoT().TempDir()
+		active := filepath.Join(tmp, "active")
+		Expect(os.MkdirAll(filepath.Join(active, "hello/dist"), 0o755)).To(Succeed())
+		prior := &schema.Ownership{
+			Schema: "polypkg.ownership/v1", Scope: "user",
+			Entries: []schema.OwnershipEntry{{
+				Path: "hello/dist", Package: "hello", Version: "1.0.0", Action: "extract",
+				Expected: schema.Expected{FileType: "dir", Mode: "0700"}, DriftPolicy: "refuse",
+			}},
+		}
+
+		outPath := filepath.Join(tmp, "accepted-drift.json")
+		Expect(writeAcceptedDrift(outPath, 3, active, prior, []string{"hello/dist"})).To(Succeed())
+
+		data, err := os.ReadFile(filepath.Clean(outPath))
+		Expect(err).NotTo(HaveOccurred())
+		var got schema.AcceptedDrift
+		Expect(json.Unmarshal(data, &got)).To(Succeed())
+		Expect(got.Paths["hello/dist"].Expected.ContentHash).To(BeEmpty())
+		Expect(got.Paths["hello/dist"].Expected.FileType).To(Equal("dir"))
 	})
 })
 

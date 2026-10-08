@@ -67,6 +67,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	)
 
 	BeforeEach(func() {
+		sandboxUserEnv(GinkgoTB())
 		tmp = GinkgoT().TempDir()
 		GinkgoT().Setenv("XDG_CONFIG_HOME", tmp)
 		// Clear any inherited POLYPKG_PROFILE that could interfere.
@@ -88,7 +89,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	}
 
 	It("writes profile.yaml to the user config dir and emits 'wrote <path>'", func() {
-		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		Expect(out).To(ContainSubstring("wrote " + want))
@@ -103,7 +104,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	It("creates the config dir with mode 0o700 for user scope", func() {
 		cfgDir := filepath.Join(tmp, "polypkg")
 		Expect(cfgDir).NotTo(BeADirectory(), "pre-condition: dir must not exist yet")
-		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		fi, statErr := os.Stat(cfgDir)
 		Expect(statErr).NotTo(HaveOccurred())
@@ -111,7 +112,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	})
 
 	It("written profile passes schema.ParseProfile", func() {
-		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		f, ferr := os.Open(want)
@@ -122,7 +123,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	})
 
 	It("embeds the absolute path of the pinned trust-root copy in the written profile", func() {
-		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		raw, rerr := os.ReadFile(want)
@@ -131,7 +132,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	})
 
 	It("embeds the source URL in the written profile", func() {
-		out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		raw, rerr := os.ReadFile(want)
@@ -141,7 +142,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 
 	It("profile stores the normalized (not raw) source URL for a file:// input", func() {
 		rawURL := "file:///srv/polypkg/public"
-		out, err := runInit("--source-url", rawURL, "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", rawURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		raw, rerr := os.ReadFile(want)
@@ -153,7 +154,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	It("profile stores the expanded file:// URI when --source-url uses ~/", func() {
 		home, herr := os.UserHomeDir()
 		Expect(herr).NotTo(HaveOccurred())
-		out, err := runInit("--source-url", "~/somerepo", "--trust-root-file", keyFile)
+		out, err := runInit("--source-url", "~/somerepo", "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 		want := filepath.Join(tmp, "polypkg", "profile.yaml")
 		raw, rerr := os.ReadFile(want)
@@ -166,7 +167,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 	})
 
 	It("emits JSON with command=init and path field when --format json", func() {
-		out, err := runInit("--format", "json", "--source-url", sourceURL, "--trust-root-file", keyFile)
+		out, err := runInit("--format", "json", "--source-url", sourceURL, "--trust-root", keyFile)
 		Expect(err).NotTo(HaveOccurred(), out)
 		result := parseSingleCLIResult(out)
 		Expect(result.Status).To(Equal("ok"))
@@ -177,7 +178,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 
 	Context("--source-name", func() {
 		It("writes the profile under the given source name with a file trust root", func() {
-			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile,
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile,
 				"--source-name", "handtest")
 			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 			raw, rerr := os.ReadFile(filepath.Join(tmp, "polypkg", "profile.yaml"))
@@ -185,7 +186,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			body := string(raw)
 			Expect(body).To(ContainSubstring("order: [handtest]"))
 			Expect(body).To(MatchRegexp(`(?m)^  handtest:`))
-			// --trust-root-file pins the key by content: the bytes are copied
+			// --trust-root pins the key by content: the bytes are copied
 			// under the managed trust dir and THAT path is recorded, never the
 			// operator's own path (which the repository may be able to write).
 			savedKey := filepath.Join(tmp, "polypkg", "trust", "handtest.pub")
@@ -202,8 +203,11 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("persists the downloaded trust root as trust/<source-name>.pub with --trust-root-url", func() {
+			key, kerr := os.ReadFile(keyFile)
+			Expect(kerr).NotTo(HaveOccurred())
 			out, err := runInit("--source-url", sourceURL,
-				"--trust-root-url", "file://"+keyFile, "--trust-root-yes",
+				"--trust-root-url", "file://"+keyFile,
+				"--trust-root-fingerprint", keyIDOf(string(key)),
 				"--source-name", "handtest")
 			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 			savedKey := filepath.Join(tmp, "polypkg", "trust", "handtest.pub")
@@ -215,7 +219,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("rejects the reserved name 'order'", func() {
-			_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile,
+			_, err := runInit("--source-url", sourceURL, "--trust-root", keyFile,
 				"--source-name", "order")
 			Expect(err).To(HaveOccurred())
 			var ce *CLIError
@@ -224,7 +228,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("rejects a source name that is not a valid slug", func() {
-			_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile,
+			_, err := runInit("--source-url", sourceURL, "--trust-root", keyFile,
 				"--source-name", "bad name")
 			Expect(err).To(HaveOccurred())
 			var ce *CLIError
@@ -235,13 +239,13 @@ var _ = Describe("init command: non-interactive flag route", func() {
 
 	// A trust root recorded as a path is late-bound: every verification re-reads
 	// whatever that file holds at the time. Our own Quickstart points
-	// --trust-root-file at the published repository's own tree, so an attacker
+	// --trust-root at the published repository's own tree, so an attacker
 	// who can write that tree could swap the anchor and sign their own index.
 	// The anchor must therefore be pinned by content, as --trust-root-url and
 	// the wizard's pasted-key route already do.
 	Context("trust-root pinning", func() {
 		It("copies the key under the managed trust dir and records that path", func() {
-			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 
 			savedKey := filepath.Join(tmp, "polypkg", "trust", "native.pub")
@@ -265,7 +269,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("survives the original file being swapped after init", func() {
-			out, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
 			pinned, rerr := os.ReadFile(filepath.Join(tmp, "polypkg", "trust", "native.pub"))
 			Expect(rerr).NotTo(HaveOccurred())
@@ -281,12 +285,63 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			Expect(string(after)).To(Equal(string(pinned)))
 		})
 
+		// Deleting profile.yaml leaves trust/<source>.pub behind. A later init
+		// must not quietly swap that anchor for a different key: whoever can
+		// get an operator to re-run init would otherwise re-anchor the source.
+		It("refuses to overwrite a different key left by an earlier init", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "first init failed: %s", out)
+			profile := filepath.Join(tmp, "polypkg", "profile.yaml")
+			Expect(os.Remove(profile)).To(Succeed())
+			savedKey := filepath.Join(tmp, "polypkg", "trust", "native.pub")
+			pinned, rerr := os.ReadFile(savedKey)
+			Expect(rerr).NotTo(HaveOccurred())
+
+			otherKey := filepath.Join(tmp, "other.pub")
+			Expect(os.WriteFile(otherKey, []byte(minisignPubFile()), 0o600)).To(Succeed())
+			_, err = runInit("--source-url", sourceURL, "--trust-root", otherKey)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring("already pinned at " + savedKey))
+			Expect(os.ReadFile(savedKey)).To(Equal(pinned))
+			Expect(profile).NotTo(BeAnExistingFile())
+		})
+
+		It("reuses an anchor left by an earlier init when it is the same key", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "first init failed: %s", out)
+			Expect(os.Remove(filepath.Join(tmp, "polypkg", "profile.yaml"))).To(Succeed())
+
+			out, err = runInit("--source-url", sourceURL, "--trust-root", keyFile)
+			Expect(err).NotTo(HaveOccurred(), "re-init with the same key failed: %s", out)
+		})
+
+		It("accepts --trust-root with a matching --trust-root-fingerprint", func() {
+			key, kerr := os.ReadFile(keyFile)
+			Expect(kerr).NotTo(HaveOccurred())
+			out, err := runInit("--source-url", sourceURL, "--trust-root", keyFile,
+				"--trust-root-fingerprint", keyIDOf(string(key)))
+			Expect(err).NotTo(HaveOccurred(), "init failed: %s", out)
+		})
+
+		It("refuses --trust-root with a mismatched --trust-root-fingerprint", func() {
+			_, err := runInit("--source-url", sourceURL, "--trust-root", keyFile,
+				"--trust-root-fingerprint", "0000000000000000")
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(`not the expected "0000000000000000"`))
+			Expect(filepath.Join(tmp, "polypkg", "trust", "native.pub")).NotTo(BeAnExistingFile())
+			Expect(filepath.Join(tmp, "polypkg", "profile.yaml")).NotTo(BeAnExistingFile())
+		})
+
 		It("writes no key file when a profile already exists", func() {
 			dir := filepath.Join(tmp, "polypkg")
 			Expect(os.MkdirAll(dir, 0o700)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(dir, "profile.yaml"), []byte("x"), 0o600)).To(Succeed())
 
-			_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+			_, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 			Expect(err).To(HaveOccurred())
 
 			// Copying now happens before the profile is written, so the
@@ -305,7 +360,7 @@ var _ = Describe("init command: non-interactive flag route", func() {
 				Expect(os.MkdirAll(dir, 0o700)).To(Succeed())
 				existing := filepath.Join(dir, "profile."+ext)
 				Expect(os.WriteFile(existing, []byte("x"), 0o600)).To(Succeed())
-				_, err := runInit("--source-url", sourceURL, "--trust-root-file", keyFile)
+				_, err := runInit("--source-url", sourceURL, "--trust-root", keyFile)
 				Expect(err).To(HaveOccurred())
 				var ce *CLIError
 				Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
@@ -318,14 +373,14 @@ var _ = Describe("init command: non-interactive flag route", func() {
 
 	Context("validation errors", func() {
 		It("accepts an http source URL (scheme http is valid)", func() {
-			out, err := runInit("--source-url", "http://repo.example.com/polypkg", "--trust-root-file", keyFile)
+			out, err := runInit("--source-url", "http://repo.example.com/polypkg", "--trust-root", keyFile)
 			Expect(err).NotTo(HaveOccurred(), "http scheme must be accepted; output: %s", out)
 			want := filepath.Join(tmp, "polypkg", "profile.yaml")
 			Expect(out).To(ContainSubstring("wrote " + want))
 		})
 
 		It("rejects a non-URL --source-url", func() {
-			out, err := runInit("--source-url", "not a url", "--trust-root-file", keyFile)
+			out, err := runInit("--source-url", "not a url", "--trust-root", keyFile)
 			Expect(err).To(HaveOccurred(), "bad URL should be rejected; output: %s", out)
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue())
@@ -333,25 +388,25 @@ var _ = Describe("init command: non-interactive flag route", func() {
 		})
 
 		It("rejects a ftp:// --source-url", func() {
-			out, err := runInit("--source-url", "ftp://repo.example.com", "--trust-root-file", keyFile)
+			out, err := runInit("--source-url", "ftp://repo.example.com", "--trust-root", keyFile)
 			Expect(err).To(HaveOccurred(), "ftp scheme must be rejected; output: %s", out)
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue())
 			Expect(ce.Msg).To(ContainSubstring("invalid --source-url"))
 		})
 
-		It("rejects a --trust-root-file that does not exist", func() {
-			out, err := runInit("--source-url", sourceURL, "--trust-root-file", "/no/such/file.pub")
+		It("rejects a --trust-root that does not exist", func() {
+			out, err := runInit("--source-url", sourceURL, "--trust-root", "/no/such/file.pub")
 			Expect(err).To(HaveOccurred(), "missing trust root must be rejected; output: %s", out)
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue())
-			Expect(ce.Msg).To(ContainSubstring("not a valid minisign public key"))
+			Expect(ce.Msg).To(Equal("trust root /no/such/file.pub does not exist"))
 		})
 
-		It("rejects a --trust-root-file that is not a minisign key", func() {
+		It("rejects a --trust-root that is not a minisign key", func() {
 			bad := filepath.Join(tmp, "bad.pub")
 			Expect(os.WriteFile(bad, []byte("this is not a key\n"), 0o600)).To(Succeed())
-			out, err := runInit("--source-url", sourceURL, "--trust-root-file", bad)
+			out, err := runInit("--source-url", sourceURL, "--trust-root", bad)
 			Expect(err).To(HaveOccurred(), "invalid key must be rejected; output: %s", out)
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue())
@@ -367,8 +422,23 @@ var _ = Describe("init command: non-interactive flag route", func() {
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 			Expect(ce.Msg).To(ContainSubstring("init needs --source-url and a trust root"))
-			Expect(ce.Hint).To(ContainSubstring("--trust-root-file"))
+			Expect(ce.Hint).To(ContainSubstring("--trust-root"))
 			Expect(ce.Hint).To(ContainSubstring("--trust-root-url"))
+		})
+
+		It("stays non-interactive on a terminal stdin when stdout is not a terminal", func() {
+			// The form needs both ends: a terminal stdin alone must not start it.
+			root := NewRootCmd()
+			root.SilenceUsage, root.SilenceErrors = true, true
+			var buf strings.Builder
+			root.SetOut(&buf)
+			root.SetErr(&buf)
+			root.SetIn(ttyInput{strings.NewReader("")})
+			root.SetArgs([]string{"init"})
+			err := root.Execute()
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring("init needs --source-url and a trust root"))
 		})
 	})
 })
@@ -439,6 +509,24 @@ var _ = Describe("normalizeSourceURL", func() {
 		Entry("file with host", rejectCase{input: "file://example.com/srv/repo", wantMsg: "invalid file URL"}),
 	)
 
+	// Every rejection path echoes the input, which may carry a user-name-only
+	// token; it must reach the message only through source.RedactURL.
+	DescribeTable("never echoes credentials in a rejection",
+		func(input, wantMsg string) {
+			_, err := normalizeSourceURL(input)
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError for %q, got %T: %v", input, err, err)
+			Expect(ce.Msg).To(ContainSubstring(wantMsg))
+			Expect(ce.Msg).NotTo(ContainSubstring("ghp_secret"))
+		},
+		Entry("whitespace", "https://ghp_secret@h/a b", "invalid --source-url"),
+		Entry("unparseable", "https://ghp_secret@h/%zz", "invalid --source-url"),
+		Entry("missing host", "https://ghp_secret@", "invalid --source-url"),
+		Entry("unsupported scheme", "ftp://ghp_secret@h/x", "invalid --source-url"),
+		Entry("file URL with a host", "file://ghp_secret@example.com/srv/repo", "invalid file URL"),
+		Entry("file URL without an absolute path", "file://ghp_secret@", "invalid file URL"),
+	)
+
 	It("~/repo normalizes to a file:// URI under home", func() {
 		home, err := os.UserHomeDir()
 		Expect(err).NotTo(HaveOccurred())
@@ -452,6 +540,7 @@ var _ = Describe("init command: system scope", func() {
 	var tmp string
 
 	BeforeEach(func() {
+		sandboxUserEnv(GinkgoTB())
 		tmp = GinkgoT().TempDir()
 		GinkgoT().Setenv("XDG_CONFIG_HOME", tmp)
 		_ = os.Unsetenv("POLYPKG_PROFILE")
@@ -474,7 +563,7 @@ var _ = Describe("init command: system scope", func() {
 		root.SetErr(&buf)
 		root.SetArgs([]string{"init", "--scope", "system",
 			"--source-url", "https://repo.example.com/polypkg",
-			"--trust-root-file", keyFile,
+			"--trust-root", keyFile,
 		})
 		err := root.Execute()
 		if err == nil {
@@ -528,6 +617,8 @@ var _ = Describe("init command: system scope", func() {
 		Expect(string(raw)).To(MatchRegexp(`(?m)^# attestation:`))
 		Expect(string(raw)).To(MatchRegexp(`(?m)^#   policy: require`))
 		Expect(string(raw)).NotTo(MatchRegexp(`(?m)^attestation:`))
+		Expect(string(raw)).To(ContainSubstring(`(docs/trust-policy.md, "Attestation policy")`))
+		Expect(string(raw)).NotTo(ContainSubstring(`README: "Attestations"`))
 	})
 })
 
@@ -535,6 +626,7 @@ var _ = Describe("init command: pasted key material", func() {
 	var tmp string
 
 	BeforeEach(func() {
+		sandboxUserEnv(GinkgoTB())
 		tmp = GinkgoT().TempDir()
 		GinkgoT().Setenv("XDG_CONFIG_HOME", tmp)
 		_ = os.Unsetenv("POLYPKG_PROFILE")
@@ -558,7 +650,9 @@ var _ = Describe("init command: pasted key material", func() {
 		keyPath := filepath.Join(trustDir, entries[0].Name())
 		fi, sErr := os.Stat(keyPath)
 		Expect(sErr).NotTo(HaveOccurred())
-		Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o600)), "key file must be 0o600")
+		// Public key material, written like every other managed anchor; the
+		// enclosing trust/ dir is 0o700.
+		Expect(fi.Mode().Perm()).To(Equal(os.FileMode(0o644)), "key file must be 0o644")
 		// Profile must reference the key path.
 		raw, rerr := os.ReadFile(written)
 		Expect(rerr).NotTo(HaveOccurred())
@@ -620,6 +714,7 @@ var _ = Describe("init command: pasted key validation", func() {
 	var tmp string
 
 	BeforeEach(func() {
+		sandboxUserEnv(GinkgoTB())
 		tmp = GinkgoT().TempDir()
 		GinkgoT().Setenv("XDG_CONFIG_HOME", tmp)
 		_ = os.Unsetenv("POLYPKG_PROFILE")
@@ -649,6 +744,41 @@ var _ = Describe("init command: pasted key validation", func() {
 			_, statErr := os.Stat(filepath.Join(cfgDir, name))
 			Expect(os.IsNotExist(statErr)).To(BeTrue(), "profile must not be created on validation failure")
 		}
+	})
+
+	It("pasted key replaces a symlink planted at the managed path instead of following it", func() {
+		cfgDir := filepath.Join(tmp, "polypkg")
+		trustPub := filepath.Join(cfgDir, "trust", "native.pub")
+		Expect(os.MkdirAll(filepath.Dir(trustPub), 0o700)).To(Succeed())
+		// A dangling link: the old direct write would have created its target.
+		victim := filepath.Join(tmp, "victim.pub")
+		Expect(os.Symlink(victim, trustPub)).To(Succeed())
+
+		pasted := minisignPubFile()
+		_, werr := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", pasted, "user")
+		Expect(werr).NotTo(HaveOccurred())
+
+		Expect(victim).NotTo(BeAnExistingFile(), "the symlink target must not be written")
+		fi, lerr := os.Lstat(trustPub)
+		Expect(lerr).NotTo(HaveOccurred())
+		Expect(fi.Mode().IsRegular()).To(BeTrue(), "the managed path must now be a regular file")
+		Expect(os.ReadFile(trustPub)).To(Equal([]byte(pasted)))
+	})
+
+	It("pasted key refuses to overwrite a different anchor already in trust/", func() {
+		cfgDir := filepath.Join(tmp, "polypkg")
+		trustPub := filepath.Join(cfgDir, "trust", "native.pub")
+		Expect(os.MkdirAll(filepath.Dir(trustPub), 0o700)).To(Succeed())
+		pinned := []byte(minisignPubFile())
+		Expect(os.WriteFile(trustPub, pinned, 0o644)).To(Succeed())
+
+		_, werr := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", minisignPubFile(), "user")
+		Expect(werr).To(HaveOccurred())
+		var ce *CLIError
+		Expect(errors.As(werr, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", werr, werr)
+		Expect(ce.Msg).To(ContainSubstring("already pinned at " + trustPub))
+		Expect(os.ReadFile(trustPub)).To(Equal(pinned))
+		Expect(filepath.Join(cfgDir, "profile.yaml")).NotTo(BeAnExistingFile())
 	})
 
 	It("existing profile with pasted key returns already-exists and no key file written", func() {
@@ -692,5 +822,57 @@ var _ = Describe("init command: template validity", func() {
 	It("uses 'my-machine' fallback when hostname is empty", func() {
 		out := fillProfileTemplate("", "native", "https://example.com/polypkg", "/tmp/k.pub", "user")
 		Expect(out).To(ContainSubstring("name: my-machine"))
+	})
+})
+var _ = Describe("init command: --trust-root-file", func() {
+	It("is no longer a flag: init takes --trust-root, like source add", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		GinkgoT().Setenv("POLYPKG_PROFILE", "")
+		root := NewRootCmd()
+		root.SilenceUsage, root.SilenceErrors = true, true
+		var buf strings.Builder
+		root.SetOut(&buf)
+		root.SetErr(&buf)
+		root.SetIn(strings.NewReader(""))
+		root.SetArgs([]string{"init", "--source-url", "file:///srv/x", "--trust-root-file", "/x.pub"})
+
+		err := root.Execute()
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("unknown flag --trust-root-file"))
+	})
+})
+var _ = Describe("init command: filesystem failures", func() {
+	BeforeEach(func() {
+		if os.Geteuid() == 0 {
+			Skip("a read-only directory does not stop root")
+		}
+	})
+
+	It("names the config dir and the cause, not the OS error, when the dir cannot be created", func() {
+		ro := filepath.Join(GinkgoT().TempDir(), "ro")
+		Expect(os.Mkdir(ro, 0o500)).To(Succeed())
+		DeferCleanup(os.Chmod, ro, os.FileMode(0o700))
+		cfgDir := filepath.Join(ro, "polypkg")
+
+		_, err := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", "/anchors/native.pub", "user")
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("cannot create config dir " + cfgDir + ": permission denied"))
+		Expect(ce.Hint).To(ContainSubstring("writable"))
+		Expect(ce.Err).To(MatchError(os.ErrPermission))
+	})
+
+	It("names the profile path and the cause, not the OS error, when the profile cannot be written", func() {
+		cfgDir := filepath.Join(GinkgoT().TempDir(), "polypkg")
+		Expect(os.Mkdir(cfgDir, 0o500)).To(Succeed())
+		DeferCleanup(os.Chmod, cfgDir, os.FileMode(0o700))
+
+		_, err := writeInitProfile(cfgDir, "native", "https://example.com/pkgs", "/anchors/native.pub", "user")
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("cannot write profile to " + filepath.Join(cfgDir, "profile.yaml") + ": permission denied"))
+		Expect(ce.Hint).To(ContainSubstring(cfgDir))
+		Expect(ce.Err).To(MatchError(os.ErrPermission))
 	})
 })

@@ -41,8 +41,31 @@ func (e *ArtifactSignatureError) Error() string {
 
 func (e *ArtifactSignatureError) Unwrap() error { return e.Err }
 
+// ArtifactIdentityError reports that an artifact's own package recipe
+// (polypkg.yaml or polypkg.jsonc) does not describe the index entry it was
+// fetched for. The signed claim binds the entry's name, version and platform to
+// the artifact bytes; this refusal binds the artifact's self-description to the
+// same values, so one package cannot be installed under another's name, version
+// or platform. Name, Version and Source identify the index entry. Field is
+// "name", "version" or "platform"; Got is what the artifact declares and Want is
+// what the entry lists, with an agnostic platform rendered as "any". The CLI
+// frames the user message and the hint.
+type ArtifactIdentityError struct {
+	Name    string
+	Version string
+	Source  string
+	Field   string
+	Got     string
+	Want    string
+}
+
+func (e *ArtifactIdentityError) Error() string {
+	return fmt.Sprintf("artifact for %s %s from source %q declares %s %q, but the index lists %q",
+		e.Name, e.Version, e.Source, e.Field, e.Got, e.Want)
+}
+
 // AttestationPolicyError reports that a source's per-predicate attestation gate
-// (spec §10.6) refused an install because Predicate is not satisfied at an
+// refused an install because Predicate is not satisfied at an
 // anchored tier from an allowed builder.
 //
 // RevokedBuilderKeys is the reason the gate is unsatisfiable in the one case
@@ -66,7 +89,7 @@ func (e *AttestationPolicyError) Error() string {
 	return msg
 }
 
-// PostureFloorError reports that the TOFU posture floor (spec §10.7, threat G3)
+// PostureFloorError reports that the TOFU posture floor
 // refused an install: Predicate was verified in the prior generation and is not
 // verified now.
 //

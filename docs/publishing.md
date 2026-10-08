@@ -11,9 +11,11 @@
 
 <sub>Rendered from [`.taskfiles/demo/publish.tape`](../.taskfiles/demo/publish.tape); regenerate with `task demo:render SCENARIO=publish`.</sub>
 
-**Set the key password first.** Every command that writes — `init`, `add`,
-`remove`, `build`, `revoke`, `export-bundle` — unlocks the signing key, so the
-password has to be available before the first one runs. The key itself is
+**Set the key password first.** Every `repo` command except `repo status`
+unlocks the signing key — `init`, `add`, `remove`, `build`, `export-bundle`,
+`revoke`, and `key show`, which reads the public half out of the encrypted key
+file — and so does `mirror pull`. The password has to be available before the
+first one runs. The key itself is
 generated **encrypted** and stored **outside** the published directory, under
 your XDG data dir unless `repo init --key-dir` says otherwise. Supply the
 password via `POLYPKG_REPO_KEY_PASSWORD` or `--key-password-file` — never as a
@@ -32,13 +34,16 @@ hint: set POLYPKG_REPO_KEY_PASSWORD or pass --key-password-file <path>
 
 `repo status` is the exception: it is a read-only probe and needs no password.
 
-With the password set, five commands cover the loop. Watch the `cd`: `repo init`
+With the password set, the six commands below cover the loop. The first,
+`pkg init`, scaffolds a lint-clean package source to publish (see
+[Authoring a package](authoring.md) to fill it in). Watch the `cd`: `repo init`
 puts the manifest *inside* the directory it scaffolds, while every other `repo`
 command defaults `--manifest` to `./polypkg-repo.yaml` in the current directory.
 Pass `--manifest ./myrepo/polypkg-repo.yaml` to each instead if you would rather
 not move.
 
 ```
+polypkg pkg init ./pkgs/hello                # a package source to publish (hello 0.1.0)
 polypkg repo init ./myrepo --source native   # scaffold + generate signing key
 cd ./myrepo
 polypkg repo add ../pkgs/hello               # register a package and (re)build
@@ -83,10 +88,79 @@ packages:
         - source: ./pkgs/hello-1.1.0
 ```
 
-`repo add` appends a new version to that list (or updates the entry already
-there if the version repeats). `repo remove hello` withdraws every version of
-`hello`; `repo remove hello@1.0.0` withdraws only that one, leaving the rest
+`repo add` appends a new entry to that list, or updates the entry already
+there when its source path repeats. `repo remove hello` withdraws every
+version of `hello`; `repo remove hello@1.0.0` withdraws every entry for that
+version (every platform build of it), leaving the other versions published.
+
+**Several platforms of one version.** A version can be published once per
+platform. Give each platform its own package source with the same `name` and
+`version` and a different `platform:` (see
+[Authoring a package](authoring.md#platforms-per-platform-or-fat-artifacts)),
+and list each one:
+
+```yaml
+packages:
+    jot:
+        - source: ./pkgs/jot-1.4.2-linux-amd64
+        - source: ./pkgs/jot-1.4.2-darwin-arm64
+```
+
+`repo add ./pkgs/jot-1.4.2-darwin-arm64` appends the second entry like any
+other. A client downloads only the artifact for its own platform.
+
+`repo add` takes several directories at once and adds them in one rebuild,
+which is how the per-platform sources `polypkg pkg import` writes are
+published:
+
+```
+polypkg repo add ./imports/jot/1.4.2/linux-amd64 ./imports/jot/1.4.2/darwin-arm64
+polypkg repo add ./imports/jot/1.4.2/*        # the same, by glob
+```
+
+The batch is all-or-nothing: if any directory cannot be read or added, or the
+rebuild fails, `polypkg-repo.yaml` is left byte-identical and nothing is
 published.
+
+`repo build` reads each entry's platform from the package itself, so the
+manifest has no platform field. For a `source:` entry it reads the source's
+`polypkg.yaml`. For a `prebuilt:` entry it reads the `polypkg.yaml` inside
+the artifact. Versions are compared as semantic versions, so `1.0` and
+`1.0.0` are one version. The build fails when:
+
+- **Mixed.** A version that has an entry without a platform alongside
+  entries with one would give a client two candidates for that version, so
+  the build fails and names the version. A version is either a single entry
+  without a platform or entries that all have one.
+- **Duplicate.** Two entries with the same version and the same platform.
+- **Not a version.** A version that does not parse as a semantic version,
+  which no client could load.
+- **Letter case.** Two package names, or two versions of one package, that
+  differ only in letter case (`Foo` and `foo`, `1.0.0-RC1` and `1.0.0-rc1`).
+  Clients lay packages out as `<name>/<version>/`, and on a case-insensitive
+  filesystem the two would share a directory.
+
+The artifact signature covers the platform as well as the name, version,
+and content hash, and a client refuses an artifact signature that names no
+platform. An artifact genuinely signed before platforms existed therefore
+cannot be replayed under another platform's entry, for example to serve a
+darwin build to a linux host.
+
+`repo remove jot@1.4.2` withdraws every platform build of 1.4.2 and lists
+each entry it removed with its platform:
+
+```
+$ polypkg repo remove jot@1.4.2
+Removed jot@1.4.2 and rebuilt the repository (serial 7)
+  ./pkgs/jot-1.4.2-linux-amd64 (linux/amd64)
+  ./pkgs/jot-1.4.2-darwin-arm64 (darwin/arm64)
+```
+
+A version published as one platform-agnostic entry prints only the first
+line, as before. With `--format json`, `data.removed` lists each withdrawn
+entry as `{"entry": …, "platform": …}` (`any` for a platform-agnostic entry)
+whenever a version is given. To withdraw a single platform, delete its entry
+from `polypkg-repo.yaml` and run `polypkg repo build`.
 
 **A failed `add` or `remove` leaves `polypkg-repo.yaml` byte-identical** — for
 *any* failure, not just a rejected flag. The reconcile runs against an in-memory
@@ -188,7 +262,7 @@ publish with:
 
 ```
 $ polypkg repo add ../pkgs/hello --valid-for 20s
-warning: --valid-for 20s is shorter than 1h0m0s; clients will treat the published metadata as expired almost immediately (`polypkg status` exit 4)
+warning: --valid-for 20s is shorter than 1h0m0s; clients refuse the published metadata once the window and the 5m0s clock-skew allowance have passed
 Added hello@0.1.0 and rebuilt the repository (serial 1)
 $ polypkg repo status
 Up to date
@@ -237,8 +311,9 @@ error: --valid-for must be a positive duration (got 0s)
 hint: pass a window such as 720h (30 days, the default) or 24h; the published metadata is refused by clients once it expires
 ```
 
-Anything under `1h` publishes but warns on stderr — clients treat such metadata
-as expired almost immediately. And when the half-life reuse rule discards a
+Anything under `1h` publishes but warns on stderr: clients refuse metadata
+past its `expires`, after a 5-minute allowance for clock skew, so such a
+window lapses within minutes. And when the half-life reuse rule discards a
 `--valid-for` you passed explicitly, `build`/`add`/`remove` say so rather than
 exiting 0 on a silently dropped flag:
 
@@ -292,16 +367,63 @@ the build) and sigstore roots across every such entry and re-publishes one
 repository-level `trust-bundle.json` (+ `.minisig`), signed under the local
 key at the repository's own serial/expiry. A leaf consumer can then still
 verify the original upstream builder identity against the carried-forward
-keys, layered underneath the local repo's own signature. A repository with no
-`prebuilt` entries — or none that stage a `trust_bundle` — emits no
-`trust-bundle.json` at all.
+keys, layered underneath the local repo's own signature.
+
+**Sigstore roots (`sigstore_roots:`).** A package carrying sigstore bundles in
+its `attestations/` — every package `polypkg pkg import` writes from a release
+with GitHub provenance attestations — verifies at the `verified-offline` tier only if the
+consumer has a sigstore root to check it against. List the root files in the
+manifest:
+
+```yaml
+sigstore_roots:
+  - ../imports/sigstore-trusted-root.json   # relative to polypkg-repo.yaml
+```
+
+Each file is a standard sigstore `trusted_root.json`, the format sigstore's
+TUF repository distributes; `pkg import` writes the one it verified against to
+`<out-dir>/sigstore-trusted-root.json`. `repo build` turns each Fulcio
+certificate authority in it into a sigstore root of the trust bundle, with the
+authority's validity window and the Rekor and CT log keys whose validity
+overlaps it, merges those with the roots `prebuilt` entries carry in (duplicates collapse),
+and signs the result into `trust-bundle.json`. A file that is missing or is
+not a valid trusted root fails the build, naming the file.
+
+Whenever a build changes the trust bundle, `repo build`, `repo add` and
+`repo remove` print what the new bundle vouches for: each sigstore root's
+Fulcio root certificate fingerprint and validity window, and each builder
+key's id and window. `repo status` prints the same list for the build it
+would run, so whoever reviews a `sigstore_roots` or `trust_bundle` edit sees
+the trust it adds before it is published:
+
+```
+$ polypkg repo build
+Built and signed repository (serial 2)
+The trust bundle now vouches for:
+  sigstore root: Fulcio root sha256:3ba7b6cc4e95469d4d334b49cb257ad8537076fa84b0ca87ff4ecfe6a54680c1, valid 2022-04-13T20:06:15Z to open-ended
+  sigstore root: Fulcio root sha256:03a38ffb1f450100c2596d1d10b900ac4d504058006dda58199576bbeb9c73d0, valid 2021-03-07T03:20:29Z to 2022-12-31T23:59:59.999Z
+```
+
+A build that drops the last root and carried bundle prints `Withdrew the
+published trust bundle` instead (`Would withdraw` from `repo status`).
+`--format json` carries the same report as `data.trust_bundle`; see
+[JSON output](json-output.md).
+
+Consumers trust these roots because your key signs the trust bundle, so list
+only roots you mean to vouch for. Sigstore rotates its keys from time to
+time; when a newer release's attestations stop verifying, re-run
+`pkg import`, which fetches the current root, and rebuild.
+
+A repository with no `sigstore_roots` and no `prebuilt` entry staging a
+`trust_bundle` emits no `trust-bundle.json` at all.
 
 **Native attestation for a prebuilt (`native_attestation:`).** A carried
 attestation under `attestations` keeps the upstream's provenance, but a prebuilt
 package otherwise has no polypkg-native attestation of its own — the kind a
 `source:` package gets from its native lint. Point `native_attestation` at the
 canonical `pkg build` `<name>-<version>.att.json` preview to give the prebuilt
-that native tier. The input is the exact JCS-canonical bytes `pkg build` writes;
+that native tier ([Pack](authoring.md#pack-polypkg-pkg-build-dir) describes the
+file). The input is the exact JCS-canonical bytes `pkg build` writes;
 `repo build` publishes those bytes unchanged.
 
 Three checks run before it accepts them:
@@ -325,19 +447,19 @@ re-publish.
 
 This is the *ingest* half of mirroring: `repo build` consumes an
 already-fetched artifact, its attestations, and (optionally) its upstream
-trust bundle. The network step that fetches those from an upstream repository
-and stages them exists as an internal library primitive (below); the
-one-command CLI that composes fetch, `repo build`, and `repo export-bundle`
-into a single mirror refresh is `polypkg mirror pull`, in
-[Mirroring a repository](mirroring.md).
+trust bundle. The fetch half is `polypkg mirror pull`, in
+[Mirroring a repository](mirroring.md): one command fetches and stages an
+upstream's artifacts, runs this ingest over them, and with `-o` exports the
+result as a bundle. The rest of this section says what its fetch step checks;
+[supply-chain.md](dev/supply-chain.md) describes how it is built.
 
-**Pulling from an upstream source (library primitive).**
-`internal/mirror.Pull` fetches one upstream polypkg source — an `https://`
+**Pulling from an upstream source.**
+For each upstream, `mirror pull` fetches the polypkg source — an `https://`
 endpoint or a local `file://` path — and verifies everything inbound before
 staging a single byte: the source's trust document and signed index
 (signature plus freshness, honoring the same `accept_expiry_until` grace
 described above), then each selected artifact (signature, its signed
-name/version/hash claim, and a blake3 check against the verified index's
+name/version/platform/hash claim, and a blake3 check against the verified index's
 `content_hash`) and each of its attestation blobs (transport signature and
 hash against its index reference).
 
@@ -357,9 +479,17 @@ given twice, or a bare `name` paired with an explicit `name@version` (the
 bare form means "latest", so pairing it with a pin does not resolve to one
 outcome).
 
+"Latest" is worked out per platform: each platform's builds, and the
+platform-agnostic builds as one more group, contribute their own newest
+version. `name@version` pulls every platform build of that version. An
+upstream index that lists one name, version, and platform twice (counting
+semver-equal spellings such as `1.0` and `1.0.0` as one version), or that
+holds two names, or two versions of one name, differing only in letter case,
+fails the whole pull.
+
 Because a default pull (no selectors, or a bare `name`) always takes the
 newest version of a name, it silently narrows any upstream that has published
-more than one version — the older releases simply are not mirrored. `Pull`
+more than one version — the older releases simply are not mirrored. A pull
 reports this instead of hiding it: each narrowed package gets a note naming
 the version mirrored, the version(s) skipped, and the `--package
 name@version` selector that would have pulled them. `polypkg mirror pull`
@@ -367,19 +497,23 @@ prints each note to stderr prefixed `note:`. Pin the versions you need
 explicitly (`name@version`) to avoid narrowing a version a downstream client
 depends on.
 
-Verified bytes land under a staging directory (`<name>/<version>/<name>.tar.zst`
-plus an `attestations/` dir of `.att.json` blobs), alongside the source's
-`trust-bundle.json` when it publishes one. `mirror.WritePrebuiltManifest` then
+Verified bytes land under a staging directory
+(`<name>/<version>/<platform>/<name>.tar.zst`, where `<platform>` is the
+entry's platform with `/` replaced by `-`, such as `linux-amd64`, or `any`
+for a platform-agnostic package, plus an `attestations/` dir of `.att.json`
+blobs beside it), alongside the source's
+`trust-bundle.json` when it publishes one. The pull then
 writes a `repo build`-ready manifest whose packages are `prebuilt:` entries
 pointing at those staged files — running `repo build` against it re-publishes
 the pull verbatim under your own signing key, per the `prebuilt:` mechanics
 above.
 
-A pull only verifies that the fetched bytes are authentically the upstream
-source's; it does not re-bind provenance digests itself (that is `repo
-build`'s ingest job, described above) and it enforces no anti-rollback serial
-floor of its own — it is a stateless one-shot fetch of the source's current
-state, and the republished repository mints its own serial.
+A pull verifies that the fetched bytes are authentically the upstream
+source's. It does not re-bind provenance digests itself (that is `repo
+build`'s ingest job, described above). It does enforce the upstream's
+anti-rollback serial floors, which it keeps under `--key-dir` (see
+[Upstream rollback protection](mirroring.md#upstream-rollback-protection)).
+The republished repository still mints its own serial.
 
 One consequence
 worth knowing: because a pull stages the upstream's attestations as opaque
@@ -390,10 +524,8 @@ external provenance (e.g., an SLSA statement DSSE-signed by the upstream
 builder) rides along the same way and keeps its own verifiable weight once
 the builder keys carry forward in the trust bundle.
 
-This primitive is
-single-source (one upstream per call); [`polypkg mirror pull`](mirroring.md) is
-the CLI that wraps it, fanning out one fetch per source and composing the
-re-publish and bundle export.
+With several upstreams (`--sources-file`), `mirror pull` runs one such fetch
+per upstream before the re-publish and the bundle export.
 
 **Retracting a carried-forward trust bundle.** Removing every
 `prebuilt.trust_bundle` reference from the manifest retracts the carry-forward
@@ -404,8 +536,9 @@ output directory once the publish has committed. Clients see a higher-serial
 trust set that no longer vouches for the dropped builder keys.
 
 **Pool layout.** Artifacts are published content-addressed under
-`public/pool/<blake3-hash>.tar.zst`. Republishing a changed build of the same
-version writes a *new* blob and repoints the index at it; old blobs persist
+`public/pool/<blake3-hash>.tar.zst`, one blob per platform of a version.
+Republishing a changed build of the same version and platform writes a *new*
+blob and repoints the index at it; old blobs persist
 immutably so previously signed indexes — and consumer rollbacks — keep
 resolving. The pool therefore grows with every republish until pool garbage
 collection lands (future work).

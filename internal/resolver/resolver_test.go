@@ -12,7 +12,7 @@ import (
 
 func build(pkgs map[string][]schema.IndexEntry) *Catalog {
 	GinkgoHelper()
-	c, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native")
+	c, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native", testHost)
 	Expect(err).NotTo(HaveOccurred())
 	return c
 }
@@ -27,10 +27,10 @@ func names(rs []Resolved) map[string]string {
 
 var _ = Describe("Resolve provenance fields", func() {
 	It("returns Resolved with Weak=false and nil RecommendedBy for hard installs", func() {
-		idx := &schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
+		idx := &schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
 			"foo": {{Version: "1.0.0", ContentHash: "blake3:aa", Artifact: "foo"}},
 		}}
-		cat, err := BuildCatalog(idx, "native")
+		cat, err := BuildCatalog(idx, "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 		out, err := Resolve([]Requirement{{Name: "foo"}}, cat)
 		Expect(err).NotTo(HaveOccurred())
@@ -42,10 +42,10 @@ var _ = Describe("Resolve provenance fields", func() {
 
 var _ = Describe("Resolve", func() {
 	It("carries the catalog source into each resolved entry", func() {
-		idx := &schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
+		idx := &schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{
 			"hello": {{Version: "1.0.0", ContentHash: "blake3:aa", Artifact: "hello-1.0.0.tar.zst"}},
 		}}
-		cat, err := BuildCatalog(idx, "native")
+		cat, err := BuildCatalog(idx, "native", testHost)
 		Expect(err).NotTo(HaveOccurred())
 		got, err := Resolve([]Requirement{{Name: "hello", VersionRange: "=1.0.0"}}, cat)
 		Expect(err).NotTo(HaveOccurred())
@@ -130,7 +130,7 @@ var _ = Describe("Resolve", func() {
 		Expect(errors.As(err, &rerr)).To(BeTrue())
 	})
 
-	// M2 enforces Obsoletes as a mutual conflict: requiring both an obsoleter
+	// Obsoletes is enforced as a mutual conflict: requiring both an obsoleter
 	// and the package it obsoletes is rejected (supersession/auto-drop is
 	// deferred).
 	It("treats Obsoletes as a mutual conflict", func() {

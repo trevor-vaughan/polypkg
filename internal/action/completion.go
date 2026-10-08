@@ -9,9 +9,9 @@ import (
 )
 
 // completionNameRe is the completion-name grammar: a single safe path
-// component. It compiles the registry's shared namePattern so the runtime
+// component. It compiles the registry's shared NamePattern so the runtime
 // check and the declarative lint table cannot diverge.
-var completionNameRe = regexp.MustCompile(namePattern)
+var completionNameRe = regexp.MustCompile(NamePattern)
 
 // completionShells maps a declared shell to the on-disk completion file name for
 // a given command name. bash loads "<name>", zsh "_<name>", fish "<name>.fish".
@@ -24,7 +24,7 @@ var completionShells = map[string]func(name string) string{
 // CompletionHostFile returns the on-disk completion file name a given shell loads
 // for command name, and whether shell is supported. It is the single source of
 // the per-shell naming convention: the Completion action derives the file it writes
-// from it, and the planner's ProjectOwnership mirrors the same name when it
+// from it, and the planner's projectOwnership mirrors the same name when it
 // projects the completions/<shell>/<hostfile> ownership path — keep the two in
 // sync through this function rather than duplicating the bash/zsh/fish rules.
 func CompletionHostFile(shell, name string) (string, bool) {
@@ -77,7 +77,7 @@ func Completion(inv Invocation, scope Scope) (Result, error) {
 	}
 	// absPath relativizes to the completions/<shell>/<hostfile> ownership path;
 	// the planner mirrors this path and records source as the symlink target in
-	// ProjectOwnership/projectExpected ("completion" case) — keep in sync.
+	// projectOwnership/projectExpected ("completion" case) — keep in sync.
 	absPath := filepath.Join(scope.ActiveRoot, SharedCompletionsDir, shell, hostFile) // absolute; dispatch relativizes
 	stat, err := capturedStat(root, hostFile)
 	if err != nil {

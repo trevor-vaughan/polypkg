@@ -1,9 +1,13 @@
 package attest_test
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -124,5 +128,88 @@ var _ = Describe("sigstore bundle verification kernel", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = attest.VerifySigstoreBundle([]byte(`{"not":"a bundle"}`), tm)
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+var _ = Describe("sigstore verdict source repository", func() {
+	const githubActions = "https://token.actions.githubusercontent.com"
+
+	readFixture := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		Expect(err).NotTo(HaveOccurred())
+		return b
+	}
+	githubRoot := func() root.TrustedMaterial {
+		tr, err := root.NewTrustedRootFromJSON(readFixture("github-trusted-root.json"))
+		Expect(err).NotTo(HaveOccurred())
+		return tr
+	}
+
+	It("records the Fulcio Source Repository URI of a GitHub Actions bundle", func() {
+		verdict, err := attest.VerifySigstoreBundle(readFixture("github-bundle.json"), githubRoot())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeTrue())
+		Expect(verdict.CertificateIssuer).To(Equal(githubActions))
+		Expect(verdict.SourceRepositoryURI).To(Equal("https://github.com/acme/tool"))
+		sum := sha256.Sum256(readFixture("github-asset.bin"))
+		Expect(verdict.Subjects).To(ContainElement(
+			HaveField("Digest", HaveKeyWithValue("sha256", hex.EncodeToString(sum[:])))))
+	})
+
+	It("records the repository a bundle built elsewhere names", func() {
+		verdict, err := attest.VerifySigstoreBundle(readFixture("github-bundle-wrong-repo.json"), githubRoot())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeTrue())
+		Expect(verdict.CertificateIssuer).To(Equal(githubActions))
+		Expect(verdict.SourceRepositoryURI).To(Equal("https://github.com/mallory/tool"))
+	})
+
+	It("records an OIDC issuer other than GitHub Actions", func() {
+		verdict, err := attest.VerifySigstoreBundle(readFixture("github-bundle-wrong-issuer.json"), githubRoot())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeTrue())
+		Expect(verdict.CertificateIssuer).To(Equal("https://accounts.google.com"))
+		Expect(verdict.SourceRepositoryURI).To(Equal("https://github.com/acme/tool"))
+	})
+
+	It("leaves SourceRepositoryURI empty when the certificate lacks the extension", func() {
+		vs, err := ca.NewVirtualSigstore()
+		Expect(err).NotTo(HaveOccurred())
+		entity, err := vs.AttestAtTime("ci@example.com", githubActions, inTotoBody("https://slsa.dev/provenance/v1"), time.Now(), true)
+		Expect(err).NotTo(HaveOccurred())
+		tm, err := attest.SigstoreTrustedMaterial(sigstoreRootFromVirtual(vs))
+		Expect(err).NotTo(HaveOccurred())
+		verdict, err := attest.VerifySignedEntity(entity, tm)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeTrue())
+		Expect(verdict.SourceRepositoryURI).To(BeEmpty())
+	})
+})
+
+var _ = Describe("sigstore verdict failure reason", func() {
+	readFixture := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		Expect(err).NotTo(HaveOccurred())
+		return b
+	}
+
+	It("explains why a bundle does not verify", func() {
+		var unrelated schema.SigstoreRoot
+		Expect(json.Unmarshal(readFixture("unrelated-root.json"), &unrelated)).To(Succeed())
+		tm, err := attest.SigstoreTrustedMaterial(unrelated)
+		Expect(err).NotTo(HaveOccurred())
+		verdict, err := attest.VerifySigstoreBundle(readFixture("github-bundle.json"), tm)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeFalse())
+		Expect(verdict.FailureReason).NotTo(BeEmpty())
+	})
+
+	It("is empty when the bundle verifies", func() {
+		tm, err := root.NewTrustedRootFromJSON(readFixture("github-trusted-root.json"))
+		Expect(err).NotTo(HaveOccurred())
+		verdict, err := attest.VerifySigstoreBundle(readFixture("github-bundle.json"), tm)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verdict.Verified).To(BeTrue())
+		Expect(verdict.FailureReason).To(BeEmpty())
 	})
 })

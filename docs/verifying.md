@@ -90,11 +90,14 @@ within it. To also pin the signing workflow, add
 `checksums.txt` is signed with a keyless Cosign signature. The signing
 certificate is issued by Fulcio against the GitHub Actions OIDC identity of the
 release job, so verification checks *who* signed rather than *which key* signed.
+The identity pattern is anchored at both ends and accepts only this
+repository's `release.yml` workflow running for a version tag, not any other
+workflow or branch in the repository.
 
 ```
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/trevor-vaughan/polypkg/.*' \
+  --certificate-identity-regexp '^https://github\.com/trevor-vaughan/polypkg/\.github/workflows/release\.yml@refs/tags/v[^/]+$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 ```
@@ -114,7 +117,8 @@ certificate — means **stop; do not proceed to step 4**.
 > bundle rather than cosign's legacy bundle JSON. That is the interoperable
 > format — the one other Sigstore verifiers such as `sigstore-python` and
 > `sigstore-go` are built to read, which is the point of using it. This document
-> covers the cosign path only. cosign 2.6.5 detects the format on its own, so
+> covers the cosign path only. The release signs with cosign v3.0.6, and the
+> command above is written for cosign v3, which reads this format by default:
 > `--new-bundle-format` is not needed when verifying.
 
 ## 4. Check the archive against the verified manifest

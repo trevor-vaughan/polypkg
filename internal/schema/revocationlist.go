@@ -13,16 +13,15 @@ var revocationListSchemaV1 []byte
 
 // RevocationList is a source's signed, freshness-bounded list of revoked
 // builder keys and revoked attestations (polypkg.revocation-list/v1). It is a
-// SEPARATE document from the trust bundle (spec §5.1) with its own serial and
-// expires, so a revocation ships without a full bundle republish. Callers MUST
-// verify its signature before trusting parsed contents (see
-// trust.LoadRevocationList).
+// SEPARATE document from the trust bundle with its own serial and expires, so a
+// revocation ships without a full bundle republish. Callers MUST verify its
+// signature before trusting parsed contents (see trust.LoadRevocationList).
 type RevocationList struct {
 	Schema              string   `json:"schema"`
 	Source              string   `json:"source"`
 	Serial              uint64   `json:"serial"`
 	IssuedAt            string   `json:"issued_at,omitempty"`
-	Expires             string   `json:"expires"`                        // RFC3339; consumer rejects stale (D13)
+	Expires             string   `json:"expires"`                        // RFC3339; consumer rejects stale
 	RevokedBuilderKeys  []string `json:"revoked_builder_keys,omitempty"` // builder key_ids
 	RevokedAttestations []string `json:"revoked_attestations,omitempty"` // blake3 content-hashes
 }
@@ -33,6 +32,9 @@ func ParseRevocationList(r io.Reader) (*RevocationList, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("read revocation list: %w", err)
+	}
+	if err := checkNotNewer(data, revocationListSchemaV1); err != nil {
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

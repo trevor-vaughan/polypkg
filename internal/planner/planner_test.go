@@ -66,7 +66,7 @@ var _ = Describe("Plan", func() {
 	})
 
 	// Full-fetch integration tests (with httptest server, signed repo, etc.)
-	// live in tests/integration/e2e_plan_test.go (Task 10). The unit-level
+	// live in tests/integration/e2e_plan_test.go. The unit-level
 	// tests here focus on the no-network paths and error returns.
 })
 

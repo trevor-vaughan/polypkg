@@ -115,6 +115,11 @@ RunE: func(cmd *cobra.Command, args []string) error {
   Under `--format json` it marshals a stable `polypkg.cli-result/v2` envelope from
   `data`; under text it runs `textRenderer` (which writes into a `*bytes.Buffer`).
   Both paths write to `cmd.OutOrStdout()`.
+- **The JSON shape is a public contract.** A new envelope command, or a new key
+  under `data`, gets a row in `docs/json-output.md` in the same commit. Within
+  `polypkg.cli-result/v2` a key may be added but never removed, renamed, or
+  given a new type or meaning; that needs a new schema version (see the
+  stability policy in that file).
 - **Errors** return `WrapError(cmd, format, command, err)` from `RunE` so the JSON
   error envelope is emitted in JSON mode and cobra prints normally in text mode.
   `WrapError` returns its input error unchanged, so `return WrapError(...)` both
@@ -127,7 +132,9 @@ RunE: func(cmd *cobra.Command, args []string) error {
 
 Use cobra's `RunE` (never `Run`) and declare positional-arg rules with `Args`
 validators (`cobra.ExactArgs(1)`, etc.) rather than checking `len(args)` inside
-the handler.
+the handler. Make a flag mandatory with `requireFlags(cmd, "name", …)` after
+setting `RunE`, never cobra's `MarkFlagRequired`: cobra raises that error
+outside the flag-error handler, so it would carry no JSON envelope and no hint.
 
 ## Testing
 

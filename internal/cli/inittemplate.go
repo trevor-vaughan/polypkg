@@ -39,7 +39,7 @@ sources:
     # Obtain this from your repository operator.
     trust_root: {TRUST_ROOT_PATH}
 
-# Attestation posture for newly fetched packages (README: "Attestations").
+# Attestation posture for newly fetched packages (docs/trust-policy.md, "Attestation policy").
 # A present-but-invalid attestation is always refused, in every mode; this
 # knob only governs packages published with NO attestation:
 #   warn (default) — install unattested packages with a warning

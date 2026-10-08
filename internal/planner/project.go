@@ -2,78 +2,179 @@ package planner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/trevor-vaughan/polypkg/internal/action"
+	"github.com/trevor-vaughan/polypkg/internal/extractstore"
 	"github.com/trevor-vaughan/polypkg/internal/runner"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/starlarkeval"
 )
 
-// ProjectOwnership computes the ownership entries each package's actions would
+// projectOwnership computes the ownership entries each package's actions would
 // produce at apply time, without dispatching them. Paths use the literal
 // activeRootPlaceholder (typically "$ACTIVE") because no transaction is
-// open. Expected fields are populated per action type. Stat is left zero —
-// diff doesn't need it for change detection.
-func ProjectOwnership(
+// open. Expected fields are populated per action type. A multi-result action
+// (one that places many paths, such as extract) is projected by running its
+// handler against a throwaway active root, since its paths depend on the files
+// it unpacks, with opts.DirMode as the directory mode apply would use. When
+// opts.SkipMultiResultProjection is set, multi-result actions are left out of
+// the projection instead, for a caller that never reads the projected
+// ownership and would otherwise pay for unpacking every archive. Stat is left
+// zero — diff doesn't need it for change detection.
+func projectOwnership(
 	entries []runner.RunEntry,
 	activeRootPlaceholder string,
 	ev *starlarkeval.Evaluator,
-	scope string,
+	opts Options,
 ) (*schema.Ownership, error) {
 	own := &schema.Ownership{
-		Schema: "polypkg.ownership/v1", Scope: scope,
+		Schema: "polypkg.ownership/v1", Scope: opts.Scope,
 		Entries: []schema.OwnershipEntry{},
 	}
 	ctx := context.Background()
 
-	for i := range entries {
-		e := entries[i]
-		var inputs starlarkeval.Inputs
-		inputs.Package.Name = e.Package.Name
-		inputs.Package.Version = e.Package.Version
-		inputs.Host.OS = runtime.GOOS
-		inputs.Host.Arch = runtime.GOARCH
+	// Walk phase by phase, then package, then action — the runner's order — so
+	// SupersedeModes sees each path's mode setters in the order apply runs
+	// them. File-placing actions in other phases are refused by apply and
+	// recorded by no generation, so they are not projected.
+	for _, phase := range action.PreSwapPhases() {
+		for i := range entries {
+			e := entries[i]
+			var inputs starlarkeval.Inputs
+			inputs.Package.Name = e.Package.Name
+			inputs.Package.Version = e.Package.Version
+			inputs.Host.OS = runtime.GOOS
+			inputs.Host.Arch = runtime.GOARCH
 
-		for _, v := range e.Package.Actions {
-			if !action.IsFilePlacing(v.Action) {
-				continue
+			for _, v := range e.Package.Actions {
+				if v.Phase != string(phase) || !action.IsFilePlacing(v.Action) {
+					continue
+				}
+				policy := v.Drift
+				if policy == "" {
+					policy = "notify_heal"
+				}
+				if spec := action.Registry[v.Action]; spec.MultiHandler != nil {
+					if opts.SkipMultiResultProjection {
+						continue
+					}
+					projected, err := projectMultiResult(ctx, spec, v, e, inputs, ev, opts, policy)
+					if err != nil {
+						return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
+					}
+					own.Entries = append(own.Entries, projected...)
+					continue
+				}
+				params, err := substituteParams(ctx, v.Params, activeRootPlaceholder, e.PkgRoot, inputs, ev)
+				if err != nil {
+					return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
+				}
+				path, err := projectPath(v.Action, params, activeRootPlaceholder)
+				if err != nil {
+					return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
+				}
+				rel, err := filepath.Rel(activeRootPlaceholder, path)
+				if err != nil {
+					return nil, fmt.Errorf("action %s (pkg %s): relativize %q: %w", v.Action, e.Package.Name, path, err)
+				}
+				expected, err := projectExpected(v.Action, params, e.PkgRoot)
+				if err != nil {
+					return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
+				}
+				own.Entries = append(own.Entries, schema.OwnershipEntry{
+					Path:        filepath.ToSlash(rel),
+					Package:     e.Package.Name,
+					Version:     e.Package.Version,
+					Action:      v.Action,
+					Expected:    expected,
+					DriftPolicy: policy,
+				})
 			}
-			params, err := substituteParams(ctx, v.Params, activeRootPlaceholder, e.PkgRoot, inputs, ev)
-			if err != nil {
-				return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
-			}
-			path, err := projectPath(v.Action, params, activeRootPlaceholder)
-			if err != nil {
-				return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
-			}
-			rel, err := filepath.Rel(activeRootPlaceholder, path)
-			if err != nil {
-				return nil, fmt.Errorf("action %s (pkg %s): relativize %q: %w", v.Action, e.Package.Name, path, err)
-			}
-			policy := v.Drift
-			if policy == "" {
-				policy = "notify_heal"
-			}
-			expected, err := projectExpected(v.Action, params, e.PkgRoot)
-			if err != nil {
-				return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, e.Package.Name, err)
-			}
-			own.Entries = append(own.Entries, schema.OwnershipEntry{
-				Path:        filepath.ToSlash(rel),
-				Package:     e.Package.Name,
-				Version:     e.Package.Version,
-				Action:      v.Action,
-				Expected:    expected,
-				DriftPolicy: policy,
-			})
 		}
 	}
+	runner.SupersedeModes(own.Entries)
 	return own, nil
+}
+
+// projectMultiResult projects a multi-result action by running its handler
+// against a throwaway active root and relativizing every Result exactly as the
+// runner does, so the projected entries equal the applied ones by
+// construction. The handler's Expected values must not embed the active root
+// (extract's are content hashes, modes and in-archive link targets). The
+// throwaway root is a ".project-*" dir in the scope's extract store, never the
+// shared system temp dir, and is removed before returning; one a crash leaves
+// behind is reclaimed by the extract-store sweep gc and apply run.
+func projectMultiResult(
+	ctx context.Context,
+	spec action.Spec,
+	v schema.PackageAction,
+	e runner.RunEntry,
+	inputs starlarkeval.Inputs,
+	ev *starlarkeval.Evaluator,
+	opts Options,
+	policy string,
+) (entries []schema.OwnershipEntry, err error) {
+	if opts.StateHome == "" {
+		return nil, errors.New("no state home to project into")
+	}
+	parent := extractstore.Root(opts.StateHome)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return nil, fmt.Errorf("create projection dir: %w", err)
+	}
+	tmp, err := os.MkdirTemp(parent, ".project-*")
+	if err != nil {
+		return nil, fmt.Errorf("create projection dir: %w", err)
+	}
+	defer func() {
+		if rerr := os.RemoveAll(tmp); rerr != nil && err == nil {
+			err = fmt.Errorf("remove projection dir: %w", rerr)
+		}
+	}()
+	params, err := substituteParams(ctx, v.Params, tmp, e.PkgRoot, inputs, ev)
+	if err != nil {
+		return nil, err
+	}
+	results, err := spec.MultiHandler(action.Invocation{
+		Action: v.Action, PackageName: e.Package.Name, Phase: action.Phase(v.Phase), Params: params,
+	}, action.Scope{
+		ActiveRoot: tmp, PackageName: e.Package.Name, PackageRoot: e.PkgRoot, DirMode: opts.DirMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	entries = make([]schema.OwnershipEntry, 0, len(results))
+	for i := range results {
+		res := &results[i]
+		if res.Outcome != "ok" {
+			return nil, fmt.Errorf("failed: %s", res.ErrorMsg)
+		}
+		rel, err := filepath.Rel(tmp, res.Path)
+		if err != nil {
+			return nil, fmt.Errorf("relativize %q: %w", res.Path, err)
+		}
+		// As in the runner, a result's own drift policy wins over the
+		// declared one (or its default), which the caller passes as policy.
+		resPolicy := res.DriftPolicy
+		if resPolicy == "" {
+			resPolicy = policy
+		}
+		entries = append(entries, schema.OwnershipEntry{
+			Path:        filepath.ToSlash(rel),
+			Package:     e.Package.Name,
+			Version:     e.Package.Version,
+			Action:      v.Action,
+			Expected:    res.Expected,
+			DriftPolicy: resPolicy,
+		})
+	}
+	return entries, nil
 }
 
 // projectPath reconstructs the absolute filesystem path each action's runner site
@@ -130,7 +231,7 @@ func projectExpected(actionName string, params map[string]any, pkgRoot string) (
 	switch actionName {
 	case "install":
 		fileType := "regular"
-		if policy == "" || policy == "symlink" {
+		if policy == "symlink" {
 			fileType = "symlink"
 		}
 		hash, err := action.HashInstallSource(pkgRoot, target)

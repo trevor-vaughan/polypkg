@@ -36,33 +36,71 @@ const (
 	maxRevocationBytes int64 = 1 << 20 // 1 MiB (revocation list; same bound as trust doc)
 )
 
+// fetchKind says which deadlines a fetch runs under.
+type fetchKind int
+
+const (
+	// metadataFetch is a size-capped repository file (index, trust document,
+	// trust bundle, revocation list, any signature). It is bounded as a whole
+	// by the transport's metadata deadline as well as by the idle deadline.
+	metadataFetch fetchKind = iota
+	// artifactFetch is a package artifact, up to maxArtifactBytes. Only the
+	// idle deadline applies, since a fixed bound would cut off a legitimate
+	// slow download.
+	artifactFetch
+)
+
 // transport fetches a named repository file, size-bounded.
 type transport interface {
-	get(ctx context.Context, name string, limit int64) ([]byte, error)
+	get(ctx context.Context, name string, limit int64, kind fetchKind) ([]byte, error)
 }
 
-// httpTransport fetches files over HTTP/HTTPS from a base URL.
+// httpTransport fetches files over HTTP/HTTPS from a base URL. Its client
+// (NewHTTPClient) enforces the idle-read deadline on every response body.
 type httpTransport struct {
 	base   string
+	source string // the source's name in the profile, named in fetch errors
 	client *http.Client
+	// metadataTimeout bounds the whole of every metadataFetch.
+	metadataTimeout time.Duration
 }
 
-func (t *httpTransport) get(ctx context.Context, name string, limit int64) ([]byte, error) {
+// get fetches name, failing with a *FetchError wrapping a *StallError when
+// the server stalls. Every fetch has the client's idle-read deadline; a
+// metadataFetch also has the whole-request metadataTimeout.
+func (t *httpTransport) get(ctx context.Context, name string, limit int64, kind fetchKind) ([]byte, error) {
 	rawURL := fmt.Sprintf("%s/%s", t.base, name)
+	if kind == metadataFetch {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, t.metadataTimeout,
+			&StallError{Limit: t.metadataTimeout, Overall: true})
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
+		// A parse failure is a *url.Error quoting the raw URL, credentials
+		// included; report its cause against the redacted URL instead.
+		cause := err
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			cause = ue.Err
+		}
+		return nil, fmt.Errorf("new request for %s: %w", RedactURL(rawURL), cause)
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, newNetworkFetchError("native", t.base, rawURL, err)
+		return nil, newNetworkFetchError(t.source, t.base, rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, newStatusFetchError("native", t.base, rawURL, resp.StatusCode)
+		return nil, newStatusFetchError(t.source, t.base, rawURL, resp.StatusCode)
 	}
 	data, err := readLimited(resp.Body, limit)
 	if err != nil {
+		var se *StallError
+		if errors.As(err, &se) {
+			return nil, newNetworkFetchError(t.source, t.base, rawURL, err)
+		}
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	return data, nil
@@ -70,10 +108,11 @@ func (t *httpTransport) get(ctx context.Context, name string, limit int64) ([]by
 
 // localTransport fetches files from a local filesystem directory.
 type localTransport struct {
-	root string
+	root   string
+	source string // the source's name in the profile, named in fetch errors
 }
 
-func (t *localTransport) get(_ context.Context, name string, limit int64) ([]byte, error) {
+func (t *localTransport) get(_ context.Context, name string, limit int64, _ fetchKind) ([]byte, error) {
 	clean := filepath.Clean(filepath.Join(t.root, name))
 
 	// Security: reject any name that escapes root. filepath.Rel returns a path
@@ -93,7 +132,9 @@ func (t *localTransport) get(_ context.Context, name string, limit int64) ([]byt
 	f, err := os.Open(clean)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, newStatusFetchError("native", t.root, clean, http.StatusNotFound)
+			// A local file has no HTTP status: report the absence itself
+			// rather than a made-up 404.
+			return nil, &FetchError{Source: t.source, BaseURL: t.root, URL: clean, Err: fs.ErrNotExist}
 		}
 		return nil, fmt.Errorf("open %s: %w", clean, err)
 	}
@@ -108,7 +149,10 @@ func (t *localTransport) get(_ context.Context, name string, limit int64) ([]byt
 
 // NativeBackendOpts configures a NativeBackend.
 type NativeBackendOpts struct {
-	URL      string
+	URL string
+	// Source is the source's name in the profile. Fetch errors name it, so
+	// with several sources the operator is told which one failed.
+	Source   string
 	CacheDir string
 }
 
@@ -122,25 +166,24 @@ type NativeBackend struct {
 
 // NewNativeBackend constructs a NativeBackend. When the URL is a local path
 // (absolute or file://) the backend reads directly from the filesystem and
-// bypasses the on-disk cache. Otherwise it fetches over HTTP/HTTPS with a
-// client derived from the standard transport (preserving proxy, dial, and
-// TLS-handshake timeouts) with an added response-header timeout so a stalled
-// server cannot hang an apply indefinitely when the caller's context has no
-// deadline.
+// bypasses the on-disk cache. Otherwise it fetches over HTTP/HTTPS with
+// NewHTTPClient plus idle-read and metadata deadlines, so a stalled or
+// slow-dripping server cannot hang an apply indefinitely when the caller's
+// context has no deadline.
 func NewNativeBackend(opts NativeBackendOpts) *NativeBackend {
 	if root, ok := isLocalSourceURL(opts.URL); ok {
 		return &NativeBackend{
-			transport:   &localTransport{root: root},
+			transport:   &localTransport{root: root, source: opts.Source},
 			cacheDir:    opts.CacheDir,
 			localSource: true,
 		}
 	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.ResponseHeaderTimeout = 30 * time.Second
 	return &NativeBackend{
 		transport: &httpTransport{
-			base:   opts.URL,
-			client: &http.Client{Transport: tr},
+			base:            opts.URL,
+			source:          opts.Source,
+			client:          NewHTTPClient(),
+			metadataTimeout: metadataFetchTimeout,
 		},
 		cacheDir:    opts.CacheDir,
 		localSource: false,
@@ -197,7 +240,7 @@ func (b *NativeBackend) Name() string { return "native" }
 // checked first; a miss downloads, stores, and returns.
 func (b *NativeBackend) Fetch(ctx context.Context, artifact string) ([]byte, error) {
 	if b.localSource {
-		return b.transport.get(ctx, artifact, maxArtifactBytes)
+		return b.transport.get(ctx, artifact, maxArtifactBytes, artifactFetch)
 	}
 
 	cachePath := filepath.Clean(filepath.Join(b.cacheDir, filepath.Base(artifact)))
@@ -206,7 +249,7 @@ func (b *NativeBackend) Fetch(ctx context.Context, artifact string) ([]byte, err
 		return data, nil
 	}
 
-	data, err := b.transport.get(ctx, artifact, maxArtifactBytes)
+	data, err := b.transport.get(ctx, artifact, maxArtifactBytes, artifactFetch)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +288,7 @@ func (b *NativeBackend) RefetchArtifact(ctx context.Context, artifact string) ([
 // signature. For HTTP sources the index is cached to disk. For local sources
 // the cache write is skipped. The caller verifies the signature before parsing.
 func (b *NativeBackend) FetchIndex(ctx context.Context) (index []byte, signature string, err error) {
-	raw, err := b.transport.get(ctx, "index.json", maxIndexBytes)
+	raw, err := b.transport.get(ctx, "index.json", maxIndexBytes, metadataFetch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -262,7 +305,7 @@ func (b *NativeBackend) FetchIndex(ctx context.Context) (index []byte, signature
 			return nil, "", fmt.Errorf("rename index cache: %w", err)
 		}
 	}
-	sig, err := b.transport.get(ctx, "index.json.minisig", maxSignatureBytes)
+	sig, err := b.transport.get(ctx, "index.json.minisig", maxSignatureBytes, metadataFetch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -273,7 +316,7 @@ func (b *NativeBackend) FetchIndex(ctx context.Context) (index []byte, signature
 // signature. For HTTP sources the document is cached to disk. For local sources
 // the cache write is skipped. The caller verifies the signature before parsing.
 func (b *NativeBackend) FetchTrustDoc(ctx context.Context) (raw []byte, sig string, err error) {
-	doc, err := b.transport.get(ctx, "trust.json", maxTrustDocBytes)
+	doc, err := b.transport.get(ctx, "trust.json", maxTrustDocBytes, metadataFetch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -290,7 +333,7 @@ func (b *NativeBackend) FetchTrustDoc(ctx context.Context) (raw []byte, sig stri
 			return nil, "", fmt.Errorf("rename trust cache: %w", err)
 		}
 	}
-	s, err := b.transport.get(ctx, "trust.json.minisig", maxSignatureBytes)
+	s, err := b.transport.get(ctx, "trust.json.minisig", maxSignatureBytes, metadataFetch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -318,10 +361,10 @@ func (b *NativeBackend) FetchRevocationList(ctx context.Context) (raw []byte, si
 // ErrMetadataAbsent; a not-found on the signature of a present document is a
 // hard error (tamper). HTTP sources cache the document to disk.
 func (b *NativeBackend) fetchOptionalMeta(ctx context.Context, name string, limit int64) (raw []byte, sig string, err error) {
-	doc, err := b.transport.get(ctx, name, limit)
+	doc, err := b.transport.get(ctx, name, limit, metadataFetch)
 	if err != nil {
 		var fe *FetchError
-		if errors.As(err, &fe) && fe.Status == http.StatusNotFound {
+		if errors.As(err, &fe) && fe.NotFound() {
 			return nil, "", fmt.Errorf("%w: %s", ErrMetadataAbsent, name)
 		}
 		return nil, "", err
@@ -339,7 +382,7 @@ func (b *NativeBackend) fetchOptionalMeta(ctx context.Context, name string, limi
 			return nil, "", fmt.Errorf("rename %s cache: %w", name, err)
 		}
 	}
-	s, err := b.transport.get(ctx, name+".minisig", maxSignatureBytes)
+	s, err := b.transport.get(ctx, name+".minisig", maxSignatureBytes, metadataFetch)
 	if err != nil {
 		// Document present, signature absent: tamper, not absence. Break the
 		// FetchError chain (%v, not %w) so errors.Is(_, ErrMetadataAbsent) and
@@ -352,7 +395,7 @@ func (b *NativeBackend) fetchOptionalMeta(ctx context.Context, name string, limi
 // FetchSignature retrieves the detached minisign signature for the artifact at
 // the index-supplied relative path (i.e. artifact + ".minisig").
 func (b *NativeBackend) FetchSignature(ctx context.Context, artifact string) (string, error) {
-	data, err := b.transport.get(ctx, artifact+".minisig", maxSignatureBytes)
+	data, err := b.transport.get(ctx, artifact+".minisig", maxSignatureBytes, metadataFetch)
 	if err != nil {
 		return "", err
 	}

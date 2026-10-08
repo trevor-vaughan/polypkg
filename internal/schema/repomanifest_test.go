@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -274,6 +275,41 @@ func TestParseRepoManifestAcceptsSlugSourceNames(t *testing.T) {
 			}
 			if m.Source != src {
 				t.Fatalf("source = %q, want %q", m.Source, src)
+			}
+		})
+	}
+}
+
+func TestParseRepoManifestAcceptsSigstoreRoots(t *testing.T) {
+	const in = `schema: polypkg.repo/v1
+source: example
+output: ./public
+key: {path: /k, kdf: scrypt}
+sigstore_roots:
+  - ./imports/sigstore-trusted-root.json
+  - /etc/polypkg/staging-trusted-root.json
+`
+	m, err := ParseRepoManifest(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseRepoManifest: %v", err)
+	}
+	want := []string{"./imports/sigstore-trusted-root.json", "/etc/polypkg/staging-trusted-root.json"}
+	if !slices.Equal(m.SigstoreRoots, want) {
+		t.Fatalf("SigstoreRoots = %q, want %q", m.SigstoreRoots, want)
+	}
+}
+
+func TestParseRepoManifestRejectsBadSigstoreRoots(t *testing.T) {
+	for name, roots := range map[string]string{
+		"empty entry":     "sigstore_roots: ['']\n",
+		"duplicate entry": "sigstore_roots: [./a.json, ./a.json]\n",
+		"not a list":      "sigstore_roots: ./a.json\n",
+		"non-string item": "sigstore_roots: [{path: ./a.json}]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\nkey: {path: /k, kdf: scrypt}\n" + roots
+			if _, err := ParseRepoManifest(strings.NewReader(in)); err == nil {
+				t.Fatalf("expected rejection for %s", name)
 			}
 		})
 	}

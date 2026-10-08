@@ -389,11 +389,8 @@ func resolveEdits(scope string, p *schema.Profile, fr *planner.FetchResult, args
 
 // installProfilePath resolves the profile install edits: the --profile flag
 // (highest precedence, install-family-specific) overrides the scope-default
-// discovery resolveProfilePath performs.
-//
-// When no profile is found, the returned CLIError hints the user to pass
-// --profile <path> rather than a positional argument, because install/remove/
-// upgrade take package names positionally (not a profile-file).
+// discovery resolveProfilePath performs. Its no-profile hint names --profile,
+// because install/remove/upgrade take package names positionally.
 func installProfilePath(cmd *cobra.Command) (string, error) {
 	if cmd.Flags().Changed("profile") {
 		v, _ := cmd.Flags().GetString("profile")
@@ -401,17 +398,7 @@ func installProfilePath(cmd *cobra.Command) (string, error) {
 			return v, nil
 		}
 	}
-	p, err := resolveProfilePath(cmd, nil)
-	if err != nil {
-		var ce *CLIError
-		if errors.As(err, &ce) {
-			// Replace the "<command> <profile-file>" positional hint with the
-			// flag-based form; package verbs don't accept a profile positional.
-			ce.Hint = "run `polypkg init` to create a profile, or pass one with --profile <path>"
-		}
-		return "", err
-	}
-	return p, nil
+	return resolveProfilePath(cmd, nil)
 }
 
 // parseProfileAt opens and parses the profile at profilePath, returning the

@@ -134,5 +134,46 @@ func withRecoveryHint(err error) error {
 			Err: err,
 		}
 	}
+	if errors.Is(err, trust.ErrSignatureMismatch) {
+		return &CLIError{
+			Msg: err.Error(),
+			Hint: "the signature does not verify under the trust root polypkg was given: the data was signed by another key, or altered. " +
+				"If the publisher confirms the repository was re-created with a new key, re-pin it (docs/trust-policy.md, \"Recovering after a repository is re-created\"); otherwise treat it as tampering",
+			Err: err,
+		}
+	}
+	var ne *schema.NewerSchemaError
+	if errors.As(err, &ne) {
+		return newerStateError(err, ne)
+	}
+	var oe *schema.OlderIndexError
+	if errors.As(err, &oe) {
+		// The whole chain is kept, as for a fetched newer document: its
+		// context ("source \"x\": …") says which repository it was. The same
+		// message reaches the repository's operator (repo export, mirror) and
+		// its consumers (plan, install), so the hint addresses both.
+		return &CLIError{
+			Msg:  err.Error(),
+			Hint: "the repository must be rebuilt by a current polypkg: its operator runs `polypkg repo build`; if that is not you, ask them to rebuild it",
+			Err:  err,
+		}
+	}
 	return err
+}
+
+// newerStateError is the user-facing error for err, whose chain holds ne: a
+// document a newer polypkg wrote. A named file makes ne's own sentence
+// complete; without one (a fetched document), the whole chain is kept so its
+// context ("source \"x\": …") says which document it was, and the hint names
+// the repository rather than local state.
+func newerStateError(err error, ne *schema.NewerSchemaError) *CLIError {
+	msg, subject := ne.Error(), "running polypkg against this state"
+	if ne.Path == "" {
+		msg, subject = err.Error(), "using this repository"
+	}
+	return &CLIError{
+		Msg:  msg,
+		Hint: fmt.Sprintf("you are running polypkg %s; install a newer release (see the README's Install section) before %s", Version, subject),
+		Err:  err,
+	}
 }

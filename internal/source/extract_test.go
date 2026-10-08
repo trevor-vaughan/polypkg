@@ -10,6 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/trevor-vaughan/polypkg/internal/archive"
 )
 
 // makeTarZst builds a tar.zst from regular files (name -> body) for the
@@ -70,31 +71,31 @@ var _ = Describe("ExtractTarZst", func() {
 	})
 
 	It("rejects a file larger than the per-file limit", func() {
-		archive := makeTarZst(map[string][]byte{"big": make([]byte, 20)})
-		lim := extractLimits{maxFileBytes: 10, maxTotalBytes: 1000, maxEntries: 100}
-		err := extractTarZst(bytes.NewReader(archive), GinkgoT().TempDir(), lim)
+		data := makeTarZst(map[string][]byte{"big": make([]byte, 20)})
+		lim := archive.Limits{MaxFileBytes: 10, MaxTotalBytes: 1000, MaxEntries: 100}
+		err := extractTarZst(bytes.NewReader(data), GinkgoT().TempDir(), lim)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("exceeds limit"))
 	})
 
 	It("rejects archives whose total decompressed size exceeds the cap", func() {
 		// Two files, each under the per-file cap, together over the total cap.
-		archive := makeTarZst(map[string][]byte{
+		data := makeTarZst(map[string][]byte{
 			"a": make([]byte, 8),
 			"b": make([]byte, 8),
 		})
-		lim := extractLimits{maxFileBytes: 10, maxTotalBytes: 12, maxEntries: 100}
-		err := extractTarZst(bytes.NewReader(archive), GinkgoT().TempDir(), lim)
+		lim := archive.Limits{MaxFileBytes: 10, MaxTotalBytes: 12, MaxEntries: 100}
+		err := extractTarZst(bytes.NewReader(data), GinkgoT().TempDir(), lim)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("total size"))
 	})
 
 	It("rejects archives with more entries than the cap allows", func() {
-		archive := makeTarZst(map[string][]byte{
+		data := makeTarZst(map[string][]byte{
 			"a": {1}, "b": {1}, "c": {1}, "d": {1},
 		})
-		lim := extractLimits{maxFileBytes: 100, maxTotalBytes: 1000, maxEntries: 3}
-		err := extractTarZst(bytes.NewReader(archive), GinkgoT().TempDir(), lim)
+		lim := archive.Limits{MaxFileBytes: 100, MaxTotalBytes: 1000, MaxEntries: 3}
+		err := extractTarZst(bytes.NewReader(data), GinkgoT().TempDir(), lim)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("entries"))
 	})
@@ -143,6 +144,6 @@ var _ = Describe("ExtractTarZst", func() {
 		dir := GinkgoT().TempDir()
 		err = ExtractTarZst(bytes.NewReader(z.Bytes()), dir)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("traversal"))
+		Expect(err.Error()).To(ContainSubstring("escapes the extraction root"))
 	})
 })

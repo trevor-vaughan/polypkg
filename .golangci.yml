@@ -3,6 +3,10 @@ version: "2"
 run:
   timeout: 5m
   go: "1.26"
+  # Pass -mod=readonly on golangci-lint's own go list calls (a command-line
+  # -mod overrides GOFLAGS), so lint never rewrites go.mod or go.sum, even
+  # when the caller exports GOFLAGS=-mod=mod.
+  modules-download-mode: readonly
 
 linters:
   default: none

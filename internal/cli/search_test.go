@@ -71,9 +71,7 @@ var _ = Describe("filterNames", func() {
 
 var _ = Describe("search command argument validation", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", dir+"/data")
-		GinkgoT().Setenv("XDG_STATE_HOME", dir+"/state")
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("returns CLIError when no search term is supplied", func() {
@@ -164,6 +162,45 @@ var _ = Describe("search picker gate", func() {
 		Expect(out.String()).To(ContainSubstring("1.1.0"))
 	})
 
+	It("keeps a row with no unavailable versions byte-identical", func() {
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		rows := []searchMatch{{Name: "hello", Versions: []string{"1.1.0", "1.0.0"}, Unavailable: []string{}}}
+		Expect(emitSearchResult(cmd, FormatText, "hello", rows)).To(Succeed())
+		Expect(out.String()).To(Equal("hello  1.1.0, 1.0.0\n"))
+	})
+
+	It("aligns the other-platforms column when only some rows have an installed cell", func() {
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		rows := []searchMatch{
+			{Name: "hello", Versions: []string{"1.0.0"}, Unavailable: []string{"2.0.0"}, Installed: "1.0.0"},
+			{Name: "rg", Versions: []string{}, Unavailable: []string{"14.1.1"}},
+			{Name: "zed", Versions: []string{"0.1.0"}, Unavailable: []string{}},
+		}
+		Expect(emitSearchResult(cmd, FormatText, "", rows)).To(Succeed())
+		Expect(out.String()).To(Equal(
+			"hello  1.0.0  [installed: 1.0.0]  [other platforms only: 2.0.0]\n" +
+				"rg" + strings.Repeat(" ", 32) + "[other platforms only: 14.1.1]\n" +
+				"zed    0.1.0\n"))
+	})
+
+	It("marks versions published only for other platforms, including a package with none for this host", func() {
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		rows := []searchMatch{
+			{Name: "hello", Versions: []string{"1.0.0"}, Unavailable: []string{"2.0.0"}},
+			{Name: "rg", Versions: []string{}, Unavailable: []string{"14.1.1"}},
+		}
+		Expect(emitSearchResult(cmd, FormatText, "", rows)).To(Succeed())
+		Expect(out.String()).To(Equal(
+			"hello  1.0.0  [other platforms only: 2.0.0]\n" +
+				"rg" + strings.Repeat(" ", 12) + "[other platforms only: 14.1.1]\n"))
+	})
+
 	It("emits no-match line and no picker when rows is empty", func() {
 		cmd := &cobra.Command{}
 		var out bytes.Buffer
@@ -206,10 +243,7 @@ func searchLockEnv(out *bytes.Buffer) (cmd *cobra.Command, scope, stateHome stri
 	Expect(err).NotTo(HaveOccurred())
 	publicDir := filepath.Join(root, "public")
 
-	env := GinkgoT().TempDir()
-	GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(env, "data"))
-	GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(env, "state"))
-	GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(env, "config"))
+	env := sandboxUserEnv(GinkgoTB())
 
 	profilePath := filepath.Join(env, "profile.yaml")
 	Expect(os.WriteFile(profilePath, []byte(
@@ -280,5 +314,24 @@ var _ = Describe("search picker lock scope", func() {
 		Expect(out.String()).To(BeEmpty(),
 			"searchRows wrote output, so it is emitting under the apply lock; "+
 				"the picker that emitting reaches cannot install from there")
+	})
+})
+
+var _ = Describe("installableRows", func() {
+	It("keeps rows with a version for this host, in order, and drops other-platform-only rows", func() {
+		rows := []searchMatch{
+			{Name: "greet", Versions: []string{"1.0.0"}, Unavailable: []string{}},
+			{Name: "rg", Versions: []string{}, Unavailable: []string{"14.1.1"}},
+			{Name: "hello", Versions: []string{"1.0.0"}, Unavailable: []string{"2.0.0"}},
+		}
+		got := installableRows(rows)
+		Expect(got).To(HaveLen(2))
+		Expect(got[0].Name).To(Equal("greet"))
+		Expect(got[1].Name).To(Equal("hello"))
+	})
+
+	It("returns an empty slice when no row is installable here", func() {
+		Expect(installableRows([]searchMatch{{Name: "rg", Unavailable: []string{"14.1.1"}}})).To(BeEmpty())
+		Expect(installableRows(nil)).To(BeEmpty())
 	})
 })

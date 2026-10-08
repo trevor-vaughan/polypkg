@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -24,7 +25,7 @@ func writeInstallSource(content string) string {
 	return root
 }
 
-var _ = Describe("ProjectOwnership", func() {
+var _ = Describe("projectOwnership", func() {
 	It("projects an install action with $ACTIVE substitution", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
@@ -39,7 +40,7 @@ var _ = Describe("ProjectOwnership", func() {
 		}
 		pkgRoot := writeInstallSource("#!/bin/sh\necho hi\n")
 		entries := []runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}
-		own, err := ProjectOwnership(entries, "$ACTIVE", nil, "user")
+		own, err := projectOwnership(entries, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("hello/bin/hi"))
@@ -50,6 +51,25 @@ var _ = Describe("ProjectOwnership", func() {
 		wantHash, herr := action.HashInstallSource(pkgRoot, filepath.Join(pkgRoot, "content", "bin", "hi"))
 		Expect(herr).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Expected.ContentHash).To(Equal(wantHash))
+	})
+
+	It("projects a regular file for an install that omits policy (the copy default)", func() {
+		pkg := &schema.Package{
+			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
+			Actions: []schema.PackageAction{{
+				Phase: "post-place", Action: "install",
+				Params: map[string]any{
+					"src":  "$PKG/content/bin/hi",
+					"dest": "$ACTIVE/hello/bin/hi",
+				},
+			}},
+		}
+		pkgRoot := writeInstallSource("#!/bin/sh\necho hi\n")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, Options{Scope: "user"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(own.Entries).To(HaveLen(1))
+		Expect(own.Entries[0].Expected.FileType).To(Equal("regular"),
+			"the projection must match what the install action records, or a converged system shows false drift")
 	})
 
 	It("projects a different content hash for different install source files", func() {
@@ -67,7 +87,7 @@ var _ = Describe("ProjectOwnership", func() {
 		// Project with v1 source
 		pkgRootV1 := writeInstallSource("#!/bin/sh\necho v1\n")
 		entriesV1 := []runner.RunEntry{{Package: pkg, PkgRoot: pkgRootV1}}
-		ownV1, err := ProjectOwnership(entriesV1, "$ACTIVE", nil, "user")
+		ownV1, err := projectOwnership(entriesV1, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ownV1.Entries).To(HaveLen(1))
 		hashV1 := ownV1.Entries[0].Expected.ContentHash
@@ -76,7 +96,7 @@ var _ = Describe("ProjectOwnership", func() {
 		// Project with v2 source
 		pkgRootV2 := writeInstallSource("#!/bin/sh\necho v2\n")
 		entriesV2 := []runner.RunEntry{{Package: pkg, PkgRoot: pkgRootV2}}
-		ownV2, err := ProjectOwnership(entriesV2, "$ACTIVE", nil, "user")
+		ownV2, err := projectOwnership(entriesV2, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ownV2.Entries).To(HaveLen(1))
 		hashV2 := ownV2.Entries[0].Expected.ContentHash
@@ -97,7 +117,7 @@ var _ = Describe("ProjectOwnership", func() {
 				},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Expected.Target).To(Equal("/etc/foo"))
@@ -114,7 +134,7 @@ var _ = Describe("ProjectOwnership", func() {
 				},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Action).To(Equal("dir"))
@@ -132,7 +152,7 @@ var _ = Describe("ProjectOwnership", func() {
 					Params: map[string]any{"path": "$ACTIVE/hello/bin", "mode": lit},
 				}},
 			}
-			own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+			own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(own.Entries[0].Expected.Mode).To(Equal("0700"), "literal %q", lit)
 		}
@@ -148,10 +168,59 @@ var _ = Describe("ProjectOwnership", func() {
 				Params: map[string]any{"path": "$ACTIVE/hello/bin", "mode": "0o700"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Expected.Mode).To(Equal("0700"))
 		Expect(own.Entries[0].Expected.Mode).NotTo(Equal("0755"))
+	})
+
+	It("leaves a dir's mode to a later perms on the same path, as apply records it", func() {
+		pkg := &schema.Package{
+			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
+			Actions: []schema.PackageAction{
+				{Phase: "post-place", Action: "dir",
+					Params: map[string]any{"path": "$ACTIVE/hello/var", "mode": "0755"}},
+				{Phase: "post-place", Action: "perms",
+					Params: map[string]any{"path": "$ACTIVE/hello/var", "mode": "0700"}},
+			},
+		}
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(own.Entries).To(HaveLen(2))
+		Expect(own.Entries[0].Expected).To(Equal(schema.Expected{FileType: "dir"}))
+		Expect(own.Entries[1].Expected).To(Equal(schema.Expected{Mode: "0700"}))
+	})
+
+	It("projects in the runner's phase order, not declaration order", func() {
+		// perms (post-place) is declared before the dir (pre-place) it re-modes.
+		// The runner records the dir first, so the perms mode is the last one set.
+		pkg := &schema.Package{
+			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
+			Actions: []schema.PackageAction{
+				{Phase: "post-place", Action: "perms",
+					Params: map[string]any{"path": "$ACTIVE/hello/var", "mode": "0700"}},
+				{Phase: "pre-place", Action: "dir",
+					Params: map[string]any{"path": "$ACTIVE/hello/var", "mode": "0755"}},
+			},
+		}
+		root := GinkgoT().TempDir()
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, root, nil, Options{Scope: "user"})
+		Expect(err).NotTo(HaveOccurred())
+
+		var applied []schema.OwnershipEntry
+		for _, phase := range action.PreSwapPhases() {
+			out, err := runner.DispatchActions(context.Background(), pkg, GinkgoT().TempDir(),
+				action.Scope{ActiveRoot: root, PackageName: "hello"}, string(phase), nil, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			for _, e := range out.Entries {
+				e.Stat = schema.StatInfo{}
+				applied = append(applied, e)
+			}
+		}
+		runner.SupersedeModes(applied)
+		Expect(own.Entries).To(Equal(applied))
+		Expect(own.Entries[0].Action).To(Equal("dir"))
+		Expect(own.Entries[1].Expected.Mode).To(Equal("0700"))
 	})
 
 	It("projects a perms action with absent mode as empty Expected", func() {
@@ -164,7 +233,7 @@ var _ = Describe("ProjectOwnership", func() {
 				},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Action).To(Equal("perms"))
@@ -182,7 +251,7 @@ var _ = Describe("ProjectOwnership", func() {
 				},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Action).To(Equal("perms"))
@@ -199,7 +268,7 @@ var _ = Describe("ProjectOwnership", func() {
 				// A future non-file-placing action (e.g. a service action) would also be skipped.
 			},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Action).To(Equal("install"))
@@ -214,13 +283,13 @@ var _ = Describe("ProjectOwnership", func() {
 				Params: map[string]any{"src": "$PKG/content/bin/hi", "dest": "$ACTIVE/hello/x", "policy": "symlink"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: pkgRoot}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].DriftPolicy).To(Equal("notify_heal"))
 	})
 })
 
-var _ = Describe("ProjectOwnership path action", func() {
+var _ = Describe("projectOwnership path action", func() {
 	It("projects a bin/<name> symlink entry for the path action", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
@@ -229,7 +298,7 @@ var _ = Describe("ProjectOwnership path action", func() {
 					Params: map[string]any{"name": "hello", "source": "$ACTIVE/hello/bin/hello"}},
 			},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("bin/hello"))
@@ -239,7 +308,7 @@ var _ = Describe("ProjectOwnership path action", func() {
 	})
 })
 
-var _ = Describe("ProjectOwnership alternatives action", func() {
+var _ = Describe("projectOwnership alternatives action", func() {
 	It("projects a bin/<name> entry carrying priority and source", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "neovim", Version: "1.0.0",
@@ -248,7 +317,7 @@ var _ = Describe("ProjectOwnership alternatives action", func() {
 					Params: map[string]any{"name": "editor", "source": "$ACTIVE/neovim/bin/nvim", "priority": 30}},
 			},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("bin/editor"))
@@ -266,7 +335,7 @@ var _ = Describe("ProjectOwnership alternatives action", func() {
 					Params: map[string]any{"name": "editor", "source": "$ACTIVE/neovim/bin/nvim", "priority": "30"}},
 			},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Expected.Priority).To(Equal(30))
@@ -284,7 +353,7 @@ var _ = Describe("ProjectOwnership alternatives action", func() {
 				},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("man/man1/editor.1"))
@@ -301,7 +370,7 @@ var _ = Describe("ProjectOwnership alternatives action", func() {
 				Params: map[string]any{"name": "editor", "source": "$ACTIVE/vim/bin/vim", "priority": 30},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Path).To(Equal("bin/editor"))
 		Expect(own.Entries[0].Expected.Priority).To(Equal(30))
@@ -309,7 +378,7 @@ var _ = Describe("ProjectOwnership alternatives action", func() {
 	})
 })
 
-var _ = Describe("ProjectOwnership completion action", func() {
+var _ = Describe("projectOwnership completion action", func() {
 	It("projects a completions/<shell>/<hostfile> symlink entry (bash)", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
@@ -318,7 +387,7 @@ var _ = Describe("ProjectOwnership completion action", func() {
 				Params: map[string]any{"shell": "bash", "name": "hi", "source": "$ACTIVE/hello/comp/hi.bash"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("completions/bash/hi"))
@@ -336,7 +405,7 @@ var _ = Describe("ProjectOwnership completion action", func() {
 					Params: map[string]any{"shell": shell, "name": "hi", "source": "$ACTIVE/hello/comp/hi." + shell},
 				}},
 			}
-			own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+			own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 			Expect(err).NotTo(HaveOccurred(), "shell %q", shell)
 			Expect(own.Entries[0].Path).To(Equal("completions/"+shell+"/"+host), "shell %q", shell)
 		}
@@ -351,7 +420,7 @@ var _ = Describe("ProjectOwnership completion action", func() {
 				Params: map[string]any{"shell": "bash", "name": "hi", "source": "$ACTIVE/hello/comp/hi.bash"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Path).To(Equal("completions/bash/hi"))
 		Expect(own.Entries[0].Expected.Target).To(Equal(activeRoot + "/hello/comp/hi.bash"))
@@ -368,7 +437,7 @@ var _ = Describe("ProjectOwnership completion action", func() {
 				Params: map[string]any{"shell": "bash", "name": "hi", "source": "$ACTIVE/hello/comp/hi.bash"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 	})
@@ -384,7 +453,7 @@ var _ = Describe("ProjectOwnership completion action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/applications/org.hello.App.desktop"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 	})
@@ -400,13 +469,13 @@ var _ = Describe("ProjectOwnership completion action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/mime/org.hello.App.xml"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 	})
 })
 
-var _ = Describe("ProjectOwnership desktop action", func() {
+var _ = Describe("projectOwnership desktop action", func() {
 	It("projects an applications/<base> symlink entry", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
@@ -415,7 +484,7 @@ var _ = Describe("ProjectOwnership desktop action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/applications/org.hello.App.desktop"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("applications/org.hello.App.desktop"))
@@ -433,14 +502,14 @@ var _ = Describe("ProjectOwnership desktop action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/applications/org.hello.App.desktop"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Path).To(Equal("applications/org.hello.App.desktop"))
 		Expect(own.Entries[0].Expected.Target).To(Equal(activeRoot + "/hello/share/applications/org.hello.App.desktop"))
 	})
 })
 
-var _ = Describe("ProjectOwnership mime action", func() {
+var _ = Describe("projectOwnership mime action", func() {
 	It("projects a mime/<base> symlink entry", func() {
 		pkg := &schema.Package{
 			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
@@ -449,7 +518,7 @@ var _ = Describe("ProjectOwnership mime action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/mime/org.hello.App.xml"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, "$ACTIVE", nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("mime/org.hello.App.xml"))
@@ -467,7 +536,7 @@ var _ = Describe("ProjectOwnership mime action", func() {
 				Params: map[string]any{"source": "$ACTIVE/hello/share/mime/org.hello.App.xml"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Path).To(Equal("mime/org.hello.App.xml"))
 		Expect(own.Entries[0].Expected.Target).To(Equal(activeRoot + "/hello/share/mime/org.hello.App.xml"))
@@ -479,7 +548,7 @@ var _ = Describe("ProjectOwnership mime action", func() {
 // placeholder), target-carrying actions project the fully-expanded absolute link
 // target the runner stores at apply time, so a converged plan compares equal —
 // while a genuinely different logical target still diffs.
-var _ = Describe("ProjectOwnership target expansion against the baseline active root", func() {
+var _ = Describe("projectOwnership target expansion against the baseline active root", func() {
 	const activeRoot = "/data/polypkg/generations/1/active"
 
 	It("converges: a path action projects the absolute target the runner stored", func() {
@@ -490,7 +559,7 @@ var _ = Describe("ProjectOwnership target expansion against the baseline active 
 				Params: map[string]any{"name": "hi", "source": "$ACTIVE/hello/bin/hi"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		// Path stays the relativized ownership key; only the link target expands.
@@ -506,7 +575,7 @@ var _ = Describe("ProjectOwnership target expansion against the baseline active 
 				Params: map[string]any{"src": "$ACTIVE/hello/bin/hi", "dest": "$ACTIVE/hello/bin/hi-active"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("hello/bin/hi-active"))
@@ -521,7 +590,7 @@ var _ = Describe("ProjectOwnership target expansion against the baseline active 
 				Params: map[string]any{"name": "editor", "source": "$ACTIVE/neovim/bin/nvim", "priority": 30},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries).To(HaveLen(1))
 		Expect(own.Entries[0].Path).To(Equal("bin/editor"))
@@ -540,7 +609,7 @@ var _ = Describe("ProjectOwnership target expansion against the baseline active 
 				Params: map[string]any{"name": "hi", "source": "$ACTIVE/hello/bin/hi2"},
 			}},
 		}
-		own, err := ProjectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, "user")
+		own, err := projectOwnership([]runner.RunEntry{{Package: pkg, PkgRoot: GinkgoT().TempDir()}}, activeRoot, nil, Options{Scope: "user"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(own.Entries[0].Expected.Target).To(Equal(activeRoot + "/hello/bin/hi2"))
 		Expect(own.Entries[0].Expected.Target).NotTo(Equal(activeRoot + "/hello/bin/hi"))

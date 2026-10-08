@@ -24,8 +24,9 @@ var digestStrength = map[string]int{
 
 // forbiddenDigest is the set of broken algorithms whose mere presence in a
 // subject is rejected: they are a downgrade vector, so polypkg refuses a
-// subject that offers one rather than silently ignoring it (P1 fail-closed).
-var forbiddenDigest = map[string]bool{"sha1": true, "md5": true}
+// subject that offers one rather than silently ignoring it: any binding
+// ambiguity must fail closed, never fail open into "verified".
+var forbiddenDigest = map[string]bool{"sha1": true, "md5": true} // DevSkim: ignore DS126858 -- names refused, never used to hash
 
 // MatchSubjectDigests verifies that data hashes to the digests a provenance
 // subject claims, and that the binding rests on at least one algorithm at/above

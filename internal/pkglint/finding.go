@@ -1,7 +1,7 @@
 // Package pkglint validates a polypkg package source (polypkg.yaml + content/)
 // against structure, identity, action/phase, parameter, and content-reference
 // rules. It is the single lint/predicate producer, consumed by `pkg lint`,
-// `pkg build`, and (Phase C) `repo build`.
+// `pkg build`, and `repo build`.
 package pkglint
 
 // Severity classifies a finding. Error-severity findings make lint exit
@@ -66,4 +66,6 @@ var rules = map[string]rule{
 	"PKG008": {"PKG008", "case-fold identifier collision"},
 	"PKG009": {"PKG009", "file-placing action in non-pre-swap phase"},
 	"PKG010": {"PKG010", "invalid parameter value"},
+	"PKG011": {"PKG011", "unpublishable platform"},
+	"PKG012": {"PKG012", "unsupported archive"},
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 func sha256Bare(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
@@ -207,5 +209,42 @@ func TestBindCarriedRefusesRawSBOMThatBindsNothing(t *testing.T) {
 	unrelated := rawSPDXFixture("bin/hello", sha256Bare([]byte("something-else-entirely")))
 	if _, err := bindCarried(dir, []byte("the-artifact-bytes"), unrelated); err == nil {
 		t.Fatal("expected bindCarried to refuse a raw SBOM that binds nothing packed")
+	}
+}
+
+// TestBindCarriedBindsGitHubSigstoreBundle confirms the carry-in binding takes
+// the bundle GitHub artifact attestations publish (a
+// dev.sigstore.bundle.v0.3+json over an in-toto v1 statement) when the
+// attested asset is a content file, which is how an imported release lays
+// out its package source.
+func TestBindCarriedBindsGitHubSigstoreBundle(t *testing.T) {
+	read := func(name string) []byte {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("..", "attest", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	asset, bundle := read("github-asset.bin"), read("github-bundle.json")
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "content", "tool-linux-amd64"), asset, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := bindCarried(dir, []byte("the-artifact-bytes"), bundle)
+	if err != nil {
+		t.Fatalf("bindCarried: %v", err)
+	}
+	if got.Format != schema.FormatSigstoreBundle {
+		t.Fatalf("format = %q, want %q", got.Format, schema.FormatSigstoreBundle)
+	}
+	if got.SubjectScope != "content:tool-linux-amd64" {
+		t.Fatalf("scope = %q", got.SubjectScope)
+	}
+	if got.SubjectDigests["sha256"] != sha256Bare(asset) {
+		t.Fatalf("digest = %q, want %q", got.SubjectDigests["sha256"], sha256Bare(asset))
 	}
 }

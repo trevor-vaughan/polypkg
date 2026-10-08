@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -42,19 +41,22 @@ var _ = Describe("Acquire", func() {
 		l1, err := Acquire(context.Background(), path, Options{})
 		Expect(err).NotTo(HaveOccurred())
 
-		var wg sync.WaitGroup
-		wg.Add(1)
 		var l2 *Lock
 		var l2err error
+		done := make(chan struct{})
 		go func() {
-			defer wg.Done()
+			defer close(done)
 			l2, l2err = Acquire(context.Background(), path, Options{Wait: true})
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		// The waiter must stay blocked while l1 is held: returning early (with
+		// or without the lock) is exactly the bug this spec exists to catch.
+		Consistently(done, "200ms", "10ms").ShouldNot(BeClosed(),
+			"Acquire with Wait returned while the lock was still held")
 		Expect(l1.Release()).To(Succeed())
 
-		wg.Wait()
+		// Generous timeout: see the cancellation spec below.
+		Eventually(done, "5s").Should(BeClosed())
 		Expect(l2err).NotTo(HaveOccurred())
 		Expect(l2).NotTo(BeNil())
 		Expect(l2.Release()).To(Succeed())
@@ -92,7 +94,10 @@ var _ = Describe("Acquire", func() {
 			_, waitErr = Acquire(ctx, path, Options{Wait: true})
 		}()
 
-		time.Sleep(50 * time.Millisecond)
+		// The waiter must still be blocked before the cancel, or the
+		// "cancelled" error below would not prove cancellation released it.
+		Consistently(done, "200ms", "10ms").ShouldNot(BeClosed(),
+			"Acquire with Wait returned before the context was cancelled")
 		cancel()
 
 		// Generous timeout: cancellation is detected on the next poll (tens of

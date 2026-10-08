@@ -28,7 +28,7 @@ type ingestHit struct {
 // .tar.zst, cache-keys it on the artifact content-hash (a hit short-circuits),
 // extracts the tar into a scratch dir under the confinement guards of
 // source.ExtractTarZst, parses the inner polypkg.yaml, and RE-BINDS every carried
-// attestation against the extracted bytes (independent proof of the P6
+// attestation against the extracted bytes (independent proof of the
 // two-point binding). It never runs pkglint — a prebuilt package carries the
 // upstream's attestations verbatim; there is no source tree to lint.
 func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPrebuilt, cache *BuildCache) (packageWork, ingestHit, error) {
@@ -46,7 +46,7 @@ func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPreb
 	// Cache hit: same fetched bytes, artifact still in the pool → reuse verbatim.
 	if prev, ok := cache.Get(ch); ok && prev.Fingerprint == ch {
 		if _, statErr := os.Stat(filepath.Join(lay.outputDir, prev.Artifact)); statErr == nil {
-			return packageWork{cacheKey: ch, version: prev.Version, contentHash: ch},
+			return packageWork{cacheKey: ch, version: prev.Version, platform: prev.Platform, contentHash: ch},
 				ingestHit{reuse: true, entry: prev.indexEntry(), cacheEntry: prev}, nil
 		}
 	}
@@ -94,7 +94,7 @@ func (b *Builder) ingestPackage(lay repoLayout, name string, pb *schema.RepoPreb
 		sort.SliceStable(refs, func(i, j int) bool { return attRefLess(refs[i], refs[j]) })
 	}
 	return packageWork{
-		name: name, version: pkgParsed.Version, contentHash: ch, artifact: artifact,
+		name: name, version: pkgParsed.Version, platform: pkgParsed.Platform, contentHash: ch, artifact: artifact,
 		fingerprint: ch, cacheKey: ch, attRefs: refs, attBlobs: blobs, pkg: pkgParsed,
 	}, ingestHit{}, nil
 }
@@ -174,8 +174,8 @@ func buildCarriedBundle(localSource string, serial uint64, expires string, keys 
 
 // publishedBundleMatches reports whether the currently published trust-bundle.json
 // already carries exactly the merged builder keys (by full material — id, key,
-// algo, validity) and sigstore roots (serial and expires excluded — derived, like
-// the index compare). Folds carry-forward into the changed-decision so a no-op
+// algo, validity; in any order) and sigstore roots (in the same order), serial
+// and expires excluded — derived, like the index compare. Folds carry-forward into the changed-decision so a no-op
 // rebuild stays serial-stable but any change in carried material bumps the serial.
 func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey, roots []schema.SigstoreRoot) bool {
 	raw, err := os.ReadFile(filepath.Join(outputDir, "trust-bundle.json")) //nolint:gosec // G304: our own prior published doc
@@ -195,21 +195,15 @@ func publishedBundleMatches(outputDir string, keys map[string]schema.BuilderKey,
 			return false
 		}
 	}
-	if len(tb.SigstoreRoots) != len(roots) {
-		return false
-	}
-	for i := range roots {
-		if !containsRoot(tb.SigstoreRoots, roots[i]) {
-			return false
-		}
-	}
-	return true
+	// Roots compare in order: consumers select the first root whose window
+	// holds a bundle's time, so a reordering changes what verifies.
+	return slices.EqualFunc(tb.SigstoreRoots, roots, sigstoreRootEqual)
 }
 
 // nativeAttestationRef reads a publisher-supplied native SARIF attestation preview,
 // validates it is a JCS-canonical in-toto SARIF statement whose subject binds the
 // artifact content-hash, and returns the AttestationRef + pool blob to sign and publish
-// VERBATIM (Phase C: the signed attestation is byte-identical to the publisher's preview).
+// VERBATIM (the signed attestation is byte-identical to the publisher's preview).
 func (b *Builder) nativeAttestationRef(path, name, version, ch string) (schema.AttestationRef, poolBlob, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-declared prebuilt.native_attestation
 	if err != nil {

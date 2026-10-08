@@ -1,31 +1,43 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
 )
 
 // runSource runs the root command in-process with the given args, setting
-// POLYPKG_PROFILE to profilePath, and returns combined output.
+// POLYPKG_PROFILE to profilePath, and returns combined output. Its stdin is
+// empty and not a terminal.
 func runSource(profilePath string, args ...string) (string, error) {
+	return runWithStdin(profilePath, strings.NewReader(""), args...)
+}
+
+// runWithStdin is runSource with in as the command's stdin; pass ttyInput to
+// answer a confirmation prompt.
+func runWithStdin(profilePath string, in io.Reader, args ...string) (string, error) {
 	root := NewRootCmd()
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	var buf strings.Builder
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(in)
 	root.SetArgs(args)
 	GinkgoT().Setenv("POLYPKG_PROFILE", profilePath)
 	err := root.Execute()
@@ -52,7 +64,7 @@ func initMinimalProfile(dir string) string {
 	root.SetArgs([]string{
 		"init",
 		"--source-url", "file:///srv/initial",
-		"--trust-root-file", keyPath,
+		"--trust-root", keyPath,
 	})
 	GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
 	GinkgoT().Setenv("POLYPKG_PROFILE", "")
@@ -79,14 +91,37 @@ func reparseSources(profilePath string) schema.SourcesSpec {
 	return p.Sources
 }
 
+// holdApplyLock takes the apply lock under stateHome as a running apply would,
+// releasing it when the spec ends.
+func holdApplyLock(stateHome string) {
+	GinkgoHelper()
+	held, err := lock.Acquire(context.Background(), filepath.Join(stateHome, "apply.lock"),
+		lock.Options{TxID: "apply", Command: "polypkg apply"})
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(held.Release)
+}
+
+// expectApplyLockRefusal asserts err is the lock-holder CLIError naming the
+// apply that holdApplyLock started.
+func expectApplyLockRefusal(err error) {
+	GinkgoHelper()
+	var ce *CLIError
+	Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+	Expect(ce.Msg).To(Equal("another polypkg command is already running (polypkg apply, pid " + strconv.Itoa(os.Getpid()) + ")"))
+}
+
 var _ = Describe("source commands", func() {
 	var (
 		tmpDir      string
 		profilePath string
 		extraPub    string
+		stateHome   string
 	)
 
 	BeforeEach(func() {
+		// The commands take the apply lock and clear trust state under the
+		// user state home, so keep that inside the test's own tree.
+		stateHome = filepath.Join(sandboxUserEnv(GinkgoTB()), "state", "polypkg")
 		tmpDir = GinkgoT().TempDir()
 		_ = os.Unsetenv("POLYPKG_PROFILE")
 		profilePath = initMinimalProfile(tmpDir)
@@ -132,40 +167,171 @@ var _ = Describe("source commands", func() {
 
 		// The anchor is copied before the profile is edited, so a failed edit
 		// would otherwise leave a key behind for a source that was never added.
+		// A read-only config dir lets the profile parse (and the anchor land in
+		// the writable trust/ subdir) but makes the atomic profile rewrite fail.
 		It("removes the key it just pinned when the profile edit fails", func() {
-			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
+			if os.Geteuid() == 0 {
+				Skip("a read-only config directory does not stop root")
+			}
+			cfgDir := filepath.Dir(profilePath)
+			Expect(os.Chmod(cfgDir, 0o500)).To(Succeed())
+			DeferCleanup(os.Chmod, cfgDir, os.FileMode(0o700))
 
 			_, err := runSource(profilePath, "source", "add", "extra",
 				"--url", "file:///srv/extra",
 				"--trust-root", extraPub,
 			)
 			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(`cannot add source "extra" to profile`))
 
-			_, statErr := os.Stat(filepath.Join(tmpDir, "polypkg", "trust", "extra.pub"))
+			_, statErr := os.Stat(filepath.Join(cfgDir, "trust", "extra.pub"))
 			Expect(os.IsNotExist(statErr)).To(BeTrue(),
 				"a failed add must not leave a stray anchor; stat err: %v", statErr)
 			_, oErr := os.Stat(extraPub)
 			Expect(oErr).NotTo(HaveOccurred(), "the operator's own file must be untouched")
 		})
 
-		It("keeps an anchor it did not create when the profile edit fails", func() {
-			// Re-adding an existing source must not delete that source's
-			// anchor on a failed edit: the profile still references it.
+		It("keeps an identical anchor it did not create when the profile edit fails", func() {
+			if os.Geteuid() == 0 {
+				Skip("a read-only config directory does not stop root")
+			}
+			// A leftover anchor holding the same key is accepted, but it was
+			// not this run's to delete.
+			cfgDir := filepath.Dir(profilePath)
+			managed := filepath.Join(cfgDir, "trust", "extra.pub")
+			key, rerr := os.ReadFile(extraPub)
+			Expect(rerr).NotTo(HaveOccurred())
+			Expect(os.WriteFile(managed, key, 0o644)).To(Succeed())
+			Expect(os.Chmod(cfgDir, 0o500)).To(Succeed())
+			DeferCleanup(os.Chmod, cfgDir, os.FileMode(0o700))
+
 			_, err := runSource(profilePath, "source", "add", "extra",
 				"--url", "file:///srv/extra",
 				"--trust-root", extraPub,
 			)
-			Expect(err).NotTo(HaveOccurred())
-			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
-			Expect(managed).To(BeAnExistingFile())
+			Expect(err).To(HaveOccurred())
+			Expect(os.ReadFile(managed)).To(Equal(key))
+		})
 
-			Expect(os.WriteFile(profilePath, []byte("{{ not a profile"), 0o600)).To(Succeed())
-			_, err = runSource(profilePath, "source", "add", "extra",
-				"--url", "file:///srv/extra2",
+		It("refuses a name already in the profile before reading any trust root", func() {
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "native.pub")
+			pinned, rerr := os.ReadFile(managed)
+			Expect(rerr).NotTo(HaveOccurred())
+
+			// The trust-root file does not exist: reaching the trust-root step
+			// would fail with a different message.
+			_, err := runSource(profilePath, "source", "add", "native",
+				"--url", "file:///srv/elsewhere",
+				"--trust-root", filepath.Join(tmpDir, "no-such.pub"),
+			)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(Equal(`source "native" already exists`))
+			Expect(ce.Hint).To(ContainSubstring("polypkg source set-trust-root native"))
+			Expect(ce.Hint).To(ContainSubstring("`source remove` then `source add`"))
+
+			Expect(os.ReadFile(managed)).To(Equal(pinned))
+			Expect(reparseSources(profilePath).Sources["native"].URL).To(Equal("file:///srv/initial"))
+		})
+
+		It("refuses while another command holds the apply lock and writes nothing", func() {
+			before, rerr := os.ReadFile(profilePath)
+			Expect(rerr).NotTo(HaveOccurred())
+			holdApplyLock(stateHome)
+
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+			)
+			expectApplyLockRefusal(err)
+
+			Expect(os.ReadFile(profilePath)).To(Equal(before))
+			Expect(filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")).NotTo(BeAnExistingFile())
+		})
+
+		It("refuses a name already in the profile without downloading anything", func() {
+			var hits atomic.Int32
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				_, _ = w.Write([]byte(minisignPubFile()))
+			}))
+			DeferCleanup(srv.Close)
+			useTrustRootServer(srv)
+
+			_, err := runSource(profilePath, "source", "add", "native",
+				"--url", "file:///srv/elsewhere",
+				"--trust-root-url", srv.URL+"/key.pub",
+			)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(Equal(`source "native" already exists`))
+			Expect(hits.Load()).To(BeZero(), "no trust root may be fetched for an existing name")
+		})
+
+		It("refuses to overwrite a different key already pinned for the name", func() {
+			// A leftover anchor (e.g. from a source deleted by hand-editing the
+			// profile) must not be silently re-pointed at another key.
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
+			leftover := []byte(minisignPubFile())
+			Expect(os.WriteFile(managed, leftover, 0o644)).To(Succeed())
+
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
 				"--trust-root", extraPub,
 			)
 			Expect(err).To(HaveOccurred())
-			Expect(managed).To(BeAnExistingFile())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring("already pinned at " + managed))
+			Expect(os.ReadFile(managed)).To(Equal(leftover))
+			Expect(reparseSources(profilePath).Sources).NotTo(HaveKey("extra"))
+		})
+
+		It("refuses --trust-root-url with a mismatched fingerprint and adds nothing", func() {
+			srv := serveTrustRoot(minisignPubFile())
+
+			_, err := runSource(profilePath, "source", "add", "withurl",
+				"--url", "file:///srv/withurl",
+				"--trust-root-url", srv.URL+"/key.pub",
+				"--trust-root-fingerprint", "0000000000000000",
+			)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(`not the expected "0000000000000000"`))
+			Expect(filepath.Join(tmpDir, "polypkg", "trust", "withurl.pub")).NotTo(BeAnExistingFile())
+			Expect(reparseSources(profilePath).Sources).NotTo(HaveKey("withurl"))
+		})
+
+		It("refuses --trust-root-url without a fingerprint on a non-TTY", func() {
+			srv := serveTrustRoot(minisignPubFile())
+
+			_, err := runSource(profilePath, "source", "add", "withurl",
+				"--url", "file:///srv/withurl",
+				"--trust-root-url", srv.URL+"/key.pub",
+			)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Hint).To(ContainSubstring("--trust-root-fingerprint"))
+			Expect(reparseSources(profilePath).Sources).NotTo(HaveKey("withurl"))
+		})
+
+		It("refuses --trust-root with a mismatched fingerprint", func() {
+			_, err := runSource(profilePath, "source", "add", "extra",
+				"--url", "file:///srv/extra",
+				"--trust-root", extraPub,
+				"--trust-root-fingerprint", "0000000000000000",
+			)
+			Expect(err).To(HaveOccurred())
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(`not the expected "0000000000000000"`))
+			Expect(reparseSources(profilePath).Sources).NotTo(HaveKey("extra"))
 		})
 
 		It("normalizes a bare absolute path URL to file://", func() {
@@ -225,6 +391,7 @@ var _ = Describe("source commands", func() {
 			var ce *CLIError
 			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
 			Expect(ce.Msg).To(ContainSubstring("is not a valid slug"))
+			Expect(ce.Hint).To(ContainSubstring("e.g. team-mirror"))
 		})
 
 		It("rejects a source named \"order\" because it collides with the reserved order key", func() {
@@ -263,12 +430,9 @@ var _ = Describe("source commands", func() {
 			Expect(result.Data["url"]).To(Equal("file:///srv/extra"))
 		})
 
-		It("downloads, persists, and uses the .pub when --trust-root-url + --trust-root-yes", func() {
+		It("downloads, persists, and uses the .pub when --trust-root-url + --trust-root-fingerprint", func() {
 			pubContent := minisignPubFile()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(pubContent))
-			}))
-			defer srv.Close()
+			srv := serveTrustRoot(pubContent)
 
 			// scopeConfigDir for user scope = XDG_CONFIG_HOME/polypkg. The
 			// POLYPKG_PROFILE env points at a file inside there already from init.
@@ -278,7 +442,7 @@ var _ = Describe("source commands", func() {
 			out, err := runSource(profilePath, "source", "add", "withurl",
 				"--url", "file:///srv/withurl",
 				"--trust-root-url", srv.URL+"/key.pub",
-				"--trust-root-yes",
+				"--trust-root-fingerprint", keyIDOf(pubContent),
 			)
 			Expect(err).NotTo(HaveOccurred(), "source add --trust-root-url failed: %s", out)
 
@@ -343,10 +507,7 @@ var _ = Describe("source commands", func() {
 			// under <configdir>/trust/<name>.pub. Removing the source should clean
 			// up that now-orphaned managed key.
 			pubContent := minisignPubFile()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(pubContent))
-			}))
-			defer srv.Close()
+			srv := serveTrustRoot(pubContent)
 
 			// scopeConfigDir("user") = XDG_CONFIG_HOME/polypkg, which must match the
 			// dir the init-created profile lives in so add and remove agree.
@@ -356,7 +517,7 @@ var _ = Describe("source commands", func() {
 			_, err := runSource(profilePath, "source", "add", "withurl",
 				"--url", "file:///srv/withurl",
 				"--trust-root-url", srv.URL+"/key.pub",
-				"--trust-root-yes",
+				"--trust-root-fingerprint", keyIDOf(pubContent),
 			)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -379,10 +540,7 @@ var _ = Describe("source commands", func() {
 			// reference check in managedOrphanTrustRoot guards: removing one
 			// source must not delete a key the other is still anchored to.
 			pubContent := minisignPubFile()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(pubContent))
-			}))
-			defer srv.Close()
+			srv := serveTrustRoot(pubContent)
 
 			cfgDir := filepath.Dir(profilePath)
 			GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Dir(cfgDir))
@@ -390,7 +548,7 @@ var _ = Describe("source commands", func() {
 			_, err := runSource(profilePath, "source", "add", "primary",
 				"--url", "file:///srv/primary",
 				"--trust-root-url", srv.URL+"/key.pub",
-				"--trust-root-yes",
+				"--trust-root-fingerprint", keyIDOf(pubContent),
 			)
 			Expect(err).NotTo(HaveOccurred())
 			keyPath := reparseSources(profilePath).Sources["primary"].TrustRoot
@@ -463,14 +621,9 @@ var _ = Describe("source commands", func() {
 		})
 
 		It("clears the persisted anti-rollback floor on remove so a later re-add starts clean", func() {
-			// Pin the state home the CLI resolves (scopeHomes("user", "") ->
-			// paths.UserStateHome(), which honors XDG_STATE_HOME but appends the
-			// "polypkg" appName segment — see paths.xdgUserDir) so the
-			// StoreSeen/LoadSeen calls below agree with what runSourceRemove uses.
-			GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(tmpDir, "data"))
-			GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(tmpDir, "state"))
-			stateHome := filepath.Join(tmpDir, "state", "polypkg")
-
+			// stateHome (from BeforeEach's sandbox) is the state home the CLI
+			// resolves, so the StoreSeen/LoadSeen calls below agree with what
+			// runSourceRemove uses.
 			Expect(trust.StoreSeen(stateHome, "extra", trust.Seen{TrustSerial: 4, BundleSerial: 2})).To(Succeed())
 
 			out, err := runSource(profilePath, "source", "remove", "extra")
@@ -479,6 +632,22 @@ var _ = Describe("source commands", func() {
 			seen, err := trust.LoadSeen(stateHome, "extra")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(seen).To(Equal(trust.Seen{}), "expected the persisted floor to be cleared on remove")
+		})
+
+		It("refuses while another command holds the apply lock and writes nothing", func() {
+			managed := filepath.Join(tmpDir, "polypkg", "trust", "extra.pub")
+			Expect(managed).To(BeAnExistingFile())
+			Expect(trust.StoreSeen(stateHome, "extra", trust.Seen{TrustSerial: 4})).To(Succeed())
+			before, rerr := os.ReadFile(profilePath)
+			Expect(rerr).NotTo(HaveOccurred())
+			holdApplyLock(stateHome)
+
+			_, err := runSource(profilePath, "source", "remove", "extra")
+			expectApplyLockRefusal(err)
+
+			Expect(os.ReadFile(profilePath)).To(Equal(before))
+			Expect(managed).To(BeAnExistingFile())
+			Expect(trust.LoadSeen(stateHome, "extra")).To(Equal(trust.Seen{TrustSerial: 4}))
 		})
 
 		It("succeeds when removing one of two sources", func() {

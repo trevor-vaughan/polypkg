@@ -1,22 +1,45 @@
 package action
 
-// namePattern is the ASCII-slug charset shared by command/alternative names.
+// NamePattern is the ASCII-slug charset shared by command/alternative names.
 // It is the single source of the grammar: the ParamSpec tables below reference
 // it declaratively (pkglint), and the handlers' runtime regexps (altNameRe,
-// pathNameRe, completionNameRe) compile it directly.
-const namePattern = `^[a-zA-Z0-9_-]+$`
+// pathNameRe, completionNameRe) compile it directly, as does pkg import's
+// --bin check (importer.CheckBins).
+const NamePattern = `^[a-zA-Z0-9_-]+$`
 
 // ParamKind classifies an action parameter's expected literal value. Params whose
-// value is a computed !starlark expression are not type-checked (see Phase B).
+// value is a computed !starlark expression are not type-checked (see
+// internal/pkglint/params.go).
 type ParamKind int
 
 // The parameter kinds a ParamSpec can declare.
 const (
-	KindString ParamKind = iota // arbitrary string
-	KindPath                    // a path (scope-confined by the handler)
-	KindMode                    // an octal mode string, e.g. "0o755"
-	KindInt                     // an integer (may arrive int/int64/float64/string)
-	KindEnum                    // one of Enum
+	KindString     ParamKind = iota // arbitrary string
+	KindPath                        // a path (scope-confined by the handler)
+	KindMode                        // an octal mode string, e.g. "0o755"
+	KindInt                         // an integer (may arrive int/int64/float64/string)
+	KindEnum                        // one of Enum
+	KindStringList                  // a list of strings (a YAML sequence)
+)
+
+// Creation classifies what an action leaves at the path one of its params
+// names inside the package's own directory ($ACTIVE/<package>/).
+type Creation int
+
+// The Creation values a ParamSpec can declare.
+const (
+	// CreatesNothing: the param names no path the action creates in the
+	// package's directory: a source it reads, a path it only re-modes or
+	// records, or a name it places outside the directory.
+	CreatesNothing Creation = iota
+	// CreatesPath: the action creates the path, and any missing parents, as
+	// something a later action may still create paths below: a directory, or
+	// a symlink whose target the manifest chooses.
+	CreatesPath
+	// CreatesLeaf: the action creates the path, and any missing parents, as
+	// something nothing can be created below: a regular file, or a symlink
+	// out of the package's directory, which apply refuses to traverse.
+	CreatesLeaf
 )
 
 // ParamSpec declares one parameter's contract for an action.
@@ -26,6 +49,10 @@ type ParamSpec struct {
 	Kind     ParamKind
 	Enum     []string // when Kind == KindEnum
 	Pattern  string   // optional regex for name-like fields
+	// Creates says what the action leaves at the path this param names.
+	// pkg lint reads it to find an earlier action that collides with an
+	// extract destination.
+	Creates Creation
 }
 
 // ConstraintKind classifies a cross-parameter rule.
@@ -50,12 +77,25 @@ type Constraint struct {
 }
 
 // Spec is an action's complete declaration: how to run it and what it accepts.
+// Exactly one of Handler and MultiHandler is set. Handler serves an action that
+// places one path per invocation; MultiHandler serves an action that places many
+// (extract), returning one Result per placed path. The runner records every
+// Result as its own ownership entry, whichever handler produced it.
+//
+// The planner projects a MultiHandler action by running it against a throwaway
+// Scope that sets only ActiveRoot, PackageName, PackageRoot and DirMode, and an
+// Invocation carrying only Action, PackageName, Phase and Params. A
+// MultiHandler must therefore depend on nothing else (not LiveRoot,
+// PriorGenDir, StateRoot or AltRoot, nor config's preserve/reset inputs), and
+// its Results must not embed ActiveRoot outside Path, or the projection and
+// the applied ownership diverge.
 type Spec struct {
-	Name        string
-	FilePlacing bool
-	Params      []ParamSpec
-	Constraints []Constraint
-	Handler     func(Invocation, Scope) (Result, error)
+	Name         string
+	FilePlacing  bool
+	Params       []ParamSpec
+	Constraints  []Constraint
+	Handler      func(Invocation, Scope) (Result, error)
+	MultiHandler func(Invocation, Scope) ([]Result, error)
 }
 
 // Registry is the single source of truth for polypkg's actions, consumed by the
@@ -66,7 +106,7 @@ var Registry = map[string]Spec{
 		Name: "install", FilePlacing: true, Handler: Install,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindPath},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 			{Name: "policy", Kind: KindEnum, Enum: []string{"symlink", "copy", "hardlink"}},
 		},
 	},
@@ -74,13 +114,13 @@ var Registry = map[string]Spec{
 		Name: "symlink", FilePlacing: true, Handler: Symlink,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindString},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesPath},
 		},
 	},
 	"dir": {
 		Name: "dir", FilePlacing: true, Handler: Dir,
 		Params: []ParamSpec{
-			{Name: "path", Required: true, Kind: KindPath},
+			{Name: "path", Required: true, Kind: KindPath, Creates: CreatesPath},
 			{Name: "mode", Kind: KindMode},
 		},
 	},
@@ -98,7 +138,7 @@ var Registry = map[string]Spec{
 		Name: "config", FilePlacing: true, Handler: Config,
 		Params: []ParamSpec{
 			{Name: "src", Required: true, Kind: KindPath},
-			{Name: "dest", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 			{Name: "policy", Kind: KindEnum, Enum: []string{"replace", "preserve", "preserve_warn", "three_way_merge"}},
 		},
 	},
@@ -111,13 +151,13 @@ var Registry = map[string]Spec{
 	"state": {
 		Name: "state", FilePlacing: true, Handler: State,
 		Params: []ParamSpec{
-			{Name: "path", Required: true, Kind: KindPath},
+			{Name: "path", Required: true, Kind: KindPath, Creates: CreatesLeaf},
 		},
 	},
 	"path": {
 		Name: "path", FilePlacing: true, Handler: Path,
 		Params: []ParamSpec{
-			{Name: "name", Required: true, Kind: KindString, Pattern: namePattern},
+			{Name: "name", Required: true, Kind: KindString, Pattern: NamePattern},
 			{Name: "source", Required: true, Kind: KindPath},
 		},
 	},
@@ -125,9 +165,9 @@ var Registry = map[string]Spec{
 		Name: "alternatives", FilePlacing: true, Handler: Alternatives,
 		Params: []ParamSpec{
 			{Name: "source", Required: true, Kind: KindPath},
-			{Name: "name", Kind: KindString, Pattern: namePattern},
+			{Name: "name", Kind: KindString, Pattern: NamePattern},
 			{Name: "priority", Kind: KindInt},
-			{Name: "master", Kind: KindString, Pattern: namePattern},
+			{Name: "master", Kind: KindString, Pattern: NamePattern},
 			{Name: "link", Kind: KindString},
 		},
 		Constraints: []Constraint{
@@ -140,7 +180,7 @@ var Registry = map[string]Spec{
 		Name: "completion", FilePlacing: true, Handler: Completion,
 		Params: []ParamSpec{
 			{Name: "shell", Required: true, Kind: KindEnum, Enum: []string{"bash", "zsh", "fish"}},
-			{Name: "name", Required: true, Kind: KindString, Pattern: namePattern},
+			{Name: "name", Required: true, Kind: KindString, Pattern: NamePattern},
 			{Name: "source", Required: true, Kind: KindPath},
 		},
 	},
@@ -154,6 +194,15 @@ var Registry = map[string]Spec{
 		Name: "mime", FilePlacing: true, Handler: Mime,
 		Params: []ParamSpec{
 			{Name: "source", Required: true, Kind: KindPath},
+		},
+	},
+	"extract": {
+		Name: "extract", FilePlacing: true, MultiHandler: Extract,
+		Params: []ParamSpec{
+			{Name: "src", Required: true, Kind: KindPath},
+			{Name: "dest", Required: true, Kind: KindPath, Creates: CreatesPath},
+			{Name: "strip_components", Kind: KindInt},
+			{Name: "include", Kind: KindStringList},
 		},
 	},
 }

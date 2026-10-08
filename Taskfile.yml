@@ -12,11 +12,19 @@ vars:
   BINARY: '{{.BINARY | default "polypkg"}}'
   BUILD_DIR: '{{.BUILD_DIR | default "bin"}}'
   GO: '{{.GO | default "go"}}'
+  # Prefix for every go-invoking command: it appends -mod=readonly to the
+  # caller's GOFLAGS (the last -mod wins), so no task rewrites go.mod or go.sum
+  # even when the shell exports GOFLAGS=-mod=mod. Commands those tasks spawn
+  # (golangci-lint's and govulncheck's go list, builds inside tests) inherit
+  # it. A Taskfile env: entry cannot do this: the caller's environment
+  # overrides it.
+  GO_READONLY: 'GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=readonly"'
   TEST_DIR: '{{.TEST_DIR | default ".test-output"}}'
   GOVULNCHECK_VERSION: '{{.GOVULNCHECK_VERSION | default "v1.3.0"}}'
   FUZZTIME: '{{.FUZZTIME | default "60s"}}'
   FUZZTARGET: '{{.FUZZTARGET | default "FuzzExtractTarZst"}}'
   FUZZPKG: '{{.FUZZPKG | default "./internal/source/"}}'
+  FUZZMINIMIZETIME: '{{.FUZZMINIMIZETIME | default "0"}}'
 
 tasks:
   default:
@@ -26,13 +34,35 @@ tasks:
 
   build:
     desc: Build the polypkg binary into {{.BUILD_DIR}}/
-    cmd: '{{.GO}} build -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/polypkg'
+    cmd: '{{.GO_READONLY}} {{.GO}} build -o {{.BUILD_DIR}}/{{.BINARY}} ./cmd/polypkg'
+
+  # build:cross checks a platform no CI runner executes. go build skips
+  # _test.go files; go vet type-checks them too. GOOS/GOARCH are set inline
+  # because the caller's environment would override an env: entry.
+  build:cross:
+    desc: Compile and vet every package for another platform (vars GOOS, GOARCH)
+    requires:
+      vars: [GOOS, GOARCH]
+    cmds:
+      - 'CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} {{.GO_READONLY}} {{.GO}} build ./...'
+      - 'CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} {{.GO_READONLY}} {{.GO}} vet ./...'
 
   test:
-    desc: Run the test suite with race detector and coverage profile
+    desc: Run the test suite with race detector and a cross-package coverage profile
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage.out ./...'
+      # -coverpkg credits a statement to whichever test binary runs it, so the
+      # in-process specs in tests/integration count toward internal/cli and the
+      # packages beneath it. Each test binary then writes every ./internal/...
+      # block, one copy per binary; the awk pass sums the copies into one line
+      # per block (-race implies -covermode=atomic, whose counts add), which is
+      # how go tool cover reads duplicates and keeps the profile ~40x smaller.
+      - '{{.GO_READONLY}} {{.GO}} test -race -timeout 30m -coverpkg=./internal/... -coverprofile={{.TEST_DIR}}/coverage-raw.out ./...'
+      - >-
+        awk 'NR == 1 { print; next }
+        { block = $1 " " $2; if (!(block in hits)) order[n++] = block; hits[block] += $3 }
+        END { for (i = 0; i < n; i++) print order[i], hits[order[i]] }'
+        {{.TEST_DIR}}/coverage-raw.out > {{.TEST_DIR}}/coverage.out
 
   test:fips:
     desc: Run the test suite under Go's FIPS 140-3 module (GODEBUG=fips140=on)
@@ -40,26 +70,64 @@ tasks:
       GODEBUG: fips140=on
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - '{{.GO}} test -race -coverprofile={{.TEST_DIR}}/coverage-fips.out ./...'
+      - '{{.GO_READONLY}} {{.GO}} test -race -timeout 30m -coverprofile={{.TEST_DIR}}/coverage-fips.out ./...'
 
   lint:
     desc: Run golangci-lint across all packages
-    cmd: golangci-lint run ./...
+    cmd: '{{.GO_READONLY}} golangci-lint run ./...'
 
   vuln:
     desc: Scan for known vulnerabilities with govulncheck
-    cmd: '{{.GO}} run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...'
+    cmd: '{{.GO_READONLY}} {{.GO}} run golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}} ./...'
 
   # fuzz runs the mutating fuzzer. Seed corpora also run as ordinary tests under
   # `task test`; this target is for deeper exploration (local or scheduled CI).
   # Override FUZZTARGET, FUZZTIME, or FUZZPKG to focus on a different target.
+  # FUZZMINIMIZETIME defaults to 0, which turns off Go's minimization of new
+  # inputs. At Go's 60s default every worker spends the run minimizing and the
+  # fuzzer reports 0 execs/s (docs/dev/README.md, "Fuzzing"). Set it (60s, or
+  # Nx for N runs) to have a failing input shrunk, at that cost.
   fuzz:
-    desc: Run the mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
-    cmd: "{{.GO}} test -run='^$' -fuzz={{.FUZZTARGET}} -fuzztime={{.FUZZTIME}} {{.FUZZPKG}}"
+    desc: Run the mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG, FUZZMINIMIZETIME)
+    cmd: "{{.GO_READONLY}} {{.GO}} test -run='^$' -fuzz={{.FUZZTARGET}} -fuzztime={{.FUZZTIME}} -fuzzminimizetime={{.FUZZMINIMIZETIME}} {{.FUZZPKG}}"
+
+  # fuzz:all runs the mutating fuzzer over every Fuzz* target in the module,
+  # one after another (go test -fuzz takes one target per run). go test -list
+  # discovers the targets, so a new fuzz test needs no edit here or in the
+  # nightly workflow. Every target runs even after one fails; the task then
+  # fails naming them. An empty discovery or a build error fails it up front.
+  fuzz:all:
+    desc: Run the mutating fuzzer over every Fuzz* target in turn (vars FUZZTIME, FUZZMINIMIZETIME)
+    cmd: |
+      set -eu -o pipefail
+      targets=$({{.GO_READONLY}} {{.GO}} test -list '^Fuzz' ./... |
+        awk '/^Fuzz/ { names[n++] = $1; next } $1 == "ok" { for (i = 0; i < n; i++) print $2, names[i]; n = 0 }')
+      if [ -z "$targets" ]; then
+        echo "fuzz:all: go test -list found no Fuzz* targets" >&2
+        exit 1
+      fi
+      failed=""
+      set -- $targets
+      while [ $# -gt 0 ]; do
+        pkg=$1 name=$2
+        shift 2
+        echo "==> $name ($pkg)"
+        if ! {{.GO_READONLY}} {{.GO}} test -run='^$' -fuzz="^${name}\$" -fuzztime={{.FUZZTIME}} -fuzzminimizetime={{.FUZZMINIMIZETIME}} "$pkg"; then
+          failed="$failed $name"
+        fi
+      done
+      if [ -n "$failed" ]; then
+        echo "fuzz:all: failing targets:$failed" >&2
+        exit 1
+      fi
 
   fmt:
     desc: Format all Go source with go fmt
-    cmd: '{{.GO}} fmt ./...'
+    cmd: '{{.GO_READONLY}} {{.GO}} fmt ./...'
+
+  generate:
+    desc: Regenerate committed generated Go source (go generate)
+    cmd: '{{.GO_READONLY}} {{.GO}} generate ./...'
 
   check:
     desc: Run all quality gates
@@ -79,11 +147,32 @@ tasks:
       - task: vm:run
         vars: {DISTRO: '{{.DISTRO | default "all"}}'}
 
+  # test:live reaches the real network (api.github.com, GitHub's release and
+  # attestation storage, and the Sigstore TUF CDN), so it is opt-in and in no
+  # default chain. GITHUB_TOKEN or GH_TOKEN, when set, raises GitHub's rate
+  # limit; the import makes two API requests plus one per page of
+  # attestations for each matched asset.
+  test:live:
+    desc: 'Opt-in network test: pkg import the latest cli/cli release and check its attestation'
+    env:
+      POLYPKG_TEST_LIVE: '1'
+    cmd: "{{.GO_READONLY}} {{.GO}} test -count=1 -timeout 15m -run '^TestLiveGitHubImport$' -v ./tests/live/"
+
+  # Run immediately before tagging a release, and before a local goreleaser
+  # snapshot: goreleaser derives the version and changelog range from tags, and
+  # a stray non-version tag corrupts both. Not part of `check`: a stray local
+  # tag must not fail everyday development.
+  release:check-tags:
+    desc: 'Refuse to release while any local tag is not a SemVer `v` tag (vMAJOR.MINOR.PATCH[-pre-release][+build])'
+    cmd: '{{.ROOT_DIR}}/.taskfiles/scripts/check-release-tags.sh'
+
   clean:
     desc: Remove build artifacts and test output
     cmd: rm -rf {{.BUILD_DIR}} {{.TEST_DIR}}
 
   install:
-    desc: Build and install the binary into ~/.local/bin
+    desc: Build and install the binary into ~/.local/bin (created if missing)
     deps: [build]
-    cmd: install -m 0755 {{.BUILD_DIR}}/{{.BINARY}} "$HOME/.local/bin/{{.BINARY}}"
+    cmds:
+      - mkdir -p "$HOME/.local/bin"
+      - install -m 0755 {{.BUILD_DIR}}/{{.BINARY}} "$HOME/.local/bin/{{.BINARY}}"

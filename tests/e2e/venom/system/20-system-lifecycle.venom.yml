@@ -11,7 +11,7 @@ testcases:
   - name: init --scope system writes the system config dir
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope system'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope system'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

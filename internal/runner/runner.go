@@ -84,7 +84,7 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 
 	// Drift detection runs under the lock and BEFORE apply.start, so a refused
 	// apply has zero side effects — no transaction, no swap, no orphaned start
-	// event in the audit log. (apply-semantics §5.3 step 4.)
+	// event in the audit log.
 	st, err := r.checkDrift(txID)
 	if err != nil {
 		return 0, err
@@ -133,7 +133,8 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 	var appliedResets []string
 
 	// Pre-swap phases: a failure aborts the transaction.
-	for _, phase := range []string{"pre-place", "post-place", "pre-activate"} {
+	for _, p := range action.PreSwapPhases() {
+		phase := string(p)
 		for i, e := range entries {
 			r.opts.progress("placing", fmt.Sprintf("%s %d/%d", phase, i+1, len(entries)))
 			scope := action.Scope{
@@ -160,6 +161,7 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 			appliedResets = append(appliedResets, out.ResetPaths...)
 		}
 	}
+	SupersedeModes(own.Entries)
 
 	// Shared-path conflict check: runs after all pre-swap entries are assembled
 	// and before the irreversible commit/swap, so a refused apply leaves the
@@ -286,9 +288,8 @@ func (r *Runner) Run(ctx context.Context, m *schema.Manifest, entries []RunEntry
 	}
 
 	// Opportunistic GC runs under the still-held apply lock after
-	// apply.complete (apply-semantics §5.3 step 9). Best-effort: failures
-	// emit service.warning but do NOT fail the apply -- the swap has
-	// already committed.
+	// apply.complete. Best-effort: failures emit service.warning but do NOT
+	// fail the apply -- the swap has already committed.
 	if r.opts.GCPolicy != nil {
 		r.runOpportunisticGC(txID)
 	}
@@ -336,6 +337,8 @@ func (r *Runner) runOpportunisticGC(txID string) {
 			CommittedAt: g.CommittedAt,
 			Pinned:      g.Pinned,
 			IsCurrent:   g.IsCurrent,
+			Incomplete:  g.Incomplete,
+			Damaged:     g.Damaged,
 		})
 		if g.Pinned {
 			pinnedCount++
@@ -420,6 +423,11 @@ func (r *Runner) checkDrift(txID string) (*preApplyState, error) {
 		})
 		return nil, fmt.Errorf("load current ownership: %w", err)
 	}
+	// A generation committed before modes were superseded may still record
+	// an earlier action's stale mode for a path a later perms re-moded.
+	// Normalizing it here (idempotent for newer ones) keeps that first apply
+	// from being refused or re-healed.
+	SupersedeModes(own.Entries)
 	st := &preApplyState{
 		prior:           own,
 		liveRoot:        activeRoot,
@@ -503,7 +511,7 @@ func (r *Runner) loadResets() (map[string]bool, *schema.Resets, error) {
 	defer func() { _ = f.Close() }()
 	rs, err := schema.ParseResets(f)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pending-resets: %w", err)
+		return nil, nil, fmt.Errorf("pending-resets: %w", schema.WithPath(err, r.opts.ResetsPath))
 	}
 	if rs.Scope != r.opts.Scope {
 		return nil, nil, nil // belongs to a different scope's apply

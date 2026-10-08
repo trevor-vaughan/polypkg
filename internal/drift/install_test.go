@@ -130,4 +130,57 @@ var _ = ginkgo.Describe("Inspect (install action)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(BeEmpty(), "resolved-target content hash must match the recorded hash")
 	})
+
+	ginkgo.It("re-hashes a symlink install's target even when the link's own stat is unchanged", func() {
+		t := ginkgo.GinkgoTB()
+		// A symlink-policy install points into the user-writable extract cache.
+		// Editing the target leaves the link's lstat untouched, so the stat
+		// shortcut must not apply to symlinks or the edit goes unreported.
+		target := filepath.Join(t.TempDir(), "src")
+		Expect(os.WriteFile(target, []byte("original"), 0o644)).To(Succeed())
+		root := setupTree(t, fsEntry{Path: "hello/bin/hi", Type: "symlink", Target: target})
+		prior := &schema.Ownership{Entries: []schema.OwnershipEntry{{
+			Path: "hello/bin/hi", Action: "install",
+			Expected: schema.Expected{FileType: "symlink", ContentHash: blake3Hex([]byte("original"))},
+			Stat:     statOf(t, filepath.Join(root, "hello/bin/hi")),
+		}}}
+		Expect(os.WriteFile(target, []byte("tampered"), 0o644)).To(Succeed())
+
+		got, err := Inspect(prior, root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].Reason).To(Equal(ReasonContent))
+		Expect(got[0].Observed).To(Equal(blake3Hex([]byte("tampered"))))
+	})
+
+	ginkgo.It("reports no drift for a clean symlink install whose link stat is unchanged", func() {
+		t := ginkgo.GinkgoTB()
+		target := filepath.Join(t.TempDir(), "src")
+		Expect(os.WriteFile(target, []byte("original"), 0o644)).To(Succeed())
+		root := setupTree(t, fsEntry{Path: "hello/bin/hi", Type: "symlink", Target: target})
+		prior := &schema.Ownership{Entries: []schema.OwnershipEntry{{
+			Path: "hello/bin/hi", Action: "install",
+			Expected: schema.Expected{FileType: "symlink", ContentHash: blake3Hex([]byte("original"))},
+			Stat:     statOf(t, filepath.Join(root, "hello/bin/hi")),
+		}}}
+		got, err := Inspect(prior, root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeEmpty())
+	})
+
+	ginkgo.It("reports ReasonMissing, not an error, when a symlink install's target is gone", func() {
+		t := ginkgo.GinkgoTB()
+		target := filepath.Join(t.TempDir(), "src")
+		root := setupTree(t, fsEntry{Path: "hello/bin/hi", Type: "symlink", Target: target})
+		prior := &schema.Ownership{Entries: []schema.OwnershipEntry{{
+			Path: "hello/bin/hi", Action: "install",
+			Expected: schema.Expected{FileType: "symlink", ContentHash: blake3Hex([]byte("original"))},
+			Stat:     statOf(t, filepath.Join(root, "hello/bin/hi")),
+		}}}
+		got, err := Inspect(prior, root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].Reason).To(Equal(ReasonMissing))
+		Expect(got[0].Observed).To(Equal("dangling"))
+	})
 })

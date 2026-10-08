@@ -2,6 +2,7 @@ package action
 
 import (
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 
@@ -26,7 +27,21 @@ func hashSource(scope Scope, src string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = srcRoot.Close() }()
-	f, err := srcRoot.Open(rel)
+	return hashConfined(srcRoot, rel)
+}
+
+// hashConfined returns the "blake3:<hex>" digest of the regular file at rel,
+// read through root so the read cannot escape it. The type is checked before
+// the open because opening a FIFO blocks until a writer appears.
+func hashConfined(root *os.Root, rel string) (string, error) {
+	info, err := root.Stat(rel)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", rel)
+	}
+	f, err := root.Open(rel)
 	if err != nil {
 		return "", err
 	}

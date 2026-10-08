@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -115,4 +117,51 @@ var _ = Describe("pkg lint command", func() {
 
 		Expect(root.Execute()).To(Succeed())
 	})
+
+	It("refuses -o without --sarif instead of writing nothing", func() {
+		dir := GinkgoT().TempDir()
+		writeCleanPkg(dir)
+		sink := filepath.Join(GinkgoT().TempDir(), "out.sarif")
+
+		root := NewRootCmd()
+		root.SilenceUsage, root.SilenceErrors = true, true
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "lint", "-o", sink, dir})
+
+		err := root.Execute()
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("-o/--output needs --sarif"))
+		Expect(ce.Hint).To(ContainSubstring("stderr under --format json"))
+		Expect(sink).NotTo(BeAnExistingFile())
+	})
+})
+
+var _ = Describe("pkg lint and pkg build on a directory that is not a package", func() {
+	DescribeTable("say what is missing and how to make one",
+		func(command string, makeDir func(string) string, wantMsg string) {
+			dir := makeDir(GinkgoT().TempDir())
+			root := NewRootCmd()
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			args := []string{"pkg", command, dir}
+			if command == "build" {
+				args = append(args, "-o", GinkgoT().TempDir())
+			}
+			root.SetArgs(args)
+			err := root.Execute()
+
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+			Expect(ce.Msg).To(Equal(fmt.Sprintf(wantMsg, dir)))
+			Expect(ce.Hint).To(ContainSubstring("polypkg.yaml"))
+			Expect(ce.Hint).To(ContainSubstring("polypkg pkg init"))
+		},
+		Entry("lint, empty directory", "lint", func(d string) string { return d }, "%s has no polypkg.yaml"),
+		Entry("build, empty directory", "build", func(d string) string { return d }, "%s has no polypkg.yaml"),
+		Entry("lint, missing directory", "lint", func(d string) string { return filepath.Join(d, "nope") }, "package directory %s does not exist"),
+		Entry("build, missing directory", "build", func(d string) string { return filepath.Join(d, "nope") }, "package directory %s does not exist"),
+	)
 })

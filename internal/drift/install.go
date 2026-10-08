@@ -2,8 +2,10 @@ package drift
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -11,18 +13,25 @@ import (
 	"lukechampine.com/blake3"
 )
 
-// inspectInstall checks an install entry per apply-semantics §6.1: missing,
-// filetype changed, or content hash differs. Incremental hashing (§6.4): if the
-// live lstat equals the recorded Stat, the content is assumed unchanged.
+// inspectInstall checks an install entry for drift: missing, filetype changed,
+// or content hash differs. Incremental hashing: if the live lstat equals the
+// recorded Stat, the content is assumed unchanged — but only for regular
+// files. A symlink install's lstat describes the link, which
+// does not change when the extract-cache file it points to is edited, so its
+// target is re-hashed on every inspection; a target that no longer exists is
+// reported as missing.
 func inspectInstall(root *os.Root, e schema.OwnershipEntry, info os.FileInfo) (*Entry, error) {
 	obsType := fileTypeOf(info)
 	if e.Expected.FileType != "" && obsType != e.Expected.FileType {
 		return &Entry{Owned: e, Reason: ReasonFileType, Observed: obsType}, nil
 	}
-	if statEquals(schema.StatInfoFrom(info), e.Stat) {
+	if obsType != "symlink" && statEquals(schema.StatInfoFrom(info), e.Stat) {
 		return nil, nil
 	}
 	hash, err := HashLiveContent(root, e.Path, obsType)
+	if obsType == "symlink" && errors.Is(err, fs.ErrNotExist) {
+		return &Entry{Owned: e, Reason: ReasonMissing, Observed: "dangling"}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("hash content: %w", err)
 	}

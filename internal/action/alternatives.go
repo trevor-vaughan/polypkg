@@ -11,9 +11,9 @@ import (
 )
 
 // altNameRe is the generic-name grammar: a single safe path component. It
-// compiles the registry's shared namePattern so the runtime check and the
+// compiles the registry's shared NamePattern so the runtime check and the
 // declarative lint table cannot diverge.
-var altNameRe = regexp.MustCompile(namePattern)
+var altNameRe = regexp.MustCompile(NamePattern)
 
 // Alternatives registers this package as a provider of the generic command
 // `name` at the given `priority`, exposing the package's own file `source`

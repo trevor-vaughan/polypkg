@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -30,7 +31,7 @@ var _ = Describe("isPinned", func() {
 // held-back computation runs against the same Newest() the production path uses.
 func stubCatalog(pkgs map[string][]string) *resolver.Catalog {
 	idx := &schema.Index{
-		Schema:   "polypkg.index/v2",
+		Schema:   "polypkg.index/v3",
 		Expires:  "2099-01-01T00:00:00Z",
 		Packages: map[string][]schema.IndexEntry{},
 	}
@@ -43,7 +44,7 @@ func stubCatalog(pkgs map[string][]string) *resolver.Catalog {
 			})
 		}
 	}
-	c, err := resolver.BuildCatalog(idx, "native")
+	c, err := resolver.BuildCatalog(idx, "native", platform.Host())
 	Expect(err).NotTo(HaveOccurred())
 	return c
 }

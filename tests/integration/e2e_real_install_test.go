@@ -111,7 +111,7 @@ var _ = Describe("real install", func() {
 		// that must fail cryptographic verification (not merely a presence check).
 		signer := newMinisignKeypair(t) // signs the artifact but is NOT trusted
 		Expect(os.WriteFile(filepath.Join(repoDir, "hello-1.0.0.tar.zst.minisig"),
-			[]byte(signer.signArtifact("hello", "1.0.0", pkg)), 0o644)).To(Succeed())
+			[]byte(signer.signArtifact("hello", "1.0.0", "", pkg)), 0o644)).To(Succeed())
 		anchor := newMinisignKeypair(t)
 		trusted := newMinisignKeypair(t)
 		publishTrustDoc(t, repoDir, "native", anchor, 1,

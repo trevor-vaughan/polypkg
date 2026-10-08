@@ -28,7 +28,7 @@ func Desktop(inv Invocation, scope Scope) (Result, error) {
 	}
 	// base is the source basename; the ownership path is applications/<base> and
 	// the recorded target is the $ACTIVE-expanded source. The planner mirrors both
-	// in projectExpected/ProjectOwnership ("desktop" case) — keep in sync.
+	// in projectExpected/projectOwnership ("desktop" case) — keep in sync.
 	base := filepath.Base(source)
 	stem := strings.TrimSuffix(base, ".desktop")
 	if stem == base || !desktopIDRe.MatchString(stem) {

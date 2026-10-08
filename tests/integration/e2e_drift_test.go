@@ -1,13 +1,16 @@
 package integration
 
 import (
+	"archive/tar"
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/trevor-vaughan/polypkg/internal/cli"
@@ -157,6 +160,106 @@ var _ = Describe("drift", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("applied generation"))
 	})
+
+	It("keeps a default-policy install unaffected by an edit to the extract cache", func() {
+		t := GinkgoTB()
+		t.Setenv("HOME", IsolatedEnv(t))
+		repoDir := t.TempDir()
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: helloDefaultInstallPackage(t)})
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		defer srv.Close()
+		_, err := applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred())
+
+		installed := filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active", "hello", "bin", "hi")
+		info, err := os.Lstat(installed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().IsRegular()).To(BeTrue(),
+			"the default install policy must place a real file, not a link into the extract cache")
+		Expect(info.Mode().Perm()&0o100).NotTo(BeZero(), "the copy must stay executable")
+
+		appendLine(extractCacheFile(t, "content/bin/hi"), "echo CACHE_TAMPERED")
+
+		got, err := os.ReadFile(installed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal(helloPayload))
+		out, err := runStatusCmd("-vv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("drift: 0 entries"))
+
+		// The next apply must not copy the edited cache into the new generation:
+		// the planner re-extracts the modified tree from the verified artifact.
+		out, err = applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring("applied generation"))
+		got, err = os.ReadFile(installed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal(helloPayload))
+		got, err = os.ReadFile(extractCacheFile(t, "content/bin/hi"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal(helloPayload), "apply must restore the extract cache from the artifact")
+	})
+
+	It("reports a content edit to a default-policy install and apply heals it", func() {
+		t := GinkgoTB()
+		t.Setenv("HOME", IsolatedEnv(t))
+		repoDir := t.TempDir()
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: helloDefaultInstallPackage(t)})
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		defer srv.Close()
+		_, err := applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred())
+
+		installed := filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active", "hello", "bin", "hi")
+		Expect(os.WriteFile(installed, []byte("#!/bin/sh\necho tampered\n"), 0o755)).To(Succeed())
+
+		out, err := runStatusCmd("-vv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("hello/bin/hi (install): content [policy: notify_heal]"))
+
+		out, err = applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring("applied generation"))
+		got, err := os.ReadFile(installed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal(helloPayload))
+		out, err = runStatusCmd("-vv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("drift: 0 entries"))
+	})
+
+	It("reports an extract-cache edit behind a symlink-policy install and apply heals it", func() {
+		t := GinkgoTB()
+		t.Setenv("HOME", IsolatedEnv(t))
+		repoDir := t.TempDir()
+		// buildHelloPackage installs with an explicit `policy: symlink`.
+		trustRoot := signRepo(t, repoDir, "native", 1,
+			indexPkg{name: "hello", version: "1.0.0", artifact: buildHelloPackage(t)})
+		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
+		defer srv.Close()
+		_, err := applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred())
+
+		installed := filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active", "hello", "bin", "hi")
+		appendLine(extractCacheFile(t, "content/bin/hi"), "echo CACHE_TAMPERED")
+
+		out, err := runStatusCmd("-vv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("hello/bin/hi (install): content [policy: notify_heal]"))
+
+		out, err = applyHelloOnce(t, srv.URL, trustRoot)
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring("applied generation"))
+		got, err := os.ReadFile(installed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(ContainSubstring("echo hello from polypkg"))
+		Expect(string(got)).NotTo(ContainSubstring("CACHE_TAMPERED"))
+		out, err = runStatusCmd("-vv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("drift: 0 entries"))
+	})
 })
 
 // helloInstallRefusePackage uses install with policy=copy (so the live file is
@@ -180,4 +283,73 @@ actions:
 		"polypkg.yaml": manifest,
 		"payload":      "original\n",
 	})
+}
+
+// helloPayload is the executable that helloDefaultInstallPackage ships.
+const helloPayload = "#!/bin/sh\necho hello from polypkg\n"
+
+// helloDefaultInstallPackage is a hello package whose install action omits
+// `policy`, so it exercises the install default. The payload is executable so
+// a test can check that the placed copy keeps the mode.
+func helloDefaultInstallPackage(t testing.TB) []byte {
+	t.Helper()
+	g := NewWithT(t)
+	manifest := `schema: polypkg.package/v1
+name: hello
+version: 1.0.0
+actions:
+  - phase: post-place
+    action: dir
+    params:
+      path: $ACTIVE/hello/bin
+      mode: "0o755"
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/hi
+      dest: $ACTIVE/hello/bin/hi
+`
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	for _, f := range []struct {
+		name, body string
+		mode       int64
+	}{
+		{"polypkg.yaml", manifest, 0o644},
+		{"content/bin/hi", helloPayload, 0o755},
+	} {
+		g.Expect(tw.WriteHeader(&tar.Header{
+			Name: f.name, Size: int64(len(f.body)), Mode: f.mode, Typeflag: tar.TypeReg,
+		})).To(Succeed())
+		_, err := io.WriteString(tw, f.body)
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+	g.Expect(tw.Close()).To(Succeed())
+	var z bytes.Buffer
+	enc, err := zstd.NewWriter(&z)
+	g.Expect(err).NotTo(HaveOccurred())
+	_, err = enc.Write(raw.Bytes())
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(enc.Close()).To(Succeed())
+	return z.Bytes()
+}
+
+// extractCacheFile returns the path of rel inside hello-1.0.0's extract dir
+// under the sandboxed XDG_STATE_HOME, failing unless exactly one dir matches.
+func extractCacheFile(t testing.TB, rel string) string {
+	t.Helper()
+	g := NewWithT(t)
+	matches, err := filepath.Glob(filepath.Join(os.Getenv("XDG_STATE_HOME"), "polypkg", "pkg-extract", "hello-1.0.0+*", rel))
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(matches).To(HaveLen(1))
+	return matches[0]
+}
+
+// appendLine appends line to the file at path, as an out-of-band edit would.
+func appendLine(path, line string) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.WriteString(line + "\n")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
 }

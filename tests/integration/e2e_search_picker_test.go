@@ -81,7 +81,7 @@ var _ = Describe("search picker (real pty)", func() {
 		// packages pinned (its packages: block is commented out), so hello is
 		// available to search and not yet installed -- the picker has to be
 		// the thing that installs it.
-		out, err := runCmd("init", "--source-url", publicDir, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", publicDir, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
 
 		cfgHome := os.Getenv("XDG_CONFIG_HOME")

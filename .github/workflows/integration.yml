@@ -1,0 +1,75 @@
+name: integration
+
+# The container end-to-end tier (tests/e2e): the built binary driven through
+# its whole lifecycle under rootless podman, one job per distro. The release
+# workflow calls this one too, so an honestly tagged commit does not publish
+# past a failing matrix. docs/dev/README.md says what that does not cover.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+# Keyed on this file's name, not github.workflow: inside a workflow_call that
+# is the caller's name. Only PR runs cancel, so a release's gates never do.
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [centos, ubuntu, alpine]
+    # Pinned rather than ubuntu-latest: the runner image supplies podman, and
+    # a runner-image major upgrade would change how the suite's containers
+    # behave.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The suite generates its provenance fixtures on the host with go run.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # The runner image ships rootless podman but not podman-compose. The
+      # compose file's service_healthy conditions need podman 4.6 or newer;
+      # podman-compose skips them with a warning on anything older.
+      - name: Install podman-compose
+        run: pipx install podman-compose==1.6.0
+      # buildah's scratch dir must not be on overlayfs (tests/e2e/README.md).
+      # A hosted runner's /var/tmp is on ext4; the df line shows it. The
+      # versions and network backend make a runner-image change visible.
+      - name: Report container host
+        run: |
+          podman version
+          podman-compose version
+          podman info --format 'network={{.Host.NetworkBackend}} storage={{.Store.GraphDriverName}}'
+          df -T "${TMPDIR:-/var/tmp}"
+      # Below the job timeout so a hung run still leaves time to upload.
+      - name: Run the e2e suite
+        timeout-minutes: 40
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: task integration:run DISTRO="$DISTRO"
+      # venom writes its reports to files, not the job log.
+      - name: Upload venom reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-${{ matrix.distro }}
+          path: .test-output/e2e/
+          if-no-files-found: ignore
+          retention-days: 14

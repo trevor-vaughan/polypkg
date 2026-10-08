@@ -12,7 +12,8 @@ import (
 // tierAnchored reports whether a carried tier represents cryptographically
 // anchored verification whose payload-authoritative predicate type may be
 // trusted. verified-transport-only and bound-unverified are self-declared and
-// carry no policy weight (spec §10.6, hard constraint a).
+// carry no policy weight: an unverified, self-declared predicate type must
+// never satisfy a gate.
 func tierAnchored(tier string) bool {
 	return tier == schema.CarriedTierBuilderVerified || tier == schema.CarriedTierVerifiedOffline
 }
@@ -74,7 +75,7 @@ func identityAllowed(b *schema.CarriedBinding, allow []schema.BuilderAllowEntry,
 }
 
 // enforceAttestationPolicy applies a source's per-predicate attestation gate
-// (phase 2d-1, spec §10.6) — the first place a carried tier GATES an install.
+// — the first place a carried tier GATES an install.
 // Each required predicate type must be present AND verified at an anchored tier
 // from an allowed builder identity, else the install is refused (fail closed).
 // A nil policy or an empty Require list is a no-op (the source is ungated).
@@ -161,16 +162,16 @@ func verifiedPredicateTypes(state *schema.AttestationState) []string {
 	return out
 }
 
-// enforcePostureFloor applies the TOFU posture floor (phase 2d-2, spec §10.7,
-// threat G3): every predicate type verified in the prior generation must still
-// be verified now (native or anchored-carried, identity-agnostic — identity is
-// 2d-1's concern). A regressed predicate refuses the install unless the operator
-// pinned the exact resolved version (pinnedExact), which explicitly accepts that
-// release's lower posture — the same escape hatch as the D15 anti-downgrade
-// guard. No prior state (first sighting) is the TOFU baseline and never gates.
-// The floor is identity-agnostic (an empty allow-list), so requireSatisfied is
-// called with a nil bundle: it is consulted only for anchored-carried presence,
-// never for key resolution.
+// enforcePostureFloor applies the TOFU posture floor: every
+// predicate type verified in the prior generation must still be verified now
+// (native or anchored-carried, identity-agnostic — identity is
+// enforceAttestationPolicy's concern). A regressed predicate refuses the
+// install unless the operator pinned the exact resolved version (pinnedExact),
+// which explicitly accepts that release's lower posture — the same escape hatch
+// as the per-package anti-downgrade guard. No prior state (first sighting) is
+// the TOFU baseline and never gates. The floor is identity-agnostic (an empty
+// allow-list), so requireSatisfied is called with a nil bundle: it is
+// consulted only for anchored-carried presence, never for key resolution.
 func enforcePostureFloor(newState, prior *schema.AttestationState, pinnedExact bool) error {
 	if pinnedExact {
 		return nil // the operator pinned this exact version, accepting its posture

@@ -13,21 +13,17 @@ import (
 	"github.com/trevor-vaughan/polypkg/internal/cli"
 )
 
-// M-4: post-edit rollback e2e — validation passes, edit written, apply fails.
-// The fixture repo is real and signed; we chmod the data home 0o500 after the
-// profile edit is written but before apply can create the generations directory,
-// which forces apply to fail with a permission error. Non-root only.
+// Post-edit rollback e2e: validation passes, the edit is written, then apply
+// fails. The fixture repo is real and signed; the package's install action
+// names a source file the artifact does not contain, so the apply aborts after
+// the profile edit. The failure needs no permission trick, so the spec also
+// runs as root (containers).
 var _ = Describe("install post-edit rollback", func() {
 	It("restores the profile when apply fails after the edit is written", func() {
-		if os.Getuid() == 0 {
-			Skip("permission-based failure does not apply when running as root")
-		}
 		t := GinkgoTB()
 		IsolatedEnv(t)
 
-		artifact := buildTarZst(t, map[string]string{
-			"polypkg.yaml": "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\nactions: []\n",
-		})
+		artifact := buildHelloMissingSource(t, "1.0.0")
 		repoDir := t.TempDir()
 		trustRoot := signRepo(t, repoDir, "native", 1,
 			indexPkg{name: "hello", version: "1.0.0", artifact: artifact})
@@ -47,16 +43,6 @@ var _ = Describe("install post-edit rollback", func() {
 		original, err := os.ReadFile(profilePath)
 		Expect(err).NotTo(HaveOccurred())
 
-		// Make the XDG_DATA_HOME/polypkg dir read-only BEFORE running install.
-		// install's resolveAndEdit will MkdirAll the stateHome (which lives under
-		// XDG_STATE_HOME — still writable), write the profile edit, release the
-		// lock, and then call applyProfile. applyProfile calls MkdirAll(dataHome)
-		// which fails on the read-only path, causing apply to fail after the edit.
-		dataHome := filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg")
-		Expect(os.MkdirAll(dataHome, 0o755)).To(Succeed())
-		Expect(os.Chmod(dataHome, 0o500)).To(Succeed())
-		defer os.Chmod(dataHome, 0o755) //nolint:errcheck
-
 		root := cli.NewRootCmd()
 		root.SilenceUsage, root.SilenceErrors = true, true
 		var out bytes.Buffer
@@ -66,14 +52,20 @@ var _ = Describe("install post-edit rollback", func() {
 		execErr := root.Execute()
 
 		// Apply must have failed and reported the rollback.
-		Expect(execErr).To(HaveOccurred(), "install must fail when apply cannot create the data home")
+		Expect(execErr).To(HaveOccurred(), "install must fail when the package's install action has no source")
 		Expect(execErr.Error()).To(ContainSubstring("the profile was not changed"),
 			"error must carry the rollback annotation; got: %s\n output: %s", execErr.Error(), out.String())
+		Expect(execErr.Error()).To(ContainSubstring("content/bin/missing"),
+			"the failure must be the fixture's missing install source, not some other error")
 
 		// Profile bytes must be byte-identical to the original.
 		restored, rerr := os.ReadFile(profilePath)
 		Expect(rerr).NotTo(HaveOccurred())
 		Expect(restored).To(Equal(original), "profile must be restored to its pre-edit state")
+
+		// And no generation went live.
+		_, statErr := os.Lstat(filepath.Join(os.Getenv("XDG_DATA_HOME"), "polypkg", "active"))
+		Expect(os.IsNotExist(statErr)).To(BeTrue(), "a failed apply must not activate a generation")
 	})
 })
 

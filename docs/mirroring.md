@@ -57,14 +57,16 @@ flowchart LR
   class build,bundle,repo sysB
 ```
 
-Generate the mirror's key first, then pull:
+Set the key password, generate the mirror's key, then pull. `repo init`
+encrypts the new key under that password and `mirror pull` unlocks it again,
+so the password has to be set before either runs:
 
 ```bash
+export POLYPKG_REPO_KEY_PASSWORD='...'   # or pass --key-password-file to both commands
 polypkg repo init ./mirror-scaffold --source mymirror --key-dir ./mirror-keys
 #   -> ./mirror-keys/mymirror.key   (the scaffold directory itself is disposable;
 #      `mirror pull` publishes its own tree and its own manifest)
 
-export POLYPKG_REPO_KEY_PASSWORD='...'   # mirror pull unlocks the key as well
 polypkg mirror pull \
   --source-url https://upstream.example/repo \
   --trust-root upstream-root.pub \
@@ -127,6 +129,44 @@ left behind under `--all-versions`, an unpinned selection resolved under it
 produces no narrowing note. Bundles grow with every version mirrored, so
 reach for this only where the air-gapped site's clients hold pins against
 exact versions.
+
+There is no platform filter: a mirror serves every platform its upstream
+publishes. "Latest" is worked out per platform. Each platform takes its own
+newest version, and platform-agnostic builds form one more group of their
+own. If the upstream published `hello` 1.1.0 only for `linux/amd64` and
+1.0.0 only for `darwin/arm64`, a bare `--package hello` mirrors both. A
+`name@version` selector pulls every platform build of that version. Neither
+platform has an older version left behind there, so no note is printed. If
+`linux/amd64` had also published 1.0.0, the pull would skip it and the
+narrowing note would name the platform:
+
+```
+note: upstream https://upstream.example/repo: hello (linux/amd64): mirrored 1.1.0, did not mirror 1.0.0 (select it with --package hello@1.0.0)
+```
+
+Platform-agnostic packages keep the note shown above. An upstream index that
+lists the same name, version, and platform more than once (counting
+semver-equal spellings such as `1.0` and `1.0.0` as one version), or that
+holds two names, or two versions of one name, differing only in letter case,
+fails the whole pull, including packages you did not select. `polypkg repo build` never
+publishes such an index.
+
+Fetching and staging accept any well-formed platform, including an
+architecture variant such as `linux/arm/v7` or a port added by a newer Go than
+the one that built your polypkg. Turning a staged build into a `prebuilt:`
+entry runs `repo build`'s publishing rules, which allow only the `<os>/<arch>`
+pairs `go tool dist list` names for that toolchain. A pull that selects such
+a build therefore fails at its re-publish step, and so does a later
+`repo build` of the staged manifest:
+
+```
+error: package "hello" version 1.1.0 declares platform "linux/arm/v7", which repo build cannot publish
+```
+
+A selector cannot leave out one platform's build of a version. Select a
+version with no such build (`--package hello@1.0.0`), leave the package out,
+or run the pull with a polypkg built by a Go toolchain that knows the
+platform.
 
 ## What gets re-signed
 
@@ -212,16 +252,87 @@ except a `name@version` entry, which still selects only that version.
 Parsing enforces only `url` and `trust_root`; `source_name`, `source_type`,
 `accept_expiry_until`, `packages`, and `all_versions` are all optional to the
 schema. In practice, set `source_name` on every entry anyway. It has to match
-the source name bound into that upstream's signed trust document, and an
-omitted one is not caught at parse time — the pull starts, fetches, and fails
-part-way through against the empty name:
+the source name bound into that upstream's signed trust document, and it names
+that upstream's rollback record, so it must be a slug (`^[a-zA-Z0-9_-]+$`). An
+omitted one is not caught at parse time, but the pull refuses that entry
+before fetching anything from it. Every error from a pull is prefixed with the
+upstream's name and its URL (credentials redacted):
 
 ```
-error: verify trust document: trust document is for source "upstream-a", expected ""
+error: upstream "" (https://a.example/repo): upstream source name: source name "" is not a valid slug (must match ^[a-zA-Z0-9_-]+$)
 ```
 
 The same package name may not be pulled from more than one source, because a
 repository keys packages by name.
+
+## Upstream rollback protection
+
+A mirror re-signs whatever it pulls, so its clients can only be as current as
+the mirror. Every successful `mirror pull` records the serial of each signed
+upstream document it accepted: the trust document, the index, the trust
+bundle, and the revocation list. A later pull refuses an upstream that:
+
+- serves any of those documents at a lower serial than the recorded one (a
+  replayed older snapshot, even one that has not expired yet), or
+- stops serving a trust bundle or revocation list that the mirror has already
+  seen. A stripped revocation list would otherwise drop the upstream's
+  revocations from your mirror.
+
+```
+error: upstream "upstream" refused: revocation list serial 1 is below last-seen 2
+hint: this upstream's anti-rollback record is /srv/mirror-keys/mymirror.mirror-state/trust/upstream.<key id>.json; only if the upstream's operator confirms it was legitimately re-created, delete that file and pull again (docs/mirroring.md, "Resetting after an upstream is re-created")
+
+error: upstream "upstream" no longer publishes its revocation list (last seen at serial 2)
+```
+
+Each refusal names the upstream it came from, and the hint names that
+upstream's record file.
+
+An upstream that has never published a trust bundle or revocation list is
+fine. Absence is refused only after one has been seen. The serials are written
+only after the whole pull succeeds (re-publish, revocation propagation, and any
+`-o` export included), so a failed run never advances them.
+
+The records live beside the build cache, one file per upstream:
+
+```
+<key-dir>/<repo-source>.mirror-state/trust/<source-name>.<trust-root key id>.json
+```
+
+With the example above that is `./mirror-keys/mymirror.mirror-state/trust/`.
+`--key-dir` defaults to the directory holding `--key`. Keep pulling with the
+same `--key-dir` and `--repo-source`. A pull pointed at a different pair finds
+no records, and it accepts whatever the upstream serves, as a first pull
+does. Each record is keyed by the upstream's pinned trust-root key as well as
+its name, so pinning a new trust root starts a new record. A record that
+cannot be read or parsed stops the pull. It is never treated as empty.
+A pull holds `<repo-source>.mirror-state/lock` for its whole run, so a second
+pull into the same mirror started meanwhile is refused at once. Because the
+records must never be served, a pull refuses before fetching anything if
+`--key-dir` is inside `--output-dir`, or if `--output-dir` is inside the
+`.mirror-state` directory or contains it.
+
+### Resetting after an upstream is re-created
+
+If an upstream is legitimately rebuilt from scratch under the same trust-root
+key, its serials restart and every pull is refused as a rollback. That
+refusal is exactly what a replay attack looks like, so first confirm with the
+upstream's operator that the rebuild is genuine. Then delete that upstream's
+record and pull again:
+
+```bash
+ls ./mirror-keys/mymirror.mirror-state/trust/
+#   upstream.<key id>.json
+rm ./mirror-keys/mymirror.mirror-state/trust/upstream.<key id>.json
+polypkg mirror pull ...   # same flags as before
+```
+
+The next pull re-baselines on whatever the upstream currently serves, with no
+rollback check. That is the same trust-on-first-use exposure as the mirror's
+very first pull. A damaged record stops the pull with `cannot read the
+rollback record for upstream "…"`, and the hint names its file. Restore it
+from a backup if you have one; otherwise delete it the same way, accepting the
+same re-baseline.
 
 ## Re-anchoring on your key alone (`--fresh`)
 

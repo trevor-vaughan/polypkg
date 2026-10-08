@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/jedisct1/go-minisign"
+
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 )
 
 // AnchorError reports that a source's trust_root anchor is not a valid minisign
@@ -41,15 +43,50 @@ type Claims struct {
 	Values map[string]string // authenticated trusted-comment key=value fields
 }
 
-// Artifact returns the name/version/hash an artifact signature claims, erroring
-// if any required field is absent or the hash is not a blake3 digest.
-func (c Claims) Artifact() (name, version, hash string, err error) {
+// Artifact returns the name/version/platform/hash an artifact signature
+// claims. The trusted comment must carry platform=: either the reserved token
+// platform.Any, returned as "" to match a platform-agnostic
+// schema.IndexEntry.Platform, or a platform that passes
+// platform.ValidateConsumer (the consumer grammar, so a newer publisher's
+// variant platform still parses and is then rejected by the entry comparison).
+// A comment without platform= is refused rather than read as "any": otherwise
+// a genuinely signed pre-platform signature could be replayed to bind a darwin
+// artifact to a linux entry.
+func (c Claims) Artifact() (name, version, plat, hash string, err error) {
+	name, version, hash, err = c.nameVersionHash("artifact")
+	if err != nil {
+		return "", "", "", "", err
+	}
+	plat = c.Values["platform"]
+	switch plat {
+	case "":
+		return "", "", "", "", fmt.Errorf("artifact signature comment missing platform")
+	case platform.Any:
+		return name, version, "", hash, nil
+	}
+	if verr := platform.ValidateConsumer(plat); verr != nil {
+		return "", "", "", "", fmt.Errorf("artifact signature comment: %w", verr)
+	}
+	return name, version, plat, hash, nil
+}
+
+// Attestation returns the name/version/hash an attestation's transport
+// signature claims, erroring if any is absent or the hash is not a blake3
+// digest. Unlike Artifact it binds no platform: an attestation binds to its
+// artifact by digest, which is already per-platform.
+func (c Claims) Attestation() (name, version, hash string, err error) {
+	return c.nameVersionHash("attestation")
+}
+
+// nameVersionHash extracts the name/version/hash fields every artifact and
+// attestation trusted comment carries. kind labels the errors.
+func (c Claims) nameVersionHash(kind string) (name, version, hash string, err error) {
 	name, version, hash = c.Values["name"], c.Values["version"], c.Values["hash"]
 	if name == "" || version == "" || hash == "" {
-		return "", "", "", fmt.Errorf("artifact signature comment missing name/version/hash")
+		return "", "", "", fmt.Errorf("%s signature comment missing name/version/hash", kind)
 	}
 	if !strings.HasPrefix(hash, "blake3:") || len(hash) <= len("blake3:") {
-		return "", "", "", fmt.Errorf("artifact signature comment hash %q is not a blake3 digest", hash)
+		return "", "", "", fmt.Errorf("%s signature comment hash %q is not a blake3 digest", kind, hash)
 	}
 	return name, version, hash, nil
 }
@@ -97,8 +134,8 @@ type Verifier interface {
 
 // NewVerifier returns the trust Verifier for the given source backend type,
 // anchored by anchorPub (the trust_root .pub content) and bound to sourceName
-// (the trust document must name this source). M2 supports only the native
-// backend's minisign scheme.
+// (the trust document must name this source). Only the native backend's
+// minisign scheme is supported.
 func NewVerifier(sourceType, anchorPub, sourceName string) (Verifier, error) {
 	switch sourceType {
 	case "polypkg-native":

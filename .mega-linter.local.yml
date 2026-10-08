@@ -1,0 +1,60 @@
+# Project overrides for the shared MegaLinter policy
+# (github.com/trevor-vaughan/megalint-config). The runner mounts this file as
+# the entry config and stages the shared policy beside it as
+# .mega-linter.shared.yml.
+#
+# Every exclusion below names what it hides and why that content cannot be
+# fixed instead. Inline suppressions in source carry their own reason.
+
+EXTENDS: .mega-linter.shared.yml
+
+# internal/pkglint/testdata/badyaml/ is deliberately unparseable YAML: the
+# linter's tests feed it to `polypkg lint` to prove a syntax error is reported.
+YAML_FILTER_REGEX_EXCLUDE: "(^|/)internal/pkglint/testdata/badyaml/"
+
+# Link checking covers documentation. Go and YAML test sources and fixtures
+# hold URLs that are test data — compose service hostnames, fake repository
+# roots, in-toto identifiers — and never resolve outside the test harness.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: "(^|/)testdata/|^tests/.*\\.(go|ya?ml)$|_test\\.go$"
+
+# Sibling config files at the repo root replace the shared copies of the same
+# name, so each restates the shared entries before adding polypkg's own:
+#
+#   .devskim.json      also skips *_test.go, testdata/ and tests/. Those trees
+#                      name sha1/md5/md4 on purpose (the provenance tests prove
+#                      weak digests are refused) and hold fixed digests that
+#                      DevSkim reads as embedded keys. Production code is still
+#                      scanned; its few by-design hits are suppressed inline.
+#   .secretlintrc.json allows three exact user:password URLs. They are test
+#                      inputs that prove credentials are redacted from errors.
+#   .lycheeignore      adds identifier and loopback URLs; see its comments.
+#
+# betterleaks honours inline `gitleaks:allow` markers, which mark the public
+# keys in test fixtures.
+
+# TruffleHog scans every commit, including commit messages, and the shared
+# policy runs it unverified, so any scheme://user:password@host match fails the
+# build. polypkg's history holds such URLs on purpose — credential-redaction
+# tests, the changelog entry and the commit message describing that fix — and
+# an inline marker cannot reach existing commits. The URI and FTP detectors are
+# therefore off here.
+#
+# That leaves a gap. A generic scheme://user:password@host credential is now
+# caught only by secretlint's basicauth rule, which scans the current tree on
+# full (push to main) runs. Changed-files (pull request) runs skip the
+# repository linters, and nothing scans git history for such URLs any more.
+# Provider-format tokens (cloud keys, GitHub tokens and the like) are still
+# caught by TruffleHog's other detectors and by betterleaks. Enable GitHub
+# secret scanning and push protection in the repository settings as the
+# backstop for what this misses.
+#
+# EXTENDS replaces lists, so the shared arguments are restated before the
+# addition.
+REPOSITORY_TRUFFLEHOG_ARGUMENTS:
+  - "git"
+  - "file://."
+  - "--branch=HEAD"
+  - "--no-verification"
+  - "--exclude-paths"
+  - ".trufflehog-exclude-paths.txt"
+  - "--exclude-detectors=URI,FTP"

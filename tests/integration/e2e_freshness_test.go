@@ -12,12 +12,12 @@ import (
 )
 
 // This spec substitutes for the container E2E tier's expired-metadata
-// scenario: D13 grants consumers a 5-minute clock-skew tolerance, so a live
+// scenario: consumers get a 5-minute clock-skew tolerance, so a live
 // binary cannot observe "expired" without sleeping out the skew window —
 // unacceptable in the container matrix. Here the full CLI (real publisher,
 // real signed repo over HTTP) runs with the trust clock advanced
 // deterministically past expires+skew instead.
-var _ = Describe("expired repository metadata (D13)", func() {
+var _ = Describe("expired repository metadata", func() {
 	It("refuses to install once the signed metadata has passed its validity window", func() {
 		t := GinkgoTB()
 		IsolatedEnv(t)

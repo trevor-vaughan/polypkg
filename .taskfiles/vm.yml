@@ -37,8 +37,8 @@ tasks:
     desc: Build static polypkg and venom binaries for in-guest use
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - CGO_ENABLED=0 go build -trimpath -o {{.BIN_DIR}}/polypkg {{.ROOT_DIR}}/cmd/polypkg
-      - CGO_ENABLED=0 GOBIN={{.BIN_DIR}} go install github.com/ovh/venom/cmd/venom@{{.VENOM_VERSION}}
+      - CGO_ENABLED=0 {{.GO_READONLY}} go build -trimpath -o {{.BIN_DIR}}/polypkg {{.ROOT_DIR}}/cmd/polypkg
+      - CGO_ENABLED=0 GOBIN={{.BIN_DIR}} {{.GO_READONLY}} go install github.com/ovh/venom/cmd/venom@{{.VENOM_VERSION}}
 
   confine:
     desc: Compile the SELinux test policy module to a loadable .pp (host-side, refpolicy devel)
@@ -56,7 +56,7 @@ tasks:
   run:
     desc: Run the VM LSM-enforcement tier (DISTRO=centos|ubuntu|all)
     deps: [build, confine]
-    cmd: go test -tags vm -timeout 40m -run 'TestLSM' {{.VM_DIR}}/... -v -args -distro={{.DISTRO}}
+    cmd: "{{.GO_READONLY}} go test -tags vm -timeout 40m -run 'TestLSM' {{.VM_DIR}}/... -v -args -distro={{.DISTRO}}"
     env:
       VM_IMAGE_DIR: '{{.IMAGE_DIR}}'
       VM_BIN_DIR: '{{.BIN_DIR}}'

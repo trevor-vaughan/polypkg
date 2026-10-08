@@ -22,7 +22,12 @@ type CacheEntry struct {
 	ContentHash string `json:"content_hash"`
 	Artifact    string `json:"artifact"`
 	Version     string `json:"version"`
-	Revision    int    `json:"revision"` // informational rebuild ordinal (D10)
+	// Platform is the artifact's target platform from its polypkg.yaml
+	// ("os/arch"); "" means platform-agnostic. It is republished verbatim on a
+	// cache hit and keys nextRevision, so it is recorded here rather than
+	// re-derived from the artifact.
+	Platform string `json:"platform,omitempty"`
+	Revision int    `json:"revision"` // informational rebuild ordinal
 	// Per-entry attestation refs, reused verbatim on cache hits so an unchanged
 	// package keeps its published attestation set. Empty when the entry was built
 	// with --skip-attestations. A list (not a single ref) so carried external
@@ -41,6 +46,7 @@ type CacheEntry struct {
 func (c CacheEntry) indexEntry() schema.IndexEntry {
 	return schema.IndexEntry{
 		Version:      c.Version,
+		Platform:     c.Platform,
 		ContentHash:  c.ContentHash,
 		Artifact:     c.Artifact,
 		Revision:     c.Revision,
@@ -67,7 +73,7 @@ type BuildCache struct {
 	// documents carry the expiry but not the window that produced it — index.json
 	// has no issued_at, and trust.json's is pinned to the epoch for deterministic
 	// signatures — so the window is recorded here, next to the serial, and read
-	// back by both Build and Inspector.Pending to apply the D13 half-life rule
+	// back by both Build and Inspector.Pending to apply the half-life rule
 	// against the real window rather than a guess.
 	//
 	// Zero means "not recorded": a cache written before this field existed, or a
@@ -80,7 +86,7 @@ type BuildCache struct {
 
 // NewBuildCache returns an empty cache.
 func NewBuildCache() *BuildCache {
-	return &BuildCache{Schema: "polypkg.repo-cache/v3", Entries: map[string]CacheEntry{}}
+	return &BuildCache{Schema: "polypkg.repo-cache/v4", Entries: map[string]CacheEntry{}}
 }
 
 // Get returns the cache entry for a package source path.
@@ -91,11 +97,13 @@ func (c *BuildCache) Put(source string, e CacheEntry) { c.Entries[source] = e }
 
 // LoadBuildCache reads a cache file. A missing file yields a fresh empty cache
 // (a cold or invalidated cache is never an error); a corrupt file is treated as
-// cold rather than fatal. Any schema other than the current v3 is also treated
+// cold rather than fatal. Any schema other than the current v4 is also treated
 // as cold: a stale v1 entry carries a flat artifact name that would leak into a
-// pool-addressed index (D-C8), and a v2 entry carries single-attestation fields
-// v3 no longer models. Build floors the serial against the published trust.json,
-// so zeroing it here cannot regress a published serial.
+// pool-addressed index, a v2 entry carries single-attestation fields v3
+// no longer models, and a v3 entry records no platform, so a cache hit would
+// republish a platform-specific artifact as platform-agnostic. Build floors the
+// serial against the published trust.json, so zeroing it here cannot regress a
+// published serial.
 func LoadBuildCache(path string) (*BuildCache, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is the build cache alongside the key; user controls key-dir
 	if errors.Is(err, fs.ErrNotExist) {
@@ -108,7 +116,7 @@ func LoadBuildCache(path string) (*BuildCache, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return NewBuildCache(), nil
 	}
-	if c.Schema != "polypkg.repo-cache/v3" {
+	if c.Schema != "polypkg.repo-cache/v4" {
 		return NewBuildCache(), nil
 	}
 	if c.Entries == nil {

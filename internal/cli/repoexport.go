@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +41,7 @@ one version. --package is repeatable and unions with --from-file.`,
 	cmd.Flags().StringArray("package", nil, "Select a package to export: name or name@version (repeatable)")
 	cmd.Flags().String("from-file", "", "Read additional selectors, one per line (blank lines and # comments ignored)")
 	cmd.Flags().StringP("output", "o", "", "Path to write the bundle tarball (required)")
-	_ = cmd.MarkFlagRequired("output")
+	requireFlags(cmd, "output")
 	return cmd
 }
 
@@ -62,6 +64,15 @@ func runRepoExportBundle(cmd *cobra.Command, format Format) error {
 		selectors = append(selectors, more...)
 	}
 	output, _ := cmd.Flags().GetString("output")
+	// Checked before the bundle is assembled, which reads every selected
+	// artifact, so a mistyped -o fails at once.
+	outDir := filepath.Dir(output)
+	if _, serr := os.Stat(outDir); errors.Is(serr, fs.ErrNotExist) {
+		return &CLIError{
+			Msg:  fmt.Sprintf("cannot write bundle %s: directory %s does not exist", output, outDir),
+			Hint: "create the directory first, or pass -o with a path in an existing directory",
+		}
+	}
 
 	b, err := repo.NewBuilder(manifest, keyDir, pw)
 	if err != nil {

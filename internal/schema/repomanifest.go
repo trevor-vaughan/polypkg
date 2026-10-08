@@ -55,6 +55,12 @@ type RepoManifest struct {
 	Output   string                   `yaml:"output"             json:"output"`
 	Key      RepoKey                  `yaml:"key"                json:"key"`
 	Packages map[string][]RepoPackage `yaml:"packages,omitempty" json:"packages,omitempty"`
+	// SigstoreRoots lists sigstore trusted_root.json files (the
+	// dev.sigstore.trustedroot document sigstore tooling and TUF distribute),
+	// each relative to the manifest's directory unless absolute. `repo build`
+	// converts them into the signed trust-bundle.json so consumers can verify
+	// sigstore bundles carried by this repository's packages offline.
+	SigstoreRoots []string `yaml:"sigstore_roots,omitempty" json:"sigstore_roots,omitempty"`
 }
 
 // ParseRepoManifest reads a YAML repo manifest, rejects unknown fields, and
@@ -75,7 +81,7 @@ func ParseRepoManifest(r io.Reader) (*RepoManifest, error) {
 	dec.KnownFields(true)
 	var m RepoManifest
 	if err := dec.Decode(&m); err != nil {
-		return nil, fmt.Errorf("decode repo manifest: %w", err)
+		return nil, fmt.Errorf("decode repo manifest: %w", plainYAMLDecodeError(err))
 	}
 	if err := ValidateSourceName(m.Source); err != nil {
 		return nil, fmt.Errorf("repo manifest: %w", err)

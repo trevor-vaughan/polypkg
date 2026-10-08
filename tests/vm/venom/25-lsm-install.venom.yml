@@ -9,7 +9,7 @@ testcases:
   - name: init system scope under enforcement
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope system'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope system'
         assertions:
           - result.code ShouldEqual 0
   - name: install hello and tool-a system scope

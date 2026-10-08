@@ -16,9 +16,7 @@ import (
 
 var _ = Describe("scopeHomes", func() {
 	It("resolves user homes from XDG", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		data, state, err := scopeHomes("user", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(data).To(Equal(filepath.Join(dir, "data", "polypkg")))

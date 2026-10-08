@@ -3,6 +3,7 @@
 package repo
 
 import (
+	"cmp"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,6 +11,8 @@ import (
 	"fmt"
 
 	"lukechampine.com/blake3"
+
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 )
 
 // Keypair is an Ed25519 signing keypair rendered in minisign's legacy "Ed"
@@ -83,17 +86,24 @@ func (k *Keypair) SignWithComment(data []byte, untrustedComment, trustedComment 
 		base64.StdEncoding.EncodeToString(global) + "\n"
 }
 
-// SignArtifact signs an artifact, binding name/version/blake3-hash in the
-// trusted comment exactly as the consumer's trust path requires.
-func (k *Keypair) SignArtifact(name, version string, data []byte) string {
-	tc := fmt.Sprintf("name=%s version=%s hash=%s", name, version, ContentHash(data))
+// SignArtifact signs an artifact, binding name/version/platform/blake3-hash in
+// the trusted comment exactly as the consumer's trust path requires. plat is
+// the platform of the index entry the artifact is published under; "" (a
+// platform-agnostic entry) is signed as the reserved token platform.Any. The
+// field is therefore always present, and the consumer can refuse its absence:
+// a genuinely signed pre-platform signature is never read as "any", so it
+// cannot be replayed to bind a darwin artifact to a linux entry.
+func (k *Keypair) SignArtifact(name, version, plat string, data []byte) string {
+	tc := fmt.Sprintf("name=%s version=%s platform=%s hash=%s",
+		name, version, cmp.Or(plat, platform.Any), ContentHash(data))
 	return k.SignWithComment(data, "polypkg artifact signature", tc)
 }
 
 // SignAttestation signs an in-toto attestation document, binding
-// name/version and the attestation bytes' own blake3 to the trusted
-// comment exactly like SignArtifact (the consumer parses both with the
-// same Claims accessor).
+// name/version and the attestation bytes' own blake3 in the trusted comment
+// (the consumer parses it with Claims.Attestation). It carries no platform:
+// an attestation binds to its artifact by digest, which is already
+// per-platform.
 func (k *Keypair) SignAttestation(name, version string, data []byte) string {
 	tc := fmt.Sprintf("name=%s version=%s hash=%s", name, version, ContentHash(data))
 	return k.SignWithComment(data, "polypkg attestation signature", tc)
@@ -127,7 +137,7 @@ func (k *Keypair) SignRevocationList(serial uint64, data []byte) string {
 }
 
 // SignPoolManifest signs an export-bundle completeness manifest. It uses the
-// same key/role as the index (spec §10.9 E-2): the manifest attests which blobs
+// same key/role as the index: the manifest attests which blobs
 // a bundle contains, and is trusted iff the repo's index signature is trusted.
 func (k *Keypair) SignPoolManifest(serial uint64, data []byte) string {
 	return k.SignWithComment(data, "polypkg pool-manifest signature", fmt.Sprintf("serial=%d", serial))

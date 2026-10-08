@@ -1,6 +1,6 @@
 name: Mirror bundle verify (export-bundle + mirror verify fail-closed)
 # Runs in the publisher service AFTER 00-publish/20-attestation-publish have built
-# /repo (signed index, trust doc, attestation pool). Exercises the 2e-2 offline-
+# /repo (signed index, trust doc, attestation pool). Exercises the offline-
 # mirror surface end to end: a signed export bundle verifies, and any post-export
 # tamper (content byte-flip, or a smuggled un-listed file) is refused by
 # `mirror verify`; the pristine bundle is then proven to still verify, so the
@@ -32,6 +32,8 @@ testcases:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "OK:"
           - result.systemout ShouldContainSubstring "verified"
+          # no --trust-root: the OK line must say what it did not check
+          - result.systemout ShouldContainSubstring "self-consistency only"
 
   - name: A content byte-flip in a pool blob is refused (content hash mismatch)
     steps:

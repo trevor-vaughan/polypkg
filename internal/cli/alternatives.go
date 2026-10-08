@@ -176,7 +176,7 @@ func newAlternativesListCmd() *cobra.Command {
 			"  polypkg alternatives list\n\n" +
 			"  # Inspect a single one\n" +
 			"  polypkg alternatives list vi",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              needsArgs(0, 1, "at most one [name]"),
 		ValidArgsFunction: completeAltNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)

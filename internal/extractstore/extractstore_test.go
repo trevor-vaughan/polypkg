@@ -3,6 +3,7 @@ package extractstore_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -21,6 +22,13 @@ var _ = Describe("naming", func() {
 	})
 	It("legacy name is the pre-content-addressed layout", func() {
 		Expect(extractstore.LegacyDirName("greet", "1.0.0")).To(Equal("greet-1.0.0"))
+	})
+	It("keeps packages whose names or versions differ only in case apart on a case-insensitive filesystem", func() {
+		// Two such packages are two artifacts, so their content hashes, and
+		// with them the dir names, differ even after case folding.
+		a := extractstore.DirName("Tool", "1.0.0-RC1", "blake3:"+strings.Repeat("a1", 32))
+		b := extractstore.DirName("tool", "1.0.0-rc1", "blake3:"+strings.Repeat("b2", 32))
+		Expect(strings.EqualFold(a, b)).To(BeFalse(), "%s and %s fold to one name", a, b)
 	})
 	It("Dir joins Root and DirName", func() {
 		Expect(extractstore.Dir("/state", "greet", "1.0.0", "blake3:aa11223344556677889900")).
@@ -56,7 +64,7 @@ var _ = Describe("Sweep", func() {
 		}
 		removed, err := extractstore.Sweep(state, keep, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(Equal(2))
+		Expect(removed).To(Equal([]string{".extract-12345", "gone-2.0.0+1122334455667788"}), "basenames, in directory (sorted) order")
 		Expect(filepath.Join(state, "pkg-extract", "keep-1.0.0+aabbccddeeff0011")).To(BeADirectory())
 		Expect(filepath.Join(state, "pkg-extract", "keep-1.0.0")).To(BeADirectory())
 		Expect(filepath.Join(state, "pkg-extract", "gone-2.0.0+1122334455667788")).NotTo(BeADirectory())
@@ -74,7 +82,8 @@ var _ = Describe("Sweep", func() {
 		}
 		removed, err := extractstore.Sweep(state, keep, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(BeZero())
+		Expect(removed).To(BeEmpty())
+		Expect(removed).NotTo(BeNil(), "an empty sweep marshals as [], not null")
 		Expect(fresh).To(BeADirectory())
 	})
 
@@ -83,13 +92,15 @@ var _ = Describe("Sweep", func() {
 		Expect(os.MkdirAll(fresh, 0o700)).To(Succeed())
 		removed, err := extractstore.Sweep(state, map[string]bool{}, 0)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(Equal(5))
+		Expect(removed).To(HaveLen(5))
+		Expect(removed).To(ContainElement("young-3.0.0+99aabbccddeeff00"))
 		Expect(fresh).NotTo(BeADirectory())
 	})
 
 	It("treats a missing root as empty", func() {
 		removed, err := extractstore.Sweep(GinkgoT().TempDir(), map[string]bool{}, time.Hour)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(removed).To(BeZero())
+		Expect(removed).To(BeEmpty())
+		Expect(removed).NotTo(BeNil())
 	})
 })

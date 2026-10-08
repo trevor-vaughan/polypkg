@@ -152,7 +152,7 @@ func TestPoolNamingAndRepublish(t *testing.T) {
 // bytes for the hello fixture entry: the subject NAME is the HUMAN
 // <name>-<version>.tar.zst (informational; the digest is the binding), so the
 // published attestation is byte-identical to `pkg build`'s unsigned preview
-// (D12 cross-phase reproducibility).
+// (the canonical SARIF predicate is reproducible across both commands).
 func mustCanonicalStatement(t *testing.T, e schema.IndexEntry, sarif []byte) []byte {
 	t.Helper()
 	st := attest.AssembleStatement(
@@ -212,7 +212,7 @@ func TestBuildEmitsSignedAttestations(t *testing.T) {
 		t.Fatalf("subject name = %q, want human name", st.Subject[0].Name)
 	}
 	// Reproducibility: the published statement equals pkg-build's preview bytes
-	// for the same source (canonical SARIF + canonical statement) — D12.
+	// for the same source (canonical SARIF + canonical statement).
 	res, err := pkglint.Lint(filepath.Join(filepath.Dir(mPath), "pkgs", "hello"))
 	if err != nil {
 		t.Fatal(err)

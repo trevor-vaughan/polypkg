@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,40 @@ var _ = Describe("pkg init", func() {
 		Expect(pathActions[0].Phase).To(Equal("post-place"))
 		Expect(pathActions[0].Params["name"]).To(Equal(pkg.Name))
 		Expect(pathActions[0].Params["source"]).To(Equal("$ACTIVE/" + pkg.Name + "/bin/" + pkg.Name))
+	})
+
+	It("points the author at repo add, not at apply, to ship the package", func() {
+		dir := GinkgoT().TempDir()
+		target := filepath.Join(dir, "hello")
+		root := NewRootCmd()
+		root.SetArgs([]string{"pkg", "init", target})
+		Expect(root.Execute()).To(Succeed())
+
+		raw, err := os.ReadFile(filepath.Join(target, "polypkg.yaml"))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(string(raw)).NotTo(ContainSubstring("polypkg apply ."))
+		Expect(string(raw)).To(ContainSubstring("polypkg repo add <this-dir>"))
+		Expect(string(raw)).To(ContainSubstring("polypkg install hello"))
+	})
+})
+
+var _ = Describe("pkg init filesystem failures", func() {
+	It("names the directory it cannot create and why", func() {
+		ro := filepath.Join(GinkgoT().TempDir(), "ro")
+		Expect(os.Mkdir(ro, 0o500)).To(Succeed())
+		DeferCleanup(os.Chmod, ro, os.FileMode(0o700))
+		target := filepath.Join(ro, "hello")
+
+		root := NewRootCmd()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs([]string{"pkg", "init", target})
+		err := root.Execute()
+
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue(), "expected CLIError, got %T: %v", err, err)
+		Expect(ce.Msg).To(Equal("cannot create " + filepath.Join(target, "content", "bin") + ": permission denied"))
+		Expect(ce.Hint).To(ContainSubstring(target))
 	})
 })
 

@@ -10,11 +10,12 @@ type FailureKind int
 
 // FailureKind values enumerate the distinct reasons resolution can fail.
 const (
-	KindNoCandidate FailureKind = iota // no candidate satisfies a requirement
-	KindConflict                       // every candidate conflicts with the current selection
-	KindTooComplex                     // resolution exceeded its step budget
-	KindUnknownName                    // the package name is absent from every source
-	KindNoVersion                      // the name exists, but no version matches the constraint
+	KindNoCandidate   FailureKind = iota // no candidate satisfies a requirement
+	KindConflict                         // every candidate conflicts with the current selection
+	KindTooComplex                       // resolution exceeded its step budget
+	KindUnknownName                      // the package name is absent from every source
+	KindNoVersion                        // the name exists, but no version matches the constraint
+	KindWrongPlatform                    // the name exists, but only for platforms other than this host
 )
 
 // maxAvailableShown caps how many candidate versions a KindNoVersion message
@@ -30,6 +31,9 @@ type ResolveError struct {
 	Path        []string    // requirement-name chain from a root to here
 	Detail      string      // extra context (e.g. the conflicting package)
 	Available   []string    // for KindNoVersion: known versions, newest first
+	Version     string      // for KindWrongPlatform: newest version published for any platform
+	Platforms   []string    // for KindWrongPlatform: the platforms Version is published for, sorted
+	Host        string      // for KindWrongPlatform: this host's platform
 }
 
 // Transitive reports whether the failed requirement was introduced by a
@@ -49,6 +53,9 @@ func (e *ResolveError) Error() string {
 	case KindNoVersion:
 		fmt.Fprintf(&b, "package %q has no version matching %q (available: %s)",
 			e.Requirement.Name, e.Requirement.VersionRange, availableList(e.Available))
+	case KindWrongPlatform:
+		fmt.Fprintf(&b, "%s %s is published for %s; this host is %s",
+			e.Requirement.Name, e.Version, strings.Join(e.Platforms, ", "), e.Host)
 	case KindNoCandidate:
 		fmt.Fprintf(&b, "no candidate satisfies %q", reqString(e.Requirement))
 	case KindConflict:

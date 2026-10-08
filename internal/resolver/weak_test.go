@@ -8,7 +8,7 @@ import (
 )
 
 func weakCat(pkgs map[string][]schema.IndexEntry) *Catalog {
-	cat, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native")
+	cat, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native", testHost)
 	Expect(err).NotTo(HaveOccurred())
 	return cat
 }
@@ -61,6 +61,19 @@ var _ = Describe("ResolveWithWeak", func() {
 		Expect(res.Skipped).To(HaveLen(1))
 		Expect(res.Skipped[0].Name).To(Equal("ghost"))
 		Expect(res.Skipped[0].RecommendedBy).To(Equal([]string{"app"}))
+	})
+
+	It("skips a recommend published only for other platforms with a platform reason", func() {
+		cat := weakCat(map[string][]schema.IndexEntry{
+			"app":    {{Version: "1.0.0", ContentHash: "blake3:a", Artifact: "app", Recommends: []schema.Relation{{Name: "extras"}}}},
+			"extras": {{Version: "1.0.0", Platform: "darwin/arm64", ContentHash: "blake3:e", Artifact: "extras"}},
+		})
+		res, err := ResolveWithWeak([]Requirement{{Name: "app"}}, cat, WeakOn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Installed).To(HaveLen(1))
+		Expect(res.Skipped).To(HaveLen(1))
+		Expect(res.Skipped[0].Name).To(Equal("extras"))
+		Expect(res.Skipped[0].Reason).To(Equal("not published for this host (" + testHost + ")"))
 	})
 
 	It("lists every recommender of a shared unsatisfiable recommend, sorted", func() {

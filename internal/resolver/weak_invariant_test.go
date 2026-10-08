@@ -234,14 +234,14 @@ var _ = Describe("weak augmentation invariants", func() {
 		Expect(complexSkips).To(BeNumerically(">", 0))
 	})
 
-	// Gap 2: the `&& !hard[c.Name]` guard in attributeRecommender must keep a
+	// The `&& !hard[c.Name]` guard in attributeRecommender must keep a
 	// hard-required package out of weak attribution even when another installed
 	// package Recommends it. A black-box assertion (RecommendedBy empty) is
 	// masked by chosenToResolved's own !hard re-check, so the primary guard is a
 	// WHITE-BOX call to augmentWeak that inspects weakBy directly: removing the
 	// guard populates weakBy["shared"] and fails this test deterministically.
-	// Gap 1 (white-box primary guard for addedKeys' sort.Strings(out)):
-	// addedKeys must return its result SORTED. The black-box determinism specs
+	// White-box primary guard for addedKeys' sort.Strings(out): addedKeys
+	// must return its result SORTED. The black-box determinism specs
 	// above are masked by sortWeakReqs re-sorting the frontier each round, so this
 	// directly asserts the function's contract. With many added keys, Go's
 	// randomized map iteration makes the pre-sort order non-sorted with

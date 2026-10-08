@@ -3,6 +3,7 @@ package integration
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -18,27 +19,39 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/onsi/gomega"
 	"github.com/trevor-vaughan/polypkg/internal/cli"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"lukechampine.com/blake3"
 )
 
-// IsolatedEnv sets XDG_DATA_HOME / XDG_STATE_HOME / XDG_CONFIG_HOME
-// to a per-test temp directory so polypkg state is fully isolated.
+// IsolatedEnv points HOME and every XDG base directory at a per-test temp
+// directory so polypkg state is fully isolated and nothing falls through to
+// the invoking user's home. XDG_BIN_HOME matters most: the default-on bridge
+// that runs during apply/rollback would otherwise write the real ~/.local/bin.
 func IsolatedEnv(t testing.TB) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"data", "state", "config", "bin"} {
-		dir := filepath.Join(root, name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	for _, d := range []struct {
+		env, name string
+		mode      os.FileMode
+	}{
+		{"HOME", "home", 0o755},
+		{"XDG_DATA_HOME", "data", 0o755},
+		{"XDG_STATE_HOME", "state", 0o755},
+		{"XDG_CONFIG_HOME", "config", 0o755},
+		{"XDG_CACHE_HOME", "cache", 0o755},
+		{"XDG_BIN_HOME", "bin", 0o755},
+		// The XDG spec requires the runtime dir to be owner-only.
+		{"XDG_RUNTIME_DIR", "runtime", 0o700},
+		{"XDG_CONFIG_DIRS", "config-dirs", 0o755},
+		{"XDG_DATA_DIRS", "data-dirs", 0o755},
+	} {
+		dir := filepath.Join(root, d.name)
+		if err := os.MkdirAll(dir, d.mode); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
+		t.Setenv(d.env, dir)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	// Isolate the ~/.local/bin bridge target so the (default-on) bridge that runs
-	// during apply/rollback never writes to the real user bin dir under test.
-	t.Setenv("XDG_BIN_HOME", filepath.Join(root, "bin"))
 	return root
 }
 
@@ -108,8 +121,11 @@ func blakeHash(b []byte) string {
 }
 
 // signArtifact signs data with the comment apply requires of an artifact.
-func (k minisignKeypair) signArtifact(name, version string, data []byte) string {
-	return k.signWithComment(data, fmt.Sprintf("name=%s version=%s hash=%s", name, version, blakeHash(data)))
+// plat is the index entry's platform; "" (platform-agnostic) signs the
+// reserved token platform.Any, exactly as the producer does.
+func (k minisignKeypair) signArtifact(name, version, plat string, data []byte) string {
+	return k.signWithComment(data, fmt.Sprintf("name=%s version=%s platform=%s hash=%s",
+		name, version, cmp.Or(plat, platform.Any), blakeHash(data)))
 }
 
 // signIndex signs index bytes with the comment carrying the monotonic serial.
@@ -138,8 +154,10 @@ func publishTrustDoc(t testing.TB, repoDir, source string, anchor minisignKeypai
 	g.Expect(os.WriteFile(filepath.Join(repoDir, "trust.json.minisig"), []byte(anchor.sign(raw)), 0o644)).To(gomega.Succeed())
 }
 
-// writeArtifact writes an artifact and its name/version/hash-bound signature.
-func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, version, artName string, content []byte) {
+// writeArtifact writes an artifact and its name/version/platform/hash-bound
+// signature. plat is the platform of the index entry the artifact is
+// published under ("" = platform-agnostic).
+func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, version, plat, artName string, content []byte) {
 	t.Helper()
 	g := gomega.NewWithT(t)
 	if artName == "" {
@@ -148,7 +166,7 @@ func writeArtifact(t testing.TB, repoDir string, key minisignKeypair, name, vers
 	full := filepath.Join(repoDir, artName)
 	g.Expect(os.MkdirAll(filepath.Dir(full), 0o755)).To(gomega.Succeed())
 	g.Expect(os.WriteFile(full, content, 0o644)).To(gomega.Succeed())
-	g.Expect(os.WriteFile(full+".minisig", []byte(key.signArtifact(name, version, content)), 0o644)).To(gomega.Succeed())
+	g.Expect(os.WriteFile(full+".minisig", []byte(key.signArtifact(name, version, plat, content)), 0o644)).To(gomega.Succeed())
 }
 
 // writeTrustRoot writes anchor's .pub to a temp file and returns its path.
@@ -171,7 +189,7 @@ func signRepo(t testing.TB, repoDir, source string, serial uint64, pkgs ...index
 		[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 	publishIndex(t, repoDir, signer, serial, pkgs...)
 	for _, p := range pkgs {
-		writeArtifact(t, repoDir, signer, p.name, p.version, p.artifactName, p.artifact)
+		writeArtifact(t, repoDir, signer, p.name, p.version, p.platform, p.artifactName, p.artifact)
 	}
 	return writeTrustRoot(t, anchor)
 }
@@ -235,11 +253,35 @@ actions:
 	})
 }
 
+// buildHelloMissingSource builds a hello package at version whose install
+// action names a source file the artifact does not contain. The package is
+// valid to publish and to resolve; only its apply fails, after any profile
+// edit is written, and the failure needs no permission trick, so it fires
+// under root too. Specs use it to drive the restore-on-failure paths.
+func buildHelloMissingSource(t testing.TB, version string) []byte {
+	t.Helper()
+	manifest := fmt.Sprintf(`schema: polypkg.package/v1
+name: hello
+version: %s
+actions:
+  - phase: post-place
+    action: install
+    params:
+      src: $PKG/content/bin/missing
+      dest: $ACTIVE/hello/bin/hi
+      policy: symlink
+`, version)
+	return buildTarZst(t, map[string]string{"polypkg.yaml": manifest})
+}
+
 // indexPkg describes one package to publish into a signed test index.
 type indexPkg struct {
 	name     string
 	version  string
 	artifact []byte
+	// platform is the entry's platform ("" = platform-agnostic). publishIndex
+	// writes it to the entry and signRepo signs it into the artifact claim.
+	platform string
 	// artifactName overrides the published Artifact path. When empty, it
 	// defaults to the conventional "<name>-<version>.tar.zst".
 	artifactName string
@@ -288,7 +330,7 @@ func runUnlinkInProcess() (string, error) {
 func publishIndex(t testing.TB, repoDir string, indexKey minisignKeypair, serial uint64, pkgs ...indexPkg) {
 	t.Helper()
 	g := gomega.NewWithT(t)
-	idx := schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{}}
+	idx := schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: map[string][]schema.IndexEntry{}}
 	for _, p := range pkgs {
 		artifact := p.artifactName
 		if artifact == "" {
@@ -298,6 +340,7 @@ func publishIndex(t testing.TB, repoDir string, indexKey minisignKeypair, serial
 			Version:      p.version,
 			ContentHash:  blakeHash(p.artifact),
 			Artifact:     artifact,
+			Platform:     p.platform,
 			Attestations: p.attestations,
 			Depends:      p.depends,
 			Recommends:   p.recommends,

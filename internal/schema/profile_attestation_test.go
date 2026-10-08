@@ -66,7 +66,7 @@ sources:
         - https://slsa.dev/provenance/v1
       builders:
         allow:
-          - key: dGVzdC1wdWJrZXk=
+          - key: dGVzdC1wdWJrZXk= # gitleaks:allow -- base64 of "test-pubkey", not a secret
           - sigstore:
               issuer: https://token.actions.githubusercontent.com
               san: https://github.com/org/repo/.github/workflows/build.yml@*

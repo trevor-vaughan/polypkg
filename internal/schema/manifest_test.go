@@ -3,6 +3,7 @@ package schema
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -251,7 +252,7 @@ var _ = Describe("ParseManifest", func() {
 		Expect(err).To(HaveOccurred(), "unknown attestation status must be rejected")
 	})
 
-	It("round-trips a per-source gate-disabled attestation marker (2d-3)", func() {
+	It("round-trips a per-source gate-disabled attestation marker", func() {
 		m := &Manifest{
 			Schema:     "polypkg.manifest/v2",
 			Generation: 1,
@@ -534,4 +535,66 @@ var _ = Describe("AttestationState verified-offline carried binding", func() {
 		b := got.Entries[0].Attestation.CarriedBindings[0]
 		Expect(b.AttestationHash).To(Equal("blake3:deadbeef"))
 	})
+})
+
+var _ = Describe("ManifestEntry platform", func() {
+	platformManifest := func(e ManifestEntry) *Manifest {
+		return &Manifest{
+			Schema:     "polypkg.manifest/v2",
+			Generation: 1,
+			Scope:      "user",
+			ProducedBy: ProducedBy{Tool: "polypkg", Version: "0.1.0", Timestamp: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), Host: "h"},
+			Entries:    []ManifestEntry{e},
+		}
+	}
+
+	It("round-trips a platform-specific entry through Canonicalize/ParseManifest", func() {
+		m := platformManifest(ManifestEntry{Name: "rg", Version: "14.1.1", ContentHash: "blake3:ab", Platform: "linux/amd64"})
+		raw, err := m.Canonicalize()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring(`"platform":"linux/amd64"`))
+		got, err := ParseManifest(bytes.NewReader(raw))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Entries[0].Platform).To(Equal("linux/amd64"))
+	})
+
+	It("omits platform for an agnostic entry so earlier generations canonicalize unchanged", func() {
+		m := platformManifest(ManifestEntry{Name: "greet", Version: "1.0.0", ContentHash: "blake3:cd"})
+		raw, err := m.Canonicalize()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).NotTo(ContainSubstring(`"platform"`))
+	})
+
+	It("reads an entry without platform as platform-agnostic", func() {
+		m, err := ParseManifest(strings.NewReader(validManifestJSON()))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(m.Entries[0].Platform).To(BeEmpty())
+	})
+
+	It("accepts a three-segment platform (consumer grammar)", func() {
+		doc := strings.ReplaceAll(validManifestJSON(),
+			`"source_url": "https://example.com/curl"`,
+			`"source_url": "https://example.com/curl", "platform": "linux/arm/v7"`,
+		)
+		m, err := ParseManifest(strings.NewReader(doc))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(m.Entries[0].Platform).To(Equal("linux/arm/v7"))
+	})
+
+	DescribeTable("rejects a malformed platform",
+		func(p string) {
+			bad := strings.ReplaceAll(validManifestJSON(),
+				`"source_url": "https://example.com/curl"`,
+				`"source_url": "https://example.com/curl", "platform": `+strconv.Quote(p),
+			)
+			_, err := ParseManifest(strings.NewReader(bad))
+			Expect(err).To(HaveOccurred(), "platform %q must be rejected", p)
+		},
+		Entry("path traversal", "../../etc"),
+		Entry("upper case", "Linux/amd64"),
+		Entry("the reserved any token (absence means any)", "any"),
+		Entry("the empty string (absence means any)", ""),
+		Entry("a single segment", "linux"),
+		Entry("four segments", "linux/arm/v7/x"),
+	)
 })

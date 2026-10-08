@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -47,7 +46,7 @@ func newConfigResetCmd() *cobra.Command {
 			"  polypkg config reset /etc/foo/foo.conf\n\n" +
 			"  # Reset every config file owned by a package, no prompt\n" +
 			"  polypkg config reset --package foo --yes",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              needsArgs(0, 1, "at most one [path]"),
 		ValidArgsFunction: completeConfigResetPaths,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
@@ -253,30 +252,13 @@ func readPendingResets(path string) (*schema.Resets, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return schema.ParseResets(f)
+	rs, err := schema.ParseResets(f)
+	return rs, schema.WithPath(err, path)
 }
 
 // confirmReset prompts on out and reads a y/N answer from in. Only "y"/"Y"
 // confirms. Extracted for direct testing (TTY is unavailable under test).
 func confirmReset(in io.Reader, out io.Writer, target string) (bool, error) {
 	fmt.Fprintf(out, "Reset %s to package default on next apply?\nThis will discard any local edits to the file.\nProceed? [y/N]: ", target)
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return false, err
-	}
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y", nil
-}
-
-// isInteractive reports whether the command's stdin is a character device (TTY).
-func isInteractive(cmd *cobra.Command) bool {
-	f, ok := cmd.InOrStdin().(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return readYes(in)
 }

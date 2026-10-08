@@ -357,19 +357,20 @@ var _ = Describe("TrustState.Verify policy", func() {
 				wantSubstr:  "",
 			},
 		),
-		Entry("artifact claims surface name/version/hash",
+		Entry("artifact claims surface name/version/platform/hash",
 			policyCase{
 				role:        RoleArtifact,
 				dataToSign:  data,
 				dataToCheck: data,
-				comment:     "name=hello version=1.0.0 hash=blake3:abc",
+				comment:     "name=hello version=1.0.0 platform=linux/amd64 hash=blake3:abc",
 				signWith:    func(art, _, _ tkey) tkey { return art },
 				wantOK:      true,
 				check: func(claims Claims) {
-					n, vv, h, err := claims.Artifact()
+					n, vv, p, h, err := claims.Artifact()
 					Expect(err).NotTo(HaveOccurred())
 					Expect(n).To(Equal("hello"))
 					Expect(vv).To(Equal("1.0.0"))
+					Expect(p).To(Equal("linux/amd64"))
 					Expect(h).To(Equal("blake3:abc"))
 				},
 			},

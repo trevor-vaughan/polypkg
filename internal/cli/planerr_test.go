@@ -54,6 +54,24 @@ var _ = Describe("planExecError resolver translation", func() {
 		Expect(ce.Msg).To(ContainSubstring("required via app -> lib"))
 	})
 
+	It("translates a wrong-platform ResolveError into a CLIError naming the published platforms and the host", func() {
+		re := &resolver.ResolveError{
+			Kind:        resolver.KindWrongPlatform,
+			Requirement: resolver.Requirement{Name: "rg"},
+			Path:        []string{"rg"},
+			Version:     "14.1.1",
+			Platforms:   []string{"darwin/arm64", "linux/amd64"},
+			Host:        "freebsd/amd64",
+		}
+		got := planExecError(fmt.Errorf("resolve: %w", re))
+		var ce *CLIError
+		Expect(errors.As(got, &ce)).To(BeTrue(), "expected *CLIError, got %T: %v", got, got)
+		Expect(ce.Msg).To(Equal("rg 14.1.1 is published for darwin/arm64, linux/amd64; this host is freebsd/amd64"))
+		Expect(ce.Hint).To(Equal("ask the repository operator to publish a build for this host's platform, " +
+			"or pick a version that is published for it (polypkg info rg lists them)"))
+		Expect(errors.Is(got, re)).To(BeTrue())
+	})
+
 	It("passes through errors with no recognized typed cause unchanged", func() {
 		plain := errors.New("some other failure")
 		Expect(planExecError(plain)).To(Equal(plain))

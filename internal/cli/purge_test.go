@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -14,9 +13,7 @@ import (
 
 var _ = Describe("purge command non-interactive error", func() {
 	It("returns CLIError when stdin is not a terminal and --yes is absent", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"purge", "mypkg"})
 		// Use a strings.Reader so isInteractive returns false (not an *os.File).

@@ -1,0 +1,4 @@
+# GoReleaser version for the release workflows. goreleaser-action reads it
+# through `version-file: .tool-versions`, so a tag is always built, and can be
+# rebuilt, with the same GoReleaser. Bump it deliberately, in its own commit.
+goreleaser 2.18.2

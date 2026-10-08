@@ -51,6 +51,14 @@ func UserConfigHome() (string, error) {
 		[]string{".config", appName})
 }
 
+// UserCacheHome returns the per-user cache directory: data polypkg can fetch
+// again at any time, such as Sigstore's TUF metadata.
+func UserCacheHome() (string, error) {
+	return xdgUserDir("XDG_CACHE_HOME",
+		[]string{"Library", "Caches", appName},
+		[]string{".cache", appName})
+}
+
 // UserBinHome returns the directory polypkg links commands into so they land on
 // the user's $PATH. It honors $XDG_BIN_HOME when absolute (an emerging
 // convention), otherwise ~/.local/bin — the cross-platform user bin directory

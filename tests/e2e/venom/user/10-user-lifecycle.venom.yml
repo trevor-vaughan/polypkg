@@ -12,7 +12,7 @@ testcases:
   - name: init writes a user profile from the served repo
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

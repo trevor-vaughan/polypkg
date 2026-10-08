@@ -18,7 +18,7 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -37,13 +37,14 @@ testcases:
   - name: withdrawing the installed top version forces a plan refusal
     steps:
       - type: exec
-        # The rolling repo serves one version per name: re-adding the 1.0.0
-        # source WITHDRAWS 1.1.0 from the signed index (serial still moves
-        # forward, so this is not a stale-mirror rollback).
-        script: 'POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo add {{.fixtures}}/hello --manifest {{.manifest}} --key-dir {{.keys}}'
+        # A repository holds every version it was given, so re-adding the
+        # 1.0.0 source would withdraw nothing. Removing 1.1.0 WITHDRAWS it from
+        # the signed index (serial still moves forward, so this is not a
+        # stale-mirror rollback), leaving 1.0.0 as the only offer.
+        script: 'POLYPKG_REPO_KEY_PASSWORD=test-pw /usr/local/bin/polypkg repo remove hello@1.1.0 --manifest {{.manifest}} --key-dir {{.keys}}'
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "Added hello@1.0.0"
+          - result.systemout ShouldContainSubstring "Removed hello@1.1.0"
       - type: exec
         script: '{{.px}} plan'
         assertions:

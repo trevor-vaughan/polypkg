@@ -130,7 +130,7 @@ var _ = Describe("status", func() {
 	// accept_expiry_until grace so the fetch is accepted rather than refused. The
 	// durable per-source grace marker persisted by that apply must then surface in
 	// the status JSON.
-	Context("with a source last fetched under freshness grace (2e-1)", func() {
+	Context("with a source last fetched under freshness grace", func() {
 		It("--format json surfaces the freshness_grace entry for the graced source", func() {
 			t := GinkgoTB()
 			IsolatedEnv(t)

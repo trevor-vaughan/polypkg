@@ -74,14 +74,10 @@ func makeStatusAttestState(storeRoot string) {
 
 var _ = Describe("status command", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 	setupWithStore := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -288,7 +284,7 @@ var _ = Describe("status command", func() {
 		root := NewRootCmd()
 		root.SetArgs([]string{"status", "-vv"})
 		root.SetOut(&out)
-		_ = root.Execute()
+		Expect(ExitCode(root.Execute())).To(Equal(3))
 		Expect(out.String()).To(ContainSubstring("[builder revoked: builder-a]"))
 	})
 
@@ -499,7 +495,7 @@ func TestCollectRevokedAttestationsEmptyHashGuardAndNilAttestation(t *testing.T)
 	}
 }
 
-// Finding 16: `status --format json` reported "0001-01-01T00:00:00Z" for the
+// `status --format json` used to report "0001-01-01T00:00:00Z" for the
 // current generation even though the retained[] row for the same generation
 // carried the real commit time. The two must agree.
 func TestEmitStatusJSONCurrentCarriesAppliedAt(t *testing.T) {
@@ -544,5 +540,193 @@ func TestEmitStatusJSONOmitsAppliedAtWhenCurrentGenerationIsUnknown(t *testing.T
 	}
 	if strings.Contains(buf.String(), "applied_at") {
 		t.Fatalf("applied_at emitted for an unknown current generation: %s", buf.String())
+	}
+}
+
+// A generation an interrupted apply left without a manifest must be
+// visibly flagged, not shown as an ordinary row with an unknown age.
+func TestEmitStatusJSONMarksIncompleteGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Incomplete: true},
+		{ID: 12, CommittedAt: time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	got, err := schema.ParseStatusResult(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("status JSON fails its own schema: %v (body=%s)", err, buf.String())
+	}
+	if len(got.Retained) != 2 || !got.Retained[0].Incomplete || got.Retained[1].Incomplete {
+		t.Fatalf("want only generation 11 marked incomplete; got %+v", got.Retained)
+	}
+}
+
+func TestEmitStatusTextMarksIncompleteGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Incomplete: true},
+		{ID: 12, CommittedAt: time.Now().Add(-time.Hour), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	emitStatusText(&buf, 1, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil, nil)
+	var row11, row12 string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "11":
+			row11 = line
+		case len(fields) > 1 && fields[1] == "12":
+			row12 = line
+		}
+	}
+	if !strings.Contains(row11, "[incomplete]") {
+		t.Fatalf("generation 11 row not marked incomplete: %q (output=%q)", row11, buf.String())
+	}
+	if row12 == "" || strings.Contains(row12, "[incomplete]") {
+		t.Fatalf("generation 12 row missing or wrongly marked: %q (output=%q)", row12, buf.String())
+	}
+}
+
+// A damaged generation (manifest present but unusable) is kept as evidence
+// and must be visibly distinct from an incomplete one.
+func TestEmitStatusJSONMarksDamagedGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Damaged: true},
+		{ID: 12, CommittedAt: time.Date(2026, 8, 22, 17, 4, 5, 0, time.UTC), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	if err := emitStatusJSON(&buf, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil); err != nil {
+		t.Fatalf("emitStatusJSON: %v", err)
+	}
+	got, err := schema.ParseStatusResult(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("status JSON fails its own schema: %v (body=%s)", err, buf.String())
+	}
+	if len(got.Retained) != 2 || !got.Retained[0].Damaged || got.Retained[0].Incomplete || got.Retained[1].Damaged {
+		t.Fatalf("want only generation 11 marked damaged; got %+v", got.Retained)
+	}
+}
+
+func TestEmitStatusTextMarksDamagedGeneration(t *testing.T) {
+	gens := []substrate.GenInfo{
+		{ID: 11, Damaged: true},
+		{ID: 12, CommittedAt: time.Now().Add(-time.Hour), IsCurrent: true},
+	}
+	var buf bytes.Buffer
+	emitStatusText(&buf, 1, 12, gens, nil, gc.Decision{}, nil, nil, nil, nil, nil)
+	var row11, row12 string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "11":
+			row11 = line
+		case len(fields) > 1 && fields[1] == "12":
+			row12 = line
+		}
+	}
+	if !strings.Contains(row11, "[damaged]") || strings.Contains(row11, "[incomplete]") {
+		t.Fatalf("generation 11 row not marked damaged: %q (output=%q)", row11, buf.String())
+	}
+	if row12 == "" || strings.Contains(row12, "[damaged]") {
+		t.Fatalf("generation 12 row missing or wrongly marked: %q (output=%q)", row12, buf.String())
+	}
+}
+
+var _ = Describe("status platform reporting", func() {
+	// setupPlatformState writes a generation whose manifest holds a
+	// per-platform package (hello) and an agnostic one (greet). Both carry a
+	// builder-verified binding by builder-a, which the trust state marks
+	// revoked, so both also appear in revoked_builders.
+	setupPlatformState := func() {
+		dir := sandboxUserEnv(GinkgoTB())
+		storeRoot := filepath.Join(dir, "data", "polypkg")
+		Expect(os.MkdirAll(filepath.Join(storeRoot, "generations", "1", "active"), 0o700)).To(Succeed())
+		Expect(os.Symlink(filepath.Join("generations", "1", "active"), filepath.Join(storeRoot, "active"))).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "ownership.json"),
+			[]byte(`{"schema":"polypkg.ownership/v1","scope":"user","entries":[]}`), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "manifest.json"), []byte(`{
+  "schema":"polypkg.manifest/v2","generation":1,"scope":"user",
+  "produced_by":{"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries":[
+    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc","platform":"linux/amd64",
+     "attestation":{"status":"verified","policy_at_install":"warn",
+       "carried_bindings":[{"predicate_type":"p","format":"f","subject_scope":"artifact","tier":"builder-verified","verifying_key_id":"builder-a"}]}},
+    {"name":"greet","version":"2.0.0","content_hash":"blake3:ddeeff",
+     "attestation":{"status":"verified","policy_at_install":"warn",
+       "carried_bindings":[{"predicate_type":"p","format":"f","subject_scope":"artifact","tier":"builder-verified","verifying_key_id":"builder-a"}]}}
+  ]}`), 0o600)).To(Succeed())
+		trustDir := filepath.Join(dir, "state", "polypkg", "trust")
+		Expect(os.MkdirAll(trustDir, 0o700)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(trustDir, "repo.json"),
+			[]byte(`{"trust_serial":1,"index_serial":1,"revoked_builder_keys":["builder-a"]}`), 0o600)).To(Succeed())
+	}
+
+	runStatus := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		root := NewRootCmd()
+		root.SetArgs(append([]string{"status"}, args...))
+		root.SetOut(&out)
+		err := root.Execute()
+		return out.String(), err
+	}
+
+	It("tags a per-platform package under -vv and leaves an agnostic one untagged", func() {
+		setupPlatformState()
+		out, err := runStatus("-vv")
+		Expect(ExitCode(err)).To(Equal(3))
+		var helloLine, greetLine string
+		for _, line := range strings.Split(out, "\n") {
+			switch {
+			case strings.HasPrefix(line, "  hello 1.0.0"):
+				helloLine = line
+			case strings.HasPrefix(line, "  greet 2.0.0"):
+				greetLine = line
+			}
+		}
+		Expect(helloLine).To(ContainSubstring("[platform: linux/amd64]"))
+		Expect(greetLine).NotTo(BeEmpty(), "the -vv listing must include greet")
+		Expect(greetLine).NotTo(ContainSubstring("[platform:"))
+	})
+
+	It("shows no platform at default verbosity or -v", func() {
+		setupPlatformState()
+		for _, args := range [][]string{nil, {"-v"}} {
+			out, err := runStatus(args...)
+			Expect(ExitCode(err)).To(Equal(3), "status %v", args)
+			Expect(out).NotTo(ContainSubstring("linux/amd64"), "status %v must not show platform", args)
+		}
+	})
+
+	It("adds platform to revoked_builders entries, any for an agnostic package", func() {
+		setupPlatformState()
+		out, err := runStatus("--format", "json")
+		Expect(ExitCode(err)).To(Equal(3))
+		sr, perr := schema.ParseStatusResult(strings.NewReader(out))
+		Expect(perr).NotTo(HaveOccurred(), "the output must satisfy status-v1.json")
+		got := map[string]string{}
+		for _, rb := range sr.RevokedBuilders {
+			got[rb.Package] = rb.Platform
+		}
+		Expect(got).To(Equal(map[string]string{"hello": "linux/amd64", "greet": "any"}))
+	})
+})
+
+func TestCollectRevokedAttestationsCarriesPlatform(t *testing.T) {
+	m := &schema.Manifest{Entries: []schema.ManifestEntry{
+		{Name: "hello", Version: "1.0.0", Platform: "linux/amd64",
+			Attestation: &schema.AttestationState{Status: "verified", AttestationHash: "blake3:aa"}},
+		{Name: "greet", Version: "2.0.0",
+			Attestation: &schema.AttestationState{Status: "verified", AttestationHash: "blake3:bb"}},
+	}}
+	got := collectRevokedAttestations(m, map[string]struct{}{"blake3:aa": {}, "blake3:bb": {}})
+	if len(got) != 2 {
+		t.Fatalf("want 2 hits, got %+v", got)
+	}
+	if got[0].Package != "greet" || got[0].Platform != "any" {
+		t.Fatalf("agnostic entry must report platform any: %+v", got[0])
+	}
+	if got[1].Package != "hello" || got[1].Platform != "linux/amd64" {
+		t.Fatalf("per-platform entry must report its platform: %+v", got[1])
 	}
 }

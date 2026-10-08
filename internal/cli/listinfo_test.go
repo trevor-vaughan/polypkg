@@ -35,7 +35,7 @@ func makeListGen1State(storeRoot string) {
   "scope": "user",
   "produced_by": {"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
   "entries": [
-    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc"},
+    {"name":"hello","version":"1.0.0","content_hash":"blake3:aabbcc","platform":"linux/amd64"},
     {"name":"world","version":"2.0.0","content_hash":"blake3:ddeeff"}
   ]
 }`), 0o600)).To(Succeed())
@@ -43,9 +43,8 @@ func makeListGen1State(storeRoot string) {
 
 var _ = Describe("list command", func() {
 	setup := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
+		GinkgoT().Setenv("POLYPKG_PROFILE", "")
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -60,6 +59,25 @@ var _ = Describe("list command", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out.String()).To(ContainSubstring("no packages installed"))
 		Expect(out.String()).To(ContainSubstring("polypkg install <name>"))
+	})
+
+	It("prints the friendly message when the current generation holds no packages", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		// The generation an apply of an emptied profile commits.
+		Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "manifest.json"), []byte(`{
+  "schema": "polypkg.manifest/v2",
+  "generation": 1,
+  "scope": "user",
+  "produced_by": {"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries": []
+}`), 0o600)).To(Succeed())
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(ContainSubstring("no packages installed"))
 	})
 
 	It("lists packages sorted by name with NAME  VERSION columns", func() {
@@ -167,13 +185,57 @@ packages:
 		Expect(result.Status).To(Equal("ok"))
 		Expect(result.Data.Packages).To(BeEmpty())
 	})
+
+	It("keeps the default text output byte-identical: no platform column", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(Equal("hello  1.0.0\nworld  2.0.0\n"))
+	})
+
+	It("adds a platform column under -v, showing any for an agnostic artifact", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list", "-v"})
+		Expect(root.Execute()).To(Succeed())
+		Expect(out.String()).To(Equal("hello  1.0.0  linux/amd64\nworld  2.0.0  any\n"))
+	})
+
+	It("includes platform on every JSON package object", func() {
+		_, storeRoot := setup()
+		makeListGen1State(storeRoot)
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs([]string{"list", "--format", "json"})
+		Expect(root.Execute()).To(Succeed())
+		var result struct {
+			Data struct {
+				Packages []struct {
+					Name     string `json:"name"`
+					Platform string `json:"platform"`
+				} `json:"packages"`
+			} `json:"data"`
+		}
+		Expect(json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result)).To(Succeed())
+		got := map[string]string{}
+		for _, p := range result.Data.Packages {
+			got[p.Name] = p.Platform
+		}
+		Expect(got).To(Equal(map[string]string{"hello": "linux/amd64", "world": "any"}))
+	})
 })
 
 var _ = Describe("info command argument validation", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("returns CLIError when no package name is supplied", func() {
@@ -201,9 +263,7 @@ var _ = Describe("info command argument validation", func() {
 
 var _ = Describe("info command fetch-error path", func() {
 	setup := func() (dir, storeRoot string) {
-		dir = GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir = sandboxUserEnv(GinkgoTB())
 		storeRoot = filepath.Join(dir, "data", "polypkg")
 		return dir, storeRoot
 	}
@@ -358,9 +418,7 @@ var _ = Describe("info command attestation rendering", func() {
 	// so info takes the offline-tolerance path (installed info only) — the
 	// attestation record comes from the installed manifest, not the catalog.
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		makeInfoAttestState(filepath.Join(dir, "data", "polypkg"))
 		profilePath := filepath.Join(GinkgoT().TempDir(), "profile.yaml")
 		Expect(os.WriteFile(profilePath, []byte(`schema: polypkg.spec/v1
@@ -503,9 +561,7 @@ var _ = Describe("resolveListScope system-prefix tiers", func() {
 	})
 
 	It("user-scope behavior is unchanged: returns XDG state home", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		dir := sandboxUserEnv(GinkgoTB())
 		c := &cobra.Command{Use: "list", RunE: func(*cobra.Command, []string) error { return nil }}
 		addScopeFlags(c)
 		Expect(c.ParseFlags(nil)).To(Succeed())
@@ -517,9 +573,7 @@ var _ = Describe("resolveListScope system-prefix tiers", func() {
 
 var _ = Describe("info command recommends/suggests rendering", func() {
 	setup := func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-		GinkgoT().Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		sandboxUserEnv(GinkgoTB())
 	}
 
 	It("renders Recommends and Suggests in text output", func() {
@@ -530,8 +584,11 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 
 		recommends := []string{"extras"}
 		suggests := []string{"docs"}
-		err := emitInfoResult(root, FormatText, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, recommends, suggests, nil)
+		err := emitInfoResult(root, FormatText, infoView{
+			name: "hello", scope: "user",
+			installed:  infoInstalled{version: "1.0.0", gen: 1},
+			recommends: recommends, suggests: suggests,
+		})
 		Expect(err).NotTo(HaveOccurred())
 		output := out.String()
 		Expect(output).To(ContainSubstring("recommends:"),
@@ -550,8 +607,10 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 		var out bytes.Buffer
 		root.SetOut(&out)
 
-		err := emitInfoResult(root, FormatText, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, nil, nil, nil)
+		err := emitInfoResult(root, FormatText, infoView{
+			name: "hello", scope: "user",
+			installed: infoInstalled{version: "1.0.0", gen: 1},
+		})
 		Expect(err).NotTo(HaveOccurred())
 		output := out.String()
 		Expect(output).NotTo(ContainSubstring("recommends:"))
@@ -566,8 +625,11 @@ var _ = Describe("info command recommends/suggests rendering", func() {
 
 		recommends := []string{"extras"}
 		suggests := []string{"docs"}
-		err := emitInfoResult(root, FormatJSON, "hello", "user", "1.0.0", 1,
-			nil, "", "", nil, recommends, suggests, nil)
+		err := emitInfoResult(root, FormatJSON, infoView{
+			name: "hello", scope: "user",
+			installed:  infoInstalled{version: "1.0.0", gen: 1},
+			recommends: recommends, suggests: suggests,
+		})
 		Expect(err).NotTo(HaveOccurred())
 		var result struct {
 			Status string `json:"status"`

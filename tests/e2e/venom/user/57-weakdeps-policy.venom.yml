@@ -20,7 +20,7 @@ testcases:
   - name: install wants-goodbye pulls in its recommended weak dependency
     steps:
       - type: exec
-        script: '{{.norec}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.norec}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -89,7 +89,7 @@ testcases:
   - name: install wants-goodbye then apply under a recommends.install false policy
     steps:
       - type: exec
-        script: '{{.profile_px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.profile_px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -148,7 +148,7 @@ testcases:
   - name: install proposes-goodbye places its own binary
     steps:
       - type: exec
-        script: '{{.suggests_px}} init --source-url {{.source_url}} --trust-root-file {{.trust_root}} --scope user'
+        script: '{{.suggests_px}} init --source-url {{.source_url}} --trust-root {{.trust_root}} --scope user'
         assertions:
           - result.code ShouldEqual 0
       - type: exec

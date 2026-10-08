@@ -9,7 +9,7 @@ import (
 // action taken: "healed" | "refused" | "preserved" | "accepted". A path is
 // "accepted" only when its accepted snapshot still matches what we observed.
 // The "preserved" action (notify_preserve policy) is consumed by the runner's
-// checkDrift to build the config action's preserveActions map (M4).
+// checkDrift to build the config action's preserveActions map.
 func decide(d drift.Entry, healDrift bool, accepted *schema.AcceptedDrift) string {
 	if acceptedMatches(d, accepted) {
 		return "accepted"

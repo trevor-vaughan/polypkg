@@ -20,7 +20,7 @@ import (
 // package (hello 1.0.0) is ingested as a PREBUILT artifact carrying a
 // native_attestation: a JCS-canonical in-toto SARIF statement whose subject
 // digest binds the packed artifact (the `pkg build` <name>-<version>.att.json
-// preview, Task 3). It returns the output directory (used as the source URL)
+// preview). It returns the output directory (used as the source URL)
 // and the path to its trust_root.pub. This is the prebuilt analogue of
 // buildSignedLocalRepo; the consumer must not be able to tell the two apart.
 func buildSignedPrebuiltNativeRepo(t testing.TB, sourceName string) (outputDir, trustRoot string) {

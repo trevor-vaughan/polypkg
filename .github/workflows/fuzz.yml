@@ -2,6 +2,8 @@ name: fuzz
 
 # Mutation fuzzing runs on a schedule (and on demand), not per-push: the seed
 # corpora already run as ordinary tests in the `test` workflow on every push.
+# `task fuzz:all` discovers every Fuzz* target in the module and fuzzes each in
+# turn, so a new fuzz test joins the nightly run without editing this file.
 on:
   schedule:
     - cron: "0 6 * * *"
@@ -13,16 +15,29 @@ permissions:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache-dependency-path: go.mod
-      - uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: task fuzz FUZZTIME=180s
+      - run: task fuzz:all FUZZTIME=180s
+      # go test writes each failing input under the target package's
+      # testdata/fuzz/<FuzzName>/; keep them so the failure can be reproduced
+      # with go test -run=<FuzzName>/<file>.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # cancelled() also covers the job hitting timeout-minutes, which
+        # GitHub reports as cancelled rather than failed.
+        if: failure() || cancelled()
+        with:
+          name: fuzz-failing-inputs
+          path: "**/testdata/fuzz/"
+          if-no-files-found: ignore
+          retention-days: 14

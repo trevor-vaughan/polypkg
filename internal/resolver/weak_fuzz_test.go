@@ -75,7 +75,7 @@ func FuzzResolveWithWeak(f *testing.F) {
 				Recommends: rec,
 			}}
 		}
-		cat, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v2", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native")
+		cat, err := BuildCatalog(&schema.Index{Schema: "polypkg.index/v3", Expires: "2099-01-01T00:00:00Z", Packages: pkgs}, "native", testHost)
 		if err != nil {
 			return
 		}

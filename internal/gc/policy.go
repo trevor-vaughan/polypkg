@@ -12,7 +12,7 @@ import (
 
 // Policy is the retention threshold pair. A generation survives if it falls
 // under EITHER threshold (count OR age window), so both can be specified
-// without one disabling the other. See apply-semantics §4.3.
+// without one disabling the other.
 type Policy struct {
 	Count int           // minimum generations retained; must be >= 1
 	Age   time.Duration // generations committed within this window are also retained; >= 0

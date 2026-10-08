@@ -9,8 +9,8 @@ import (
 )
 
 // sarifToolName/Version are PINNED and deliberately decoupled from the polypkg
-// binary version so the SARIF predicate is reproducible across releases (D12):
-// the signed Phase-C attestation must be byte-identical for the same source
+// binary version so the SARIF predicate is reproducible across releases: the
+// signed lint attestation must be byte-identical for the same source
 // regardless of which polypkg binary produced it. Bumping the binary must not
 // change the predicate. Bump sarifToolVersion only when the rule catalogue
 // changes meaning (a rule's semantics change), so a verifier can distinguish
@@ -25,8 +25,8 @@ const (
 // (ruleId, path, line). Findings arrive from Lint sorted by (line, ruleID,
 // message); here they are re-sorted into SARIF's canonical (ruleId, path, line)
 // order, then the serialized report is JCS-canonicalized so key ordering and
-// number/string normalization are stable. These exact bytes become the Phase-C
-// attestation predicate and must be independently reproducible.
+// number/string normalization are stable. These exact bytes become the signed
+// lint attestation predicate and must be independently reproducible.
 //
 // No invocation, automationDetails, start/end-time, or GUID-producing methods
 // are called: sarif.NewReport/NewRun populate only static fields ($schema,

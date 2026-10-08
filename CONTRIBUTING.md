@@ -61,21 +61,42 @@ vulnerabilities, so the floor is a hard `go` directive rather than a
 
 ```
 task build            # compile to bin/polypkg
-task test             # unit + in-process integration tests, with the race detector
+task test             # unit + in-process integration tests, with the race detector; cross-package coverage in .test-output/coverage.out
 task test:fips        # the same suite under Go's FIPS 140-3 module (GODEBUG=fips140=on)
 task lint             # golangci-lint across all packages
 task fmt              # gofmt all packages
 task vuln             # scan dependencies with govulncheck
-task check            # lint + test together (the gate CI enforces)
+task check            # lint + test together (the core of what CI enforces)
 ```
+
+Every `go`-invoking task appends `-mod=readonly` to your `GOFLAGS` (the last
+`-mod` wins), and `.golangci.yml` pins golangci-lint's package loading the
+same way, so no task rewrites `go.mod` or `go.sum`. Commands you run yourself
+follow your `GOFLAGS`. With `GOFLAGS=-mod=mod` exported, any command that
+loads the whole module graph, such as `go doc` (even `go doc fmt.Println`) or
+`go list -m all`, writes about 180 `/go.mod` checksum lines into `go.sum`.
+Go's default, `-mod=readonly`, never writes them, so unset `GOFLAGS` or
+prefix such commands with `GOFLAGS=-mod=readonly`.
 
 Heavier, opt-in tiers (not part of `task check`):
 
 ```
 task test:integration # container-based E2E across centos/ubuntu/alpine
 task test:vm          # VM-based LSM-enforcement tier under QEMU
-task fuzz             # mutating fuzzer (vars FUZZTARGET, FUZZTIME, FUZZPKG)
+task test:live        # pkg import the latest cli/cli release from the real GitHub
+task fuzz             # mutating fuzzer, one target (vars FUZZTARGET, FUZZTIME, FUZZPKG, FUZZMINIMIZETIME)
+task fuzz:all         # mutating fuzzer over every Fuzz* target in turn (vars FUZZTIME, FUZZMINIMIZETIME)
 ```
+
+`task build:cross GOOS=freebsd GOARCH=amd64` compiles every package for
+another platform and vets it, test files included. Run it after touching a
+`//go:build`-constrained file. CI runs it for freebsd/amd64, freebsd/arm64,
+and linux/arm64, which no CI runner executes.
+
+`test:live` is the only test that reaches the network. It skips unless
+`POLYPKG_TEST_LIVE=1`, which the task sets; run it after changing
+`internal/ghrelease` or `internal/importer`, with `GITHUB_TOKEN` set if you
+run it often.
 
 One spec in `task test` is heavier than the rest by design:
 `tests/integration/e2e_search_picker_test.go` drives `polypkg search`'s
@@ -86,14 +107,24 @@ can never look like a terminal. It builds a real binary and takes ~25s. It is
 Linux-only (BSD `script` has no `-c` flag) and skips cleanly on other
 platforms or when `script` is not on `PATH`.
 
+CI runs `task test` on Linux and macOS. FreeBSD is only cross-compiled, and
+the container and VM tiers are Linux-only. That is why the README's
+[Platform support](README.md#platform-support) rates Linux *tested*, macOS
+*user scope, unit-tested*, and FreeBSD *builds, untested*. CI cannot cover a
+change to OS-specific code (a `runtime.GOOS` branch, or a `_linux.go` /
+`_other.go` pair) on the platforms it skips, so say in the pull request which
+platforms you ran it on.
+
 Both container and VM tiers need host setup that `task check` does not:
 
-- `test:integration` needs rootless `podman` **and** `podman-compose`. Where the
-  kernel's native overlay rejects `userxattr`, the image build fails with
-  `mounting an overlay over build context directory ... invalid argument`; write
-  `~/.config/containers/storage.conf` with `[storage] driver="overlay"` and
-  `[storage.options.overlay] mount_program="/usr/bin/fuse-overlayfs"` to get past
-  it.
+- `test:integration` needs rootless `podman` **and** `podman-compose`. If the
+  image build fails with `mounting an overlay over build context directory ...
+  invalid argument`, buildah's scratch directory (`TMPDIR`, default `/var/tmp`)
+  is on overlayfs, as it is when podman runs inside a container. Run with
+  `TMPDIR` set to a directory on a non-overlay filesystem outside the checkout,
+  or write `~/.config/containers/storage.conf` with `[storage] driver="overlay"`
+  and `[storage.options.overlay] mount_program="/usr/bin/fuse-overlayfs"`.
+  `tests/e2e/README.md` has the details.
 - `test:vm` needs more than QEMU: `vm:deps` installs the whole `DEP_PKGS` set
   from `.taskfiles/vm.yml` (`qemu-kvm-core qemu-img xorriso edk2-ovmf
   openssh-clients selinux-policy-devel checkpolicy`) via `sudo dnf`, so it
@@ -144,6 +175,16 @@ Two rules for changing a tape:
 4. User-facing changes update the README and any affected docs. Notable changes
    get a `CHANGELOG.md` entry under the `Unreleased` heading.
 
+CI runs more than `task check`: the FIPS suite, `build:cross` for FreeBSD
+and linux/arm64, the container tier for each distro, and an unsigned
+GoReleaser snapshot. A `v*` tag publishes only after lint, the tests,
+govulncheck, and the container tier pass on the tagged commit, and only if
+that commit is on `main`. Those checks catch an honest mistake; they are
+not a defence against someone who can push tags, which relies on the
+repository's `release` environment and tag ruleset.
+[docs/dev/README.md](docs/dev/README.md#ci-workflows) lists every workflow
+and the settings the maintainer is expected to configure.
+
 Test artifacts belong in `.test-output/` (gitignored); don't commit them.
 
 ## Commit and pull request conventions
@@ -156,6 +197,30 @@ Test artifacts belong in `.test-output/` (gitignored); don't commit them.
   right to submit the change under the project's license.
 - Rebase on the current `main` and keep history readable; squash fixup commits
   before review.
+
+## Cutting a release
+
+Pushing a `vMAJOR.MINOR.PATCH` tag runs `.github/workflows/release.yml`, which
+publishes with goreleaser. goreleaser takes the version from the newest tag
+and starts the changelog at the tag before it, so any other tag in the local
+repository can corrupt the release. Checkpoint or scratch tags created by
+local tooling are the usual source (for example `checkpoint/20260725-000356`).
+As the newest tag, that one puts a `/` into every artifact name. As the
+previous tag, it cuts the release notes down to the commits after it.
+
+Immediately before creating the tag, and before any local
+`goreleaser release --snapshot` rehearsal:
+
+```
+task release:check-tags
+```
+
+It lists every tag that is not a SemVer `v` tag (`vMAJOR.MINOR.PATCH`, with an
+optional SemVer 2.0.0 `-pre-release` or `+build` suffix) and fails. Delete
+a listed tag with `git tag -d <tag>` only if `git ls-remote --tags origin`
+does not list it. A tag that is already published needs a deliberate decision,
+not a local delete. Run the check again if time has passed, because
+checkpoint tags can come back.
 
 ## Architecture and design
 

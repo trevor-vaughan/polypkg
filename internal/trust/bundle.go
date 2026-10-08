@@ -44,7 +44,7 @@ func (v *minisignVerifier) LoadBundle(doc []byte, sig string, lastSerial uint64,
 		return nil, 0, false, err
 	}
 	if b.Serial < lastSerial {
-		return nil, 0, false, fmt.Errorf("trust bundle rollback: serial %d is below last-seen %d", b.Serial, lastSerial)
+		return nil, 0, false, &RollbackError{Document: "trust bundle", Serial: b.Serial, LastSeen: lastSerial}
 	}
 	return &Bundle{keys: b.BuilderKeys, roots: b.SigstoreRoots}, b.Serial, graced, nil
 }
@@ -77,10 +77,10 @@ func (b *Bundle) BuilderKeyAt(keyID string, at time.Time) (schema.BuilderKey, er
 }
 
 // BuilderKey returns the builder key registered under keyID ignoring its
-// validity window, and whether one was found. Phase 2c-1a uses this for
-// builder-signature verification (the DSSE signature is the security decision);
-// the window gate — BuilderKeyAt keyed on the attestation's build timestamp —
-// is applied by phase 2c-1b once that timestamp is parsed from the predicate.
+// validity window, and whether one was found. Builder-signature verification
+// uses this (the DSSE signature is the security decision); the window gate —
+// BuilderKeyAt keyed on the attestation's build timestamp — is applied
+// separately once that timestamp is parsed from the predicate.
 // If several entries share a key id, the first wins; bundles SHOULD keep key ids
 // unique (the keyring is append-only and rotation supersedes, not duplicates).
 func (b *Bundle) BuilderKey(keyID string) (schema.BuilderKey, bool) {
@@ -92,28 +92,31 @@ func (b *Bundle) BuilderKey(keyID string) (schema.BuilderKey, bool) {
 	return schema.BuilderKey{}, false
 }
 
-// SigstoreRootAt returns the mirrored sigstore root whose window contains at,
-// and whether one was found. It delegates to SelectSigstoreRoot over this
-// bundle's roots.
-func (b *Bundle) SigstoreRootAt(at time.Time) (schema.SigstoreRoot, bool) {
-	return SelectSigstoreRoot(b.roots, at)
+// SigstoreRootsAt returns the mirrored sigstore roots whose windows contain
+// at, in bundle order. It delegates to SelectSigstoreRoots over this bundle's
+// roots.
+func (b *Bundle) SigstoreRootsAt(at time.Time) []schema.SigstoreRoot {
+	return SelectSigstoreRoots(b.roots, at)
 }
 
-// SelectSigstoreRoot returns the first root in roots whose window contains at,
-// and whether one was found. A root whose window fails to parse is treated as
-// absent (skipped), so a malformed root can only ever yield "no root found" —
-// the caller, finding no usable root, fails closed. This has no error channel:
-// the not-found result IS the fail-closed signal. It backs both the mirrored
-// path (SigstoreRootAt) and the consumer-pinned path (planner 2e-5), so the two
-// share one window implementation.
-func SelectSigstoreRoot(roots []schema.SigstoreRoot, at time.Time) (schema.SigstoreRoot, bool) {
+// SelectSigstoreRoots returns every root in roots whose window contains at,
+// in their original order; nil when none does. The caller tries each in turn,
+// because Fulcio CA windows overlap across a rotation: a bundle signed during
+// the overlap chains to only one of the roots live at its integrated time, and
+// the first such root need not be that one. A root whose window fails to parse
+// is treated as absent (skipped), so a malformed root can only ever shrink the
+// result, and an empty result is the caller's fail-closed signal; there is no
+// error channel. It backs both the mirrored path (SigstoreRootsAt) and the
+// consumer-pinned path in the planner, so the two share one window
+// implementation.
+func SelectSigstoreRoots(roots []schema.SigstoreRoot, at time.Time) []schema.SigstoreRoot {
+	var live []schema.SigstoreRoot
 	for _, r := range roots {
-		ok, err := within(r.ValidFrom, r.ValidUntil, at)
-		if err == nil && ok {
-			return r, true
+		if ok, err := within(r.ValidFrom, r.ValidUntil, at); err == nil && ok {
+			live = append(live, r)
 		}
 	}
-	return schema.SigstoreRoot{}, false
+	return live
 }
 
 // within reports whether at falls in [from, until] (inclusive). from is
@@ -164,7 +167,7 @@ func (v *minisignVerifier) LoadRevocationList(doc []byte, sig string, lastSerial
 		return nil, 0, false, "", err
 	}
 	if rl.Serial < lastSerial {
-		return nil, 0, false, "", fmt.Errorf("revocation list rollback: serial %d is below last-seen %d", rl.Serial, lastSerial)
+		return nil, 0, false, "", &RollbackError{Document: "revocation list", Serial: rl.Serial, LastSeen: lastSerial}
 	}
 	r := &Revocations{keys: map[string]struct{}{}, atts: map[string]struct{}{}}
 	for _, k := range rl.RevokedBuilderKeys {

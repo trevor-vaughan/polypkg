@@ -27,7 +27,7 @@ func copyFileT(tb testing.TB, src, dst string) {
 	}
 }
 
-var _ = Describe("Plan metadata freshness (D13)", func() {
+var _ = Describe("Plan metadata freshness", func() {
 	var restore func()
 	AfterEach(func() {
 		if restore != nil {

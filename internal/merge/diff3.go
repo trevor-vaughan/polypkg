@@ -56,7 +56,8 @@ func splitOnNewline(s string) []string {
 }
 
 // join reconstructs a byte buffer from lines, appending a trailing newline only
-// when trailingNewline is true (incoming's convention, per spec §7.3).
+// when trailingNewline is true (the merged result follows incoming's
+// convention).
 func join(lines []string, trailingNewline bool) []byte {
 	if len(lines) == 0 {
 		return nil
@@ -171,7 +172,7 @@ func slicesEqual(a, b []string) bool {
 }
 
 // appendConflict appends a two-marker conflict block wrapping the live region
-// then the incoming region (spec §7.2). No ||||||| BASE middle marker.
+// then the incoming region. No ||||||| BASE middle marker.
 func appendConflict(out, live, incoming []string) []string {
 	out = append(out, "<<<<<<< LIVE")
 	out = append(out, live...)

@@ -71,3 +71,17 @@ func TestParseSourcesFileRejectsEmpty(t *testing.T) {
 		t.Fatalf("want empty-list error, got %v", err)
 	}
 }
+
+func TestParseSourcesFileRedactsTheURLOfAnEntryMissingItsTrustRoot(t *testing.T) {
+	p := writeSourcesFile(t, "- url: https://ghp_secret@a.example/repo\n")
+	_, err := ParseSourcesFile(p)
+	if err == nil || !strings.Contains(err.Error(), "trust_root is required") {
+		t.Fatalf("want trust_root-required error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "ghp_secret") {
+		t.Fatalf("error leaks the URL token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "https://xxxxx@a.example/repo") {
+		t.Fatalf("error = %v, want the redacted URL", err)
+	}
+}

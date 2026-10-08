@@ -56,13 +56,21 @@ testcases:
   - name: pinned generation 1 content is untouched by the republish
     steps:
       - type: exec
-        # Resolve the generation's symlink into the extract store and inspect
-        # the real file. The sentinel keeps the pass condition grep-free of
-        # embedded quotes: grep hitting REVISED fails the step immediately.
+        # Generation 1 holds its own copy of the payload (the scaffold's install
+        # uses the default copy policy), and its extract dir must still hold the
+        # original bytes too: exactly one hello-1.0.0 extract dir is unrevised.
+        # The sentinels keep the pass condition grep-free of embedded quotes:
+        # grep hitting REVISED fails the step immediately.
         script: |
-          f=$(readlink -f {{.chome}}/data/polypkg/generations/1/active/hello/bin/hello) || { echo GEN1_MISSING; exit 1; }
+          f={{.chome}}/data/polypkg/generations/1/active/hello/bin/hello
+          [ -f "$f" ] || { echo GEN1_MISSING; exit 1; }
           grep -q "Hello, world!" "$f" || { echo GEN1_WRONG_CONTENT; exit 1; }
           grep -q REVISED "$f" && { echo GEN1_REWRITTEN; exit 1; }
+          orig=0
+          for c in {{.extract}}/hello-1.0.0+*/content/bin/hello; do
+            if ! grep -q REVISED "$c" && grep -q "Hello, world!" "$c"; then orig=$((orig+1)); fi
+          done
+          [ "$orig" -eq 1 ] || { echo "ORIGINAL_EXTRACT_DIRS=$orig"; exit 1; }
           echo GEN1_INTACT
         assertions:
           - result.code ShouldEqual 0
@@ -121,8 +129,15 @@ testcases:
           - result.systemout ShouldContainSubstring "hello-1.0.0+"
           - result.systemout ShouldContainSubstring "POST_COUNT=1"
       - type: exec
-        # The surviving dir must be the live one: the linked command still runs
-        # and still serves the revision.
+        # Installed files are copies, so a running command no longer proves which
+        # extract dir survived: check the survivor's bytes directly.
+        script: |
+          grep -q REVISED {{.extract}}/hello-1.0.0+*/content/bin/hello && echo SURVIVOR_IS_LIVE
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "SURVIVOR_IS_LIVE"
+      - type: exec
+        # And the linked command still runs and serves the revision.
         script: '{{.chome}}/.local/bin/hello'
         assertions:
           - result.code ShouldEqual 0

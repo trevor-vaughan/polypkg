@@ -18,11 +18,7 @@ import (
 func installFlagErrorFunc(root *cobra.Command) {
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		ce := translateFlagError(cmd, err)
-		format, ferr := resolveFormat(cmd)
-		if ferr != nil {
-			format = FormatText
-		}
-		return WrapError(cmd, format, cmd.Name(), ce)
+		return wrapInvocationError(cmd, ce)
 	})
 }
 
@@ -150,4 +146,58 @@ func friendlyTypeName(t string) string {
 	default:
 		return ""
 	}
+}
+
+// requiredFlagsAnnotation lists, comma-separated in a command's Annotations,
+// the flags requireFlags made mandatory.
+const requiredFlagsAnnotation = "polypkg.required-flags"
+
+// requireFlags makes the named flags of cmd mandatory. It replaces cobra's
+// MarkFlagRequired, whose "required flag(s) not set" error is raised outside
+// the flag-error handler and so reaches the user with no JSON envelope and no
+// hint. It wraps cmd's RunE, so call it after RunE is set. A flag counts as
+// given when it appears on the command line, even with an empty value, as
+// with MarkFlagRequired.
+func requireFlags(cmd *cobra.Command, names ...string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[requiredFlagsAnnotation] = strings.Join(names, ",")
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		var missing []string
+		for _, name := range names {
+			if !cmd.Flags().Changed(name) {
+				missing = append(missing, "--"+name)
+			}
+		}
+		if len(missing) == 0 {
+			return run(cmd, args)
+		}
+		return wrapInvocationError(cmd, &CLIError{
+			Msg:  fmt.Sprintf("%s needs %s", cmd.CommandPath(), joinAnd(missing)),
+			Hint: "usage: " + requiredUseLine(cmd, names),
+		})
+	}
+}
+
+// requiredUseLine is cmd's usage line with its required flags spelled out
+// before "[flags]", in the form --help prints them ("--key string").
+func requiredUseLine(cmd *cobra.Command, names []string) string {
+	line := strings.TrimSuffix(cmd.UseLine(), " [flags]")
+	for _, name := range names {
+		line += " --" + name
+		if typ, _ := pflag.UnquoteUsage(cmd.Flags().Lookup(name)); typ != "" {
+			line += " " + typ
+		}
+	}
+	return line + " [flags]"
+}
+
+// joinAnd renders items as English prose: "a", "a and b", "a, b and c".
+func joinAnd(items []string) string {
+	if len(items) == 1 {
+		return items[0]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }

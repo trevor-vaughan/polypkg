@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -26,9 +27,12 @@ var _ = Describe("read-only command on a never-applied substrate", func() {
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)
 		cmd.SetArgs([]string{"alternatives", "list"})
-		// A "no generation has been applied yet" outcome is expected and fine;
-		// we assert it did not panic/crash and created no substrate dirs.
-		_ = cmd.Execute()
+		// A never-applied substrate must yield exactly the "nothing applied
+		// yet" CLIError: any other error means the command failed somewhere
+		// else, and the directory checks below would prove nothing.
+		var ce *cli.CLIError
+		Expect(errors.As(cmd.Execute(), &ce)).To(BeTrue(), "alternatives list: %s", out.String())
+		Expect(ce.Msg).To(Equal("no generation has been applied yet"))
 
 		for _, sub := range []string{"store", "generations", "state", "alternatives"} {
 			_, statErr := os.Lstat(filepath.Join(polypkgDir(), sub))

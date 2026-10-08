@@ -2,6 +2,7 @@ package pkglint
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 
@@ -58,9 +59,11 @@ func checkActionsAndParams(pkg *schema.Package, idx *docIndex) []Finding {
 }
 
 // checkParams validates one action's params against its registry Spec:
-// PKG003 unknown, PKG002 missing-required, PKG010 bad literal (enum/mode/int),
-// PKG007 non-slug name-like value, PKG005 constraint violations. Params whose
-// value is a schema.StarlarkExpr are skipped for value/pattern checks.
+// PKG003 unknown, PKG002 missing-required, PKG010 bad literal (enum/mode/int/
+// string list), PKG007 non-slug name-like value, PKG005 constraint violations.
+// Params whose value is a schema.StarlarkExpr are skipped for value/pattern
+// checks, except that a list param given one is PKG010: !starlark computes a
+// string, never a list.
 func checkParams(spec action.Spec, v schema.PackageAction, i int, idx *docIndex) []Finding {
 	var out []Finding
 	declared := map[string]action.ParamSpec{}
@@ -104,10 +107,16 @@ func checkParams(spec action.Spec, v schema.PackageAction, i int, idx *docIndex)
 			}
 			continue
 		}
-		if _, computed := raw.(schema.StarlarkExpr); computed {
-			continue // !starlark values are not literals
-		}
 		ploc := loc(idx.paramNode(i, p.Name))
+		if _, computed := raw.(schema.StarlarkExpr); computed {
+			// !starlark values are not literals. A computed value is always a
+			// string, so a list param can never be computed.
+			if p.Kind == action.KindStringList {
+				out = append(out, Finding{RuleID: "PKG010", Severity: SeverityError, File: "polypkg.yaml", Loc: ploc,
+					Message: fmt.Sprintf("%s cannot be computed by !starlark; it must be a literal list", p.Name)})
+			}
+			continue
+		}
 		if msg := checkValue(p, raw); msg != "" {
 			out = append(out, Finding{RuleID: "PKG010", Severity: SeverityError, File: "polypkg.yaml", Loc: ploc, Message: msg})
 		}
@@ -142,15 +151,34 @@ func checkValue(p action.ParamSpec, raw any) string {
 		if !ok || !reOctalMode.MatchString(s) {
 			return fmt.Sprintf("parameter %q value %v is not an octal mode (e.g. 0o755)", p.Name, raw)
 		}
+		if err := action.CheckMode(s); err != nil {
+			return fmt.Sprintf("parameter %q value %q %v", p.Name, s, err)
+		}
 	case action.KindInt:
 		switch t := raw.(type) {
-		case int, int64, float64:
+		case int, int64:
+		case float64:
+			// A fractional literal decodes as float64. (.inf and .nan never
+			// get here: the structural layer cannot marshal them.)
+			if t != math.Trunc(t) {
+				return fmt.Sprintf("parameter %q value %v is not an integer", p.Name, raw)
+			}
 		case string:
 			if _, err := strconv.Atoi(t); err != nil {
 				return fmt.Sprintf("parameter %q value %q is not an integer", p.Name, raw)
 			}
 		default:
 			return fmt.Sprintf("parameter %q value %v is not an integer", p.Name, raw)
+		}
+	case action.KindStringList:
+		list, ok := raw.([]any)
+		if !ok {
+			return fmt.Sprintf("parameter %q value %v is not a list of strings", p.Name, raw)
+		}
+		for _, e := range list {
+			if _, ok := e.(string); !ok {
+				return fmt.Sprintf("parameter %q entry %v is not a string", p.Name, e)
+			}
 		}
 	}
 	return "" // KindString / KindPath: any string; deeper path checks are the content layer

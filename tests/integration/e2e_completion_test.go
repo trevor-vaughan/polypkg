@@ -15,12 +15,13 @@ import (
 // isolated env and returns the combined stdout+stderr output. Mirrors
 // runAlternativesCmd but dispatches to __complete instead.
 func runComplete(args ...string) string {
+	GinkgoHelper()
 	root := cli.NewRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetArgs(append([]string{"__complete"}, args...))
-	_ = root.Execute()
+	Expect(root.Execute()).To(Succeed(), "__complete %v: %s", args, out.String())
 	return out.String()
 }
 

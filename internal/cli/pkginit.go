@@ -29,9 +29,13 @@ source. The emitted source passes 'pkg lint' with zero findings and is ready to
 edit. --name defaults to the directory basename; --version defaults to 0.1.0.
 Refuses to overwrite an existing polypkg.yaml unless --force is given.`,
 		Example: "  polypkg pkg init ./hello\n  polypkg pkg init --name hello --version 1.0.0 ./src",
-		Args:    cobra.ExactArgs(1),
+		Args:    needsArgs(1, 1, "<dir>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPkgInit(cmd, args[0], name, version, force)
+			format, ferr := resolveFormat(cmd)
+			if ferr != nil {
+				return ferr
+			}
+			return WrapError(cmd, format, "pkg init", runPkgInit(cmd, args[0], name, version, force))
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Package name (default: dir basename)")
@@ -57,22 +61,23 @@ func runPkgInit(cmd *cobra.Command, dir, name, version string, force bool) error
 			Hint: "pass --force to overwrite, or choose a new directory",
 		}
 	}
+	hint := fmt.Sprintf("check that %s is writable, or scaffold into another directory", dir)
 	contentDir := filepath.Join(dir, "content", "bin")
 	if err := os.MkdirAll(contentDir, 0o755); err != nil { //nolint:gosec // G301: scaffolded package source tree the author owns and shares; 0755 is intentional
-		return &CLIError{Msg: "create content dir", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot create "+contentDir, err), Hint: hint, Err: err}
 	}
 	stub := filepath.Join(contentDir, name)
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"Hello, world!\"\n"), 0o755); err != nil { //nolint:gosec // G306: the stub ships in content/bin and must be executable; 0755 is intentional
-		return &CLIError{Msg: "write stub", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot write "+stub, err), Hint: hint, Err: err}
 	}
 
 	raw := []byte(fillPkgTemplate(name, version))
 	tmp := manifest + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil { //nolint:gosec // G306: scaffolded polypkg.yaml is author-owned source, not secret material; 0644 is intentional
-		return &CLIError{Msg: "write manifest", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot write "+tmp, err), Hint: hint, Err: err}
 	}
 	if err := os.Rename(tmp, manifest); err != nil {
-		return &CLIError{Msg: "commit manifest", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot write "+manifest, err), Hint: hint, Err: err}
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Scaffolded %s (%s) in %s\n", name, version, dir)
 	return nil
@@ -90,9 +95,12 @@ func runPkgInit(cmd *cobra.Command, dir, name, version string, force bool) error
 const pkgTemplate = `# polypkg.yaml — how to install the "{NAME}" package.
 #
 # To ship your tool: set name/version below and put your built program in
-# content/bin/. Then check and install:
-#   polypkg pkg lint .      validate this file
-#   polypkg apply .         install it
+# content/bin/. Then check it and publish it to a polypkg repository:
+#   polypkg pkg lint .            validate this file
+#   polypkg repo add <this-dir>   publish it (run beside the polypkg-repo.yaml
+#                                 that polypkg repo init created)
+# A machine whose profile lists that repository installs it with:
+#   polypkg install {NAME}
 # New here?  Run  polypkg pkg explain  for phases, actions, and portability.
 schema: polypkg.package/v1
 name: {NAME}

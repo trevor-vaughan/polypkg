@@ -5,6 +5,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/resolver"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
@@ -32,7 +33,7 @@ var _ = Describe("sourceOffers", func() {
 		var err error
 		cat, err = resolver.BuildCatalog(&schema.Index{Packages: map[string][]schema.IndexEntry{
 			"lib": {{Version: "1.0.0"}, {Version: "2.0.0"}},
-		}}, "repo")
+		}}, "repo", platform.Host())
 		Expect(err).NotTo(HaveOccurred())
 	})
 

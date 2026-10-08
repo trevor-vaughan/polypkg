@@ -33,7 +33,7 @@ func newApplyCmd() *cobra.Command {
 With no profile-file argument, applies the default profile: POLYPKG_PROFILE
 if set, else profile.{yaml,yml,jsonc,json} in the scope's config directory
 (user: ~/.config/polypkg; system: /etc/polypkg).`,
-		Args: cobra.MaximumNArgs(1),
+		Args: needsArgs(0, 1, "at most one [profile-file]"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runApply(cmd, args, healDrift, noDriftCheck)
 		},
@@ -265,7 +265,7 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 		MaxOutputBytes: rl.MaxOutputBytes,
 	}
 
-	// Posture floor (2d-2): load the current generation's manifest so Plan can
+	// Posture floor: load the current generation's manifest so Plan can
 	// refuse a provenance regression. Best-effort — a first apply (no active
 	// generation) or an unreadable manifest yields nil, disabling the floor.
 	var priorManifest *schema.Manifest
@@ -278,7 +278,6 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 	planRes, err := planner.Plan(ctx, p, planner.Options{
 		DataHome:             dataHome,
 		StateHome:            stateHome,
-		AuditWriter:          w,
 		Scope:                scope,
 		WeakPolicy:           weakPolicy,
 		StarlarkLimits:       starlarkLimits,
@@ -286,6 +285,9 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 		AttestationPolicy:    attestationPolicy(p),
 		PriorManifest:        priorManifest,
 		RevocationNearExpiry: nearExpiry,
+		DirMode:              dirMode,
+		// apply never reads planRes.Ownership; the runner records the real one.
+		SkipMultiResultProjection: true,
 	})
 	if err != nil {
 		return nil, planExecError(err)
@@ -376,9 +378,10 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 		return nil, fmt.Errorf("run: %w", err)
 	}
 
-	// Opportunistic extract sweep: generation GC just ran inside the runner,
-	// so dirs referenced only by pruned generations are now garbage.
-	_ = sweepExtracts(sub, stateHome, cmd.ErrOrStderr())
+	// Opportunistic store sweep: generation GC just ran inside the runner, so
+	// extract dirs and cached downloads referenced only by pruned generations
+	// are now garbage.
+	_ = sweepStores(sub, stateHome, cmd.ErrOrStderr())
 
 	out := &applyOutcome{
 		gen:      gen,
@@ -405,7 +408,7 @@ func applyProfile(cmd *cobra.Command, profilePath string, healDrift, noDriftChec
 // validatePlacementPhases enforces that file-placing actions are declared only in
 // pre-swap phases. A file-placing action in a post-swap phase would be materialized
 // after the ownership index is written at commit, so it could never be tracked
-// for drift — reject it before any transaction begins (apply-semantics §5.3).
+// for drift — reject it before any transaction begins.
 func validatePlacementPhases(entries []runner.RunEntry) error {
 	for _, e := range entries {
 		for _, v := range e.Package.Actions {

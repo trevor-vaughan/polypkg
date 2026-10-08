@@ -2,9 +2,12 @@ package resolver
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
@@ -14,6 +17,7 @@ type Candidate struct {
 	Version      string
 	ContentHash  string
 	Artifact     string
+	Platform     string                  // index entry platform; "" = platform-agnostic
 	Attestations []schema.AttestationRef // signed attestation refs from the index entry
 	Depends      []schema.Relation
 	Recommends   []schema.Relation
@@ -38,21 +42,93 @@ type Catalog struct {
 	// lets satisfied skip the O(N) provider scan of the selection for real
 	// names that nothing supplies virtually (the common case).
 	virtualNames map[string]bool
+	// host is the platform this catalog was filtered for (platform.Host() in
+	// production). It names the host in a wrong-platform resolution failure.
+	host string
+	// dropped records, per package name and version, the entries left out
+	// because they were published only for platforms other than host.
+	dropped map[string]map[string]*unavailable
 }
 
-// BuildCatalog converts a verified index into a resolver Catalog whose
-// candidates are all tagged with sourceName.
-func BuildCatalog(idx *schema.Index, sourceName string) (*Catalog, error) {
-	c := &Catalog{byName: map[string][]*Candidate{}}
+// unavailable is the set of platforms one (name, version) is published for
+// that are not the catalog's host.
+type unavailable struct {
+	sv        *semver.Version
+	platforms []string // sorted once BuildCatalog finishes; distinct by admitBuild
+}
+
+// BuildCatalog converts a verified index into a resolver Catalog for host (a
+// platform.Host() value) whose candidates are all tagged with sourceName.
+//
+// Every package key and every relation name must be a package-name slug
+// (schema.ValidatePackageName), and every entry platform must satisfy the
+// consumer grammar (platform.ValidateConsumer). Every (version, platform)
+// pair is listed once, versions compared as semantic versions, no version has
+// both a platform-agnostic entry and platform entries, and no two names, or
+// two versions of one name, differ only in letter case (repo build's
+// publishing rules). Index names flow into on-disk paths downstream (the
+// planner's extract directory), and the index signature proves only who
+// published a name, not that it is safe. A violation fails the whole load: a
+// malformed signed index is a publisher fault, not an entry to skip.
+//
+// Only entries whose platform is empty (platform-agnostic) or equal to host
+// become candidates; everything downstream of the catalog sees only what this
+// host can install. The other entries are recorded per (name, version) so
+// callers can name the platforms a package IS published for (OtherPlatforms,
+// NewestUnavailable). Entries are validated before they are filtered, so a
+// malformed entry for another platform still fails the load.
+func BuildCatalog(idx *schema.Index, sourceName, host string) (*Catalog, error) {
+	if err := schema.CaseFoldCollision(idx); err != nil {
+		return nil, fmt.Errorf("catalog: %w", err)
+	}
+	c := &Catalog{
+		byName:  map[string][]*Candidate{},
+		dropped: map[string]map[string]*unavailable{},
+		host:    host,
+	}
 	for name, entries := range idx.Packages {
+		if err := schema.ValidatePackageName(name); err != nil {
+			return nil, fmt.Errorf("catalog: %w", err)
+		}
+		// builds maps each semver-distinct version of the entries seen so far
+		// to the platforms ("" for platform-agnostic) it is listed for, each
+		// with that entry's spelling, to enforce repo build's publishing
+		// rules.
+		builds := map[schema.VersionKey]map[string]string{}
 		for i := range entries {
 			e := &entries[i]
+			if err := validateRelationNames(name, e); err != nil {
+				return nil, err
+			}
+			if e.Platform != "" {
+				if err := platform.ValidateConsumer(e.Platform); err != nil {
+					return nil, fmt.Errorf("catalog: %s %s: %w", name, e.Version, err)
+				}
+			}
 			v, err := semver.NewVersion(e.Version)
 			if err != nil {
 				return nil, fmt.Errorf("catalog: %s %q: %w", name, e.Version, err)
 			}
+			if err := admitBuild(builds, name, e.Version, v, e.Platform); err != nil {
+				return nil, err
+			}
+			if e.Platform != "" && e.Platform != host {
+				byVersion := c.dropped[name]
+				if byVersion == nil {
+					byVersion = map[string]*unavailable{}
+					c.dropped[name] = byVersion
+				}
+				u := byVersion[e.Version]
+				if u == nil {
+					u = &unavailable{sv: v}
+					byVersion[e.Version] = u
+				}
+				u.platforms = append(u.platforms, e.Platform)
+				continue
+			}
 			c.byName[name] = append(c.byName[name], &Candidate{
 				Name: name, Version: e.Version, ContentHash: e.ContentHash, Artifact: e.Artifact,
+				Platform:     e.Platform,
 				Attestations: e.Attestations,
 				Depends:      e.Depends, Recommends: e.Recommends, Suggests: e.Suggests,
 				Provides: e.Provides, Conflicts: e.Conflicts, Obsoletes: e.Obsoletes,
@@ -61,8 +137,77 @@ func BuildCatalog(idx *schema.Index, sourceName string) (*Catalog, error) {
 			})
 		}
 	}
+	for _, byVersion := range c.dropped {
+		for _, u := range byVersion {
+			slices.Sort(u.platforms)
+		}
+	}
 	c.reindex()
 	return c, nil
+}
+
+// admitBuild records in builds that an index entry publishes version (parsed
+// as sv) of name for plat ("" for platform-agnostic), or returns the error for
+// an entry that breaks repo build's publishing rules: a (version, platform)
+// pair is listed once, and a version is either one platform-agnostic artifact
+// or one artifact per platform, never both. Versions compare as semantic
+// versions, so "1.0" and "1.0.0" are one version. Either violation would hand
+// a host two candidates for one version, so it fails the load like any other
+// malformed entry.
+func admitBuild(builds map[schema.VersionKey]map[string]string, name, version string, sv *semver.Version, plat string) error {
+	key := schema.VersionKeyOf(sv)
+	byPlat := builds[key]
+	// also names an earlier entry's spelling when it differs from version.
+	also := func(spelling string) string {
+		if spelling == version {
+			return ""
+		}
+		return fmt.Sprintf(" (also listed as %q)", spelling)
+	}
+	if prev, dup := byPlat[plat]; dup {
+		return fmt.Errorf("catalog: %s %q for platform %q is listed more than once%s",
+			name, version, platform.Display(plat), also(prev))
+	}
+	var other, otherSpelling string
+	if prev, ok := byPlat[""]; ok && plat != "" {
+		other, otherSpelling = plat, prev
+	} else if plat == "" && len(byPlat) > 0 {
+		other = slices.Sorted(maps.Keys(byPlat))[0]
+		otherSpelling = byPlat[other]
+	}
+	if other != "" {
+		return fmt.Errorf("catalog: %s %q has both a platform-agnostic entry and a %q entry%s",
+			name, version, other, also(otherSpelling))
+	}
+	if byPlat == nil {
+		byPlat = map[string]string{}
+		builds[key] = byPlat
+	}
+	byPlat[plat] = version
+	return nil
+}
+
+// validateRelationNames checks every relation target an index entry names, in
+// all six relation fields, against the package-name slug rule.
+func validateRelationNames(name string, e *schema.IndexEntry) error {
+	for _, rels := range []struct {
+		field string
+		list  []schema.Relation
+	}{
+		{"depends", e.Depends},
+		{"recommends", e.Recommends},
+		{"suggests", e.Suggests},
+		{"provides", e.Provides},
+		{"conflicts", e.Conflicts},
+		{"obsoletes", e.Obsoletes},
+	} {
+		for _, rel := range rels.list {
+			if err := schema.ValidatePackageName(rel.Name); err != nil {
+				return fmt.Errorf("catalog: %s %s: %s: %w", name, e.Version, rels.field, err)
+			}
+		}
+	}
+	return nil
 }
 
 // reindex rebuilds the derived lookup maps (providers, conflictTargets,
@@ -89,6 +234,16 @@ func (c *Catalog) reindex() {
 		}
 	}
 	for name := range c.providers {
+		// A name published as a real package only for other platforms is
+		// owned by that publisher. A provider must not stand in for it on this
+		// host, or a lower-priority source could satisfy it by declaring
+		// provides; dropping the virtual entry lets lookup fall through to
+		// the wrong-platform failure instead.
+		if len(c.byName[name]) == 0 && len(c.dropped[name]) > 0 {
+			delete(c.providers, name)
+			delete(c.virtualNames, name)
+			continue
+		}
 		sortProviders(c.providers[name])
 	}
 }
@@ -143,18 +298,26 @@ func (c *Catalog) Versions(name string) []string {
 
 // Newest returns the newest Candidate for name that satisfies constraint. An
 // empty constraint matches any version. Errors use the existing *ResolveError
-// type: KindUnknownName when the name is absent from every source, and
-// KindNoVersion (with Available set) when the name is present but no version
-// satisfies the constraint.
+// type: KindWrongPlatform when the name is published only for other platforms,
+// or no host version satisfies constraint but another platform's does; KindUnknownName when the
+// name is absent from every source; and KindNoVersion (with Available set)
+// when the name is present but no version on any platform satisfies the
+// constraint.
 func (c *Catalog) Newest(name, constraint string) (*Candidate, error) {
 	req := Requirement{Name: name, VersionRange: constraint}
 	if !c.knownName(name) {
+		if we := c.wrongPlatformError(req, []string{name}); we != nil {
+			return nil, we
+		}
 		return nil, &ResolveError{Kind: KindUnknownName, Requirement: req, Path: []string{name}}
 	}
 	// candidatesFor returns real candidates first, sorted newest-first, which
 	// gives us the newest satisfying candidate at index 0.
 	cands := c.candidatesFor(req)
 	if len(cands) == 0 {
+		if we := c.wrongPlatformVersionError(req, []string{name}); we != nil {
+			return nil, we
+		}
 		return nil, &ResolveError{
 			Kind:        KindNoVersion,
 			Requirement: req,
@@ -178,6 +341,140 @@ func (c *Catalog) Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// PublishedNames returns the sorted real package names published for any
+// platform: every name with an artifact for this host (Names) plus every name
+// whose entries were all dropped for other platforms. search lists these so a
+// package that exists only for other platforms is still found.
+func (c *Catalog) PublishedNames() []string {
+	set := make(map[string]struct{}, len(c.byName)+len(c.dropped))
+	for name := range c.byName {
+		set[name] = struct{}{}
+	}
+	for name := range c.dropped {
+		set[name] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UnavailableVersions returns, newest first, the versions of name published
+// only for other platforms. A version with an artifact for this host, under
+// that spelling or a semver-equal one ("1.0" and "1.0.0"), is available even
+// if other platforms also publish it, and is not listed. Semver-equal
+// spellings are ordered by spelling so the result is stable. Returns an empty
+// (non-nil) slice when there are none, like Versions.
+func (c *Catalog) UnavailableVersions(name string) []string {
+	var vs []*unavailable
+	for _, u := range c.dropped[name] {
+		onHost := slices.ContainsFunc(c.byName[name], func(cand *Candidate) bool { return cand.sv.Equal(u.sv) })
+		if !onHost {
+			vs = append(vs, u)
+		}
+	}
+	sort.Slice(vs, func(i, j int) bool {
+		if !vs[i].sv.Equal(vs[j].sv) {
+			return vs[i].sv.GreaterThan(vs[j].sv)
+		}
+		return vs[i].sv.Original() < vs[j].sv.Original()
+	})
+	out := make([]string, 0, len(vs))
+	for _, u := range vs {
+		out = append(out, u.sv.Original())
+	}
+	return out
+}
+
+// OtherPlatforms returns the sorted platforms (name, version) is published for
+// that were dropped because they are not this catalog's host. Semver-equal
+// spellings of version ("1.0" and "1.0.0") are one version, so their
+// platforms are unioned, as in NewestUnavailable. nil when none were. The
+// slice is a copy.
+func (c *Catalog) OtherPlatforms(name, version string) []string {
+	sv, err := semver.NewVersion(version)
+	var out []string
+	for v, u := range c.dropped[name] {
+		if v == version || (err == nil && u.sv.Equal(sv)) {
+			out = append(out, u.platforms...)
+		}
+	}
+	if out == nil {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// NewestUnavailable reports, for a name the index publishes but never for this
+// host, the newest version (by semver) published for any platform and the
+// sorted platforms it is published for. Distinct version strings that parse to
+// that one semver ("1.0" and "1.0.0") are one version: their platforms are
+// unioned, and the lexically smallest string names them (as mirror pull's
+// pick does) so the answer is independent of map order. ok is false when the
+// name has a host-applicable candidate, or no entry at all (an unknown name).
+func (c *Catalog) NewestUnavailable(name string) (version string, platforms []string, ok bool) {
+	if len(c.byName[name]) > 0 {
+		return "", nil, false
+	}
+	return c.newestDropped(name, "")
+}
+
+// newestDropped reports the newest version of name (by semver) that satisfies
+// constraint ("" = any) among the entries dropped for other platforms, and the
+// sorted union of the platforms of every spelling semver-equal to it; the
+// lexically smallest such spelling names the version. ok is false when no
+// dropped version satisfies constraint.
+func (c *Catalog) newestDropped(name, constraint string) (version string, platforms []string, ok bool) {
+	var best *unavailable
+	for v, u := range c.dropped[name] {
+		if allowed, err := constraintAllows(constraint, v); err != nil || !allowed {
+			continue
+		}
+		if best == nil || u.sv.GreaterThan(best.sv) || (u.sv.Equal(best.sv) && v < version) {
+			best, version = u, v
+		}
+	}
+	if best == nil {
+		return "", nil, false
+	}
+	for _, u := range c.dropped[name] {
+		if u.sv.Equal(best.sv) {
+			platforms = append(platforms, u.platforms...)
+		}
+	}
+	slices.Sort(platforms)
+	return version, slices.Compact(platforms), true
+}
+
+// wrongPlatformError returns the KindWrongPlatform failure for req when every
+// entry the catalog holds for req.Name was dropped as another platform's, or
+// nil when that is not the case (the name has a host candidate, or no entry at
+// all).
+func (c *Catalog) wrongPlatformError(req Requirement, path []string) *ResolveError {
+	version, platforms, ok := c.NewestUnavailable(req.Name)
+	if !ok {
+		return nil
+	}
+	return &ResolveError{Kind: KindWrongPlatform, Requirement: req, Path: path,
+		Version: version, Platforms: platforms, Host: c.host}
+}
+
+// wrongPlatformVersionError returns the KindWrongPlatform failure for req when
+// no host candidate satisfies req's constraint but a version published only
+// for other platforms does, naming the newest such version; nil otherwise. It
+// tells "this host cannot install that version" apart from "no such version".
+func (c *Catalog) wrongPlatformVersionError(req Requirement, path []string) *ResolveError {
+	version, platforms, ok := c.newestDropped(req.Name, req.VersionRange)
+	if !ok {
+		return nil
+	}
+	return &ResolveError{Kind: KindWrongPlatform, Requirement: req, Path: path,
+		Version: version, Platforms: platforms, Host: c.host}
 }
 
 // candidatesFor returns candidates that can satisfy req: real candidates named

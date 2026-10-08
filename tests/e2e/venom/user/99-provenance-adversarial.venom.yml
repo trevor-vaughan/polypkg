@@ -1,11 +1,11 @@
-name: Adversarial carried provenance (G-rows - spec §11 acceptance matrix)
-# Each testcase below is one G-row from the spec §11 acceptance matrix: a
+name: Adversarial carried provenance (the G-numbered threat matrix)
+# Each testcase below is one G-row from the acceptance matrix: a
 # tampered/adversarial fixture that MUST be refused despite superficially
 # reaching a verified tier. New G-rows (G2/G5/G9/G10) are appended here as
 # later tasks land their fixtures — this file is the adversarial counterpart
 # to 98-provenance-genuine.venom.yml's all-green rows.
 #
-# G1 (spec §11): a malicious publisher mints its own builder key
+# G1: a malicious publisher mints its own builder key
 # (builder-rogue), registers it in the (anchor-signed) trust bundle alongside
 # the legitimate builder-current, and signs the carried SLSA with it. The key
 # genuinely resolves against the bundle, so the attestation reaches the
@@ -21,7 +21,7 @@ vars:
   # builder-current's deterministic public key (ed25519), printed as
   # allow_key= by `go run ./tests/e2e/provenancegen` — if the fixture seed
   # ever changes this literal must be regenerated too.
-  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q='
+  allow_key: 'gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=' # gitleaks:allow -- ed25519 public key, not a secret
   home: '/tmp/u99-g1'
   px: 'env HOME=/tmp/u99-g1 XDG_DATA_HOME=/tmp/u99-g1/data XDG_CONFIG_HOME=/tmp/u99-g1/cfg XDG_STATE_HOME=/tmp/u99-g1/state XDG_CACHE_HOME=/tmp/u99-g1/cache /usr/local/bin/polypkg'
   profile: '/tmp/u99-g1/profile.yaml'
@@ -112,7 +112,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
           - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'
 
-  # G9 (spec §11 / §10.3 F2): a malicious mirror leaves the carried SLSA
+  # G9: a malicious mirror leaves the carried SLSA
   # envelope and its pool blob byte-for-byte untouched (still a genuine,
   # builder-signed SLSA v1.0 statement) but rewrites the index.json
   # AttestationRef's predicate_type to an unrelated URI and re-signs the
@@ -164,7 +164,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "signed payload says"'
           - 'result.systemerr ShouldContainSubstring "https://slsa.dev/provenance/v1"'
 
-  # G2 (spec §11): a malicious mirror strips the carried SLSA attestation from
+  # G2: a malicious mirror strips the carried SLSA attestation from
   # a repo that HAD it (the native SARIF ref is left in place) and re-signs
   # the index under the same anchor key, so the index itself still verifies —
   # the forgery is the missing predicate, not a broken signature. A consumer
@@ -209,7 +209,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "provpkg-1.0.0: attestation policy: required predicate"'
           - 'result.systemerr ShouldContainSubstring "is not present and verified at an anchored tier from an allowed builder"'
 
-  # G5 relabel (spec §11, positive half): the carried SLSA attestation's
+  # G5 relabel (positive half): the carried SLSA attestation's
   # advisory subject NAME lies ("bin/app"), but its digest actually matches a
   # DIFFERENT packed file (content/bin/other). repo build binds carried
   # subjects BY DIGEST (the name is advisory only), so it binds bin/other and
@@ -261,7 +261,7 @@ testcases:
           - 'result.systemout ShouldContainSubstring "subject_scope"'
           - 'result.systemout ShouldContainSubstring "content:bin/other"'
 
-  # G5 mismatch (spec §11, refusal half): a malicious mirror swaps the carried
+  # G5 mismatch (refusal half): a malicious mirror swaps the carried
   # SLSA pool blob for one whose subject digest matches NO packed file
   # (neither content/bin/app nor any other packed content), re-signing the
   # swapped blob's transport signature so the built-in publish-time refusal
@@ -305,7 +305,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
           - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
 
-  # G10 (spec §11 / §7 / internal/attest/dsse.go): a malicious mirror swaps the
+  # G10 (see internal/attest/dsse.go): a malicious mirror swaps the
   # carried SLSA pool blob for one whose JSON is byte-identical to the
   # genuine, builder-signed envelope except for a single spliced-in duplicate
   # top-level "payloadType" key — a parser-differential vector (a lenient
@@ -414,7 +414,7 @@ testcases:
           - 'result.systemout ShouldContainSubstring "verified-transport-only"'
           - 'result.systemout ShouldNotContainSubstring "builder-verified"'
 
-  # G4 mismatch (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # G4 mismatch: a malicious mirror swaps the carried SLSA
   # pool blob for one whose subject sha256 matches content/bin/app but whose
   # sha512 is the hash of DIFFERENT bytes, re-signing the swapped blob's
   # transport signature. attest.MatchSubjectDigests recomputes BOTH overlapping
@@ -453,7 +453,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
           - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
 
-  # G4 sha1-only (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # G4 sha1-only: a malicious mirror swaps the carried SLSA
   # pool blob for one whose subject offers ONLY sha1 — a broken, forbidden
   # algorithm attest.MatchSubjectDigests rejects on mere presence (a downgrade
   # vector). No subject binds at or above the sha256 floor, so the install-time
@@ -490,7 +490,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
           - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
 
-  # G4 no-overlap (spec §11 / §5.3): a malicious mirror swaps the carried SLSA
+  # G4 no-overlap: a malicious mirror swaps the carried SLSA
   # pool blob for one whose subject offers ONLY sha3-512 — an algorithm polypkg
   # can neither recompute nor forbids, so attest.MatchSubjectDigests finds
   # nothing at or above the sha256 floor to verify and the subject is
@@ -528,7 +528,7 @@ testcases:
           - 'result.systemerr ShouldContainSubstring "does not bind the installed bytes"'
           - 'result.systemerr ShouldContainSubstring "carried attestation binds nothing: no subject digest matches any target"'
 
-  # G7 (spec §11 / P6 two-point binding): an attacker holding the publisher/anchor
+  # G7 (two-point binding, install half): an attacker holding the publisher/anchor
   # key publishes a genuine tree, then substitutes the packed content/bin/app
   # bytes, re-packs the artifact tarball, recomputes its blake3, re-signs the
   # artifact transport signature, STRIPS the anchor-signed native artifact-binding
@@ -582,7 +582,7 @@ testcases:
           - 'result.systemerr ShouldNotContainSubstring "hash mismatch"'
           - 'result.systemerr ShouldNotContainSubstring "attestation subject digest does not match artifact"'
 
-  # G6 downgrade control (spec §11 / §5.5): the SAME stripped-inclusion-proof
+  # G6 downgrade control: the SAME stripped-inclusion-proof
   # sigstore bundle applied WITHOUT require proves the strip only DOWNGRADES the
   # tier (it is not a hard refusal). Under DEFAULT policy the install proceeds and
   # the carried binding records verified-transport-only with NO certificate
@@ -628,7 +628,7 @@ testcases:
           - 'result.systemout ShouldNotContainSubstring "verified-offline"'
           - 'result.systemout ShouldNotContainSubstring "certificate_identity"'
 
-  # G6 refusal (spec §11 / §5.5): the same stripped-inclusion-proof bundle under
+  # G6 refusal: the same stripped-inclusion-proof bundle under
   # require:[slsa] is refused — verified-transport-only is not an anchored tier
   # (attestpolicy.go's tierAnchored), so the require gate cannot be satisfied even
   # though the bundle is present and its subjects bind. No builders.allow needed.

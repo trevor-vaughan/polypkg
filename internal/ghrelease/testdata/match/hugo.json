@@ -1,0 +1,90 @@
+{
+  "note": "Representative fixture: asset names reconstructed from the release naming of hugo 0.134.0 (gohugoio/hugo), a project whose only darwin build is universal, not recorded from the GitHub API.",
+  "assets": [
+    "hugo_0.134.0_checksums.txt",
+    "hugo_0.134.0_darwin-universal.pkg",
+    "hugo_0.134.0_darwin-universal.tar.gz",
+    "hugo_0.134.0_dragonfly-amd64.tar.gz",
+    "hugo_0.134.0_freebsd-amd64.tar.gz",
+    "hugo_0.134.0_linux-amd64.deb",
+    "hugo_0.134.0_linux-amd64.tar.gz",
+    "hugo_0.134.0_linux-arm.tar.gz",
+    "hugo_0.134.0_linux-arm64.deb",
+    "hugo_0.134.0_linux-arm64.tar.gz",
+    "hugo_0.134.0_netbsd-amd64.tar.gz",
+    "hugo_0.134.0_openbsd-amd64.tar.gz",
+    "hugo_0.134.0_solaris-amd64.tar.gz",
+    "hugo_0.134.0_windows-amd64.zip",
+    "hugo_0.134.0_windows-arm64.zip",
+    "hugo_extended_0.134.0_darwin-universal.pkg",
+    "hugo_extended_0.134.0_darwin-universal.tar.gz",
+    "hugo_extended_0.134.0_linux-amd64.deb",
+    "hugo_extended_0.134.0_linux-amd64.tar.gz",
+    "hugo_extended_0.134.0_linux-arm64.deb",
+    "hugo_extended_0.134.0_linux-arm64.tar.gz",
+    "hugo_extended_0.134.0_windows-amd64.zip",
+    "hugo_extended_withdeploy_0.134.0_darwin-universal.pkg",
+    "hugo_extended_withdeploy_0.134.0_darwin-universal.tar.gz",
+    "hugo_extended_withdeploy_0.134.0_linux-amd64.deb",
+    "hugo_extended_withdeploy_0.134.0_linux-amd64.tar.gz",
+    "hugo_extended_withdeploy_0.134.0_linux-arm64.deb",
+    "hugo_extended_withdeploy_0.134.0_linux-arm64.tar.gz",
+    "hugo_extended_withdeploy_0.134.0_windows-amd64.zip"
+  ],
+  "cases": [
+    {
+      "name": "heuristics only",
+      "ambiguity": {
+        "platform": "darwin/amd64",
+        "candidates": [
+          "hugo_0.134.0_darwin-universal.tar.gz",
+          "hugo_extended_0.134.0_darwin-universal.tar.gz",
+          "hugo_extended_withdeploy_0.134.0_darwin-universal.tar.gz"
+        ]
+      }
+    },
+    {
+      "name": "standard edition chosen",
+      "overrides": {
+        "darwin/amd64": "hugo_0.*_darwin-universal.tar.gz",
+        "darwin/arm64": "hugo_0.*_darwin-universal.tar.gz",
+        "linux/amd64": "hugo_0.*_linux-amd64.tar.gz",
+        "linux/arm64": "hugo_0.*_linux-arm64.tar.gz"
+      },
+      "chosen": {
+        "darwin/amd64": "hugo_0.134.0_darwin-universal.tar.gz",
+        "darwin/arm64": "hugo_0.134.0_darwin-universal.tar.gz",
+        "dragonfly/amd64": "hugo_0.134.0_dragonfly-amd64.tar.gz",
+        "freebsd/amd64": "hugo_0.134.0_freebsd-amd64.tar.gz",
+        "linux/amd64": "hugo_0.134.0_linux-amd64.tar.gz",
+        "linux/arm64": "hugo_0.134.0_linux-arm64.tar.gz",
+        "netbsd/amd64": "hugo_0.134.0_netbsd-amd64.tar.gz",
+        "openbsd/amd64": "hugo_0.134.0_openbsd-amd64.tar.gz",
+        "solaris/amd64": "hugo_0.134.0_solaris-amd64.tar.gz"
+      },
+      "skipped": {
+        "hugo_0.134.0_checksums.txt": "signature, checksum or metadata file",
+        "hugo_0.134.0_darwin-universal.pkg": "OS package",
+        "hugo_0.134.0_linux-amd64.deb": "OS package",
+        "hugo_0.134.0_linux-arm.tar.gz": "32-bit ARM (platform variants are not supported)",
+        "hugo_0.134.0_linux-arm64.deb": "OS package",
+        "hugo_0.134.0_windows-amd64.zip": "Windows asset",
+        "hugo_0.134.0_windows-arm64.zip": "Windows asset",
+        "hugo_extended_0.134.0_darwin-universal.pkg": "OS package",
+        "hugo_extended_0.134.0_darwin-universal.tar.gz": "hugo_0.134.0_darwin-universal.tar.gz preferred for darwin/amd64",
+        "hugo_extended_0.134.0_linux-amd64.deb": "OS package",
+        "hugo_extended_0.134.0_linux-amd64.tar.gz": "hugo_0.134.0_linux-amd64.tar.gz preferred for linux/amd64",
+        "hugo_extended_0.134.0_linux-arm64.deb": "OS package",
+        "hugo_extended_0.134.0_linux-arm64.tar.gz": "hugo_0.134.0_linux-arm64.tar.gz preferred for linux/arm64",
+        "hugo_extended_0.134.0_windows-amd64.zip": "Windows asset",
+        "hugo_extended_withdeploy_0.134.0_darwin-universal.pkg": "OS package",
+        "hugo_extended_withdeploy_0.134.0_darwin-universal.tar.gz": "hugo_0.134.0_darwin-universal.tar.gz preferred for darwin/amd64",
+        "hugo_extended_withdeploy_0.134.0_linux-amd64.deb": "OS package",
+        "hugo_extended_withdeploy_0.134.0_linux-amd64.tar.gz": "hugo_0.134.0_linux-amd64.tar.gz preferred for linux/amd64",
+        "hugo_extended_withdeploy_0.134.0_linux-arm64.deb": "OS package",
+        "hugo_extended_withdeploy_0.134.0_linux-arm64.tar.gz": "hugo_0.134.0_linux-arm64.tar.gz preferred for linux/arm64",
+        "hugo_extended_withdeploy_0.134.0_windows-amd64.zip": "Windows asset"
+      }
+    }
+  ]
+}

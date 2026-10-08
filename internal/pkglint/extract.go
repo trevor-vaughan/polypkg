@@ -1,0 +1,244 @@
+package pkglint
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+
+	"github.com/trevor-vaughan/polypkg/internal/action"
+	"github.com/trevor-vaughan/polypkg/internal/archive"
+	"github.com/trevor-vaughan/polypkg/internal/schema"
+)
+
+// checkExtract adds the checks the extract action needs beyond its registry
+// ParamSpec kinds. PKG010: src must name a file under $PKG/ and dest a
+// directory strictly below $ACTIVE/<package name>/ (the only places apply
+// lets the action read and write), dest must not be created by an action that
+// runs before it nor sit below a file such an action places, strip_components
+// must pass action.CheckStripComponents, and include must be a non-empty list
+// whose patterns pass
+// action.CheckIncludePattern; the action runs the same two validators at
+// apply time. Values of the wrong kind (a fractional strip_components, a
+// non-string include entry) are checkValue's finding and are not reported
+// again here. PKG012: a src that exists in the package source must be no
+// larger than a package member may be and must start with the magic bytes of
+// an archive format apply can unpack. !starlark values are computed at apply
+// time and are not checked; a missing param is PKG002's finding and a missing
+// src file is PKG006's.
+func checkExtract(pkg *schema.Package, idx *docIndex, dir string) []Finding {
+	var out []Finding
+	for i, v := range pkg.Actions {
+		if v.Action != "extract" {
+			continue
+		}
+		add := func(ruleID, param, msg string) {
+			out = append(out, Finding{
+				RuleID: ruleID, Severity: SeverityError, File: "polypkg.yaml",
+				Loc:     loc(idx.paramNode(i, param)),
+				Message: fmt.Sprintf("action %q parameter %q %s", v.Action, param, msg),
+			})
+		}
+		if raw, present := v.Params["src"]; present {
+			switch s := raw.(type) {
+			case schema.StarlarkExpr:
+				// computed at apply time
+			case string:
+				rel, ok := underPrefix(s, "$PKG/")
+				if !ok {
+					add("PKG010", "src", fmt.Sprintf("value %q must name a file under $PKG/", s))
+				} else if problem := archiveProblem(dir, rel); problem != "" {
+					add("PKG012", "src", fmt.Sprintf("references %q, %s", rel, problem))
+				}
+			default:
+				add("PKG010", "src", fmt.Sprintf("value %v must be a string", raw))
+			}
+		}
+		if raw, present := v.Params["dest"]; present {
+			switch s := raw.(type) {
+			case schema.StarlarkExpr:
+				// computed at apply time
+			case string:
+				prefix := "$ACTIVE/" + pkg.Name + "/"
+				if rel, ok := underPrefix(s, prefix); !ok {
+					add("PKG010", "dest", fmt.Sprintf("value %q must name a directory below $ACTIVE/%s/", s, pkg.Name))
+				} else if c, found := earlierCollision(pkg, i, prefix+rel); found {
+					where := fmt.Sprintf("actions[%d]", c.at)
+					if line := loc(idx.actionNode(c.at)).Line; line > 0 {
+						where = fmt.Sprintf("line %d", line)
+					}
+					earlier := pkg.Actions[c.at].Action
+					if c.parent {
+						add("PKG010", "dest", fmt.Sprintf("value %q cannot be created when extract runs: the %q action at %s first places %q, a file or a link out of the package directory, and extract cannot create a directory below it",
+							s, earlier, where, c.created))
+					} else {
+						add("PKG010", "dest", fmt.Sprintf("value %q already exists when extract runs: the %q action at %s creates %q first, and extract refuses an existing dest",
+							s, earlier, where, c.created))
+					}
+				}
+			default:
+				add("PKG010", "dest", fmt.Sprintf("value %v must be a string", raw))
+			}
+		}
+		if raw, present := v.Params["strip_components"]; present {
+			_, computed := raw.(schema.StarlarkExpr)
+			// A value that is not an integer is checkValue's finding; skip it
+			// rather than report the parameter twice.
+			isInt := checkValue(action.ParamSpec{Name: "strip_components", Kind: action.KindInt}, raw) == ""
+			if !computed && isInt {
+				if _, err := action.CheckStripComponents(raw); err != nil {
+					add("PKG010", "strip_components", err.Error())
+				}
+			}
+		}
+		if list, ok := v.Params["include"].([]any); ok {
+			if len(list) == 0 {
+				add("PKG010", "include", "is an empty list; omit include to unpack every member")
+			}
+			for _, e := range list {
+				if p, ok := e.(string); ok { // a non-string entry is checkValue's finding
+					if err := action.CheckIncludePattern(p); err != nil {
+						add("PKG010", "include", err.Error())
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// underPrefix reports whether s is prefix followed by a relative path that
+// stays strictly below prefix once cleaned, and returns that path cleaned.
+// "$PKG/../x", "$PKG/", "$PKG/." and "$PKG/x/.." are all refused.
+func underPrefix(s, prefix string) (string, bool) {
+	rest, ok := strings.CutPrefix(s, prefix)
+	if !ok || !filepath.IsLocal(filepath.FromSlash(rest)) {
+		return "", false
+	}
+	rel := path.Clean(rest)
+	if rel == "." {
+		return "", false
+	}
+	return rel, true
+}
+
+// archiveProblem inspects the src file rel (slash-separated, relative to the
+// package source dir) and returns why apply could not unpack it, or "" when
+// its leading bytes are an archive format apply supports. A file larger than
+// the per-member limit can never install: the artifact extraction that
+// precedes every apply refuses it. A missing file
+// returns "": PKG006 reports it. A symlink at the file or at any directory
+// leading to it is reported without being followed, because repo build
+// refuses every symlink in content/ (the extract action itself would follow
+// one that stays inside the package). The file is reached through an os.Root
+// so lint cannot read outside the package, and it is stat'ed before it is
+// opened so a FIFO cannot block lint. Lint does not
+// decompress: a compressed stream that holds no tar is apply's to refuse.
+func archiveProblem(dir, rel string) string {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Sprintf("which cannot be read: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+	// repo build refuses a symlink anywhere in content/, so lint does too:
+	// Lstat each component, the file and every directory leading to it.
+	const symlinkRefused = "repo build refuses any symlink in content/, so the package could not be published"
+	segs := strings.Split(rel, "/")
+	for i := range segs {
+		prefix := strings.Join(segs[:i+1], "/")
+		info, err := root.Lstat(filepath.FromSlash(prefix))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return ""
+		case err != nil:
+			return fmt.Sprintf("which cannot be read: %v", err)
+		case info.Mode()&fs.ModeSymlink == 0:
+			continue
+		case i == len(segs)-1:
+			return "which is a symlink; " + symlinkRefused
+		default:
+			return fmt.Sprintf("but %q is a symlink; %s", prefix, symlinkRefused)
+		}
+	}
+	name := filepath.FromSlash(rel)
+	info, err := root.Stat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		return fmt.Sprintf("which resolves outside the package or cannot be read: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "which is not a regular file"
+	}
+	if limit := archive.DefaultLimits().MaxFileBytes; info.Size() > limit {
+		return fmt.Sprintf("which is %d bytes; package members are limited to %d GiB, so the package could never install",
+			info.Size(), limit>>30)
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return fmt.Sprintf("which cannot be read: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, archive.DetectHeaderLen)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return fmt.Sprintf("which cannot be read: %v", err)
+	}
+	if _, err := archive.Detect(head[:n]); err != nil {
+		return fmt.Sprintf("which apply cannot unpack: %v", err)
+	}
+	return ""
+}
+
+// collision is an earlier action whose placement stops extract from creating
+// its dest.
+type collision struct {
+	at      int    // the earlier action's index in pkg.Actions
+	created string // the path it names, as written in the manifest
+	// parent reports that created is a leaf (action.CreatesLeaf) at a strict
+	// ancestor of dest; otherwise created is dest itself or a path below it.
+	parent bool
+}
+
+// earlierCollision returns the action that runs first among those that run
+// before pkg.Actions[i] and either create dest (a cleaned
+// "$ACTIVE/<name>/<rel>" path) or a path below it, or create a leaf at an
+// ancestor of dest; found is false when none does. What each action creates
+// comes from its registry ParamSpec.Creates. Actions run in action.PhaseRank
+// order, then declaration order within a phase, so an action declared later
+// but in an earlier phase wins. Only literal values are compared.
+func earlierCollision(pkg *schema.Package, i int, dest string) (c collision, found bool) {
+	rank, ok := action.PhaseRank(pkg.Actions[i].Phase)
+	if !ok {
+		return collision{}, false
+	}
+	bestRank := 0
+	for j, a := range pkg.Actions {
+		r, ok := action.PhaseRank(a.Phase)
+		if j == i || !ok || r > rank || (r == rank && j > i) || (found && r >= bestRank) {
+			continue
+		}
+		for _, ps := range action.Registry[a.Action].Params {
+			if ps.Creates == action.CreatesNothing {
+				continue
+			}
+			s, ok := a.Params[ps.Name].(string)
+			if !ok {
+				continue
+			}
+			p := path.Clean(s)
+			atOrBelow := p == dest || strings.HasPrefix(p, dest+"/")
+			leafAbove := ps.Creates == action.CreatesLeaf && strings.HasPrefix(dest, p+"/")
+			if atOrBelow || leafAbove {
+				c, found, bestRank = collision{at: j, created: s, parent: !atOrBelow}, true, r
+				break
+			}
+		}
+	}
+	return c, found
+}

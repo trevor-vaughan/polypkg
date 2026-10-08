@@ -185,3 +185,75 @@ var _ = Describe("Decide KeptByAge", func() {
 		Expect(dec.KeptByAge).To(Equal([]int{1}))
 	})
 })
+
+var _ = Describe("Decide incomplete generations", func() {
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+
+	It("removes an incomplete generation regardless of the age window", func() {
+		gens := []Generation{
+			{ID: 1, CommittedAt: now.Add(-time.Hour)},
+			{ID: 2, Incomplete: true},
+			{ID: 3, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 5, Age: 30 * 24 * time.Hour}, now)
+		Expect(dec.Remove).To(Equal([]int{2}))
+		Expect(dec.Keep).To(Equal([]int{1, 3}))
+		Expect(dec.KeptByAge).To(BeEmpty())
+	})
+
+	It("does not let an incomplete generation take a --count slot", func() {
+		gens := []Generation{
+			{ID: 1, CommittedAt: now.Add(-48 * time.Hour)},
+			{ID: 2, CommittedAt: now.Add(-24 * time.Hour), IsCurrent: true},
+			{ID: 3, Incomplete: true},
+		}
+		dec := Decide(gens, Policy{Count: 2, Age: 0}, now)
+		Expect(dec.Keep).To(Equal([]int{1, 2}))
+		Expect(dec.Remove).To(Equal([]int{3}))
+	})
+
+	It("never removes the current generation even when it is incomplete", func() {
+		gens := []Generation{{ID: 4, Incomplete: true, IsCurrent: true}}
+		dec := Decide(gens, Policy{Count: 1, Age: 0}, now)
+		Expect(dec.Keep).To(Equal([]int{4}))
+		Expect(dec.Remove).To(BeEmpty())
+	})
+
+	It("keeps a pinned incomplete generation (the substrate refuses to remove pins)", func() {
+		gens := []Generation{
+			{ID: 1, Incomplete: true, Pinned: true},
+			{ID: 2, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 1, Age: 0}, now)
+		Expect(dec.Keep).To(Equal([]int{1, 2}))
+		Expect(dec.Remove).To(BeEmpty())
+	})
+})
+
+var _ = Describe("Decide damaged generations", func() {
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+
+	It("never removes a damaged generation, at any age or under any --count", func() {
+		gens := []Generation{
+			{ID: 1, Damaged: true},
+			{ID: 2, Damaged: true, CommittedAt: now.Add(-365 * 24 * time.Hour)},
+			{ID: 3, CommittedAt: now.Add(-48 * time.Hour)},
+			{ID: 4, CommittedAt: now, IsCurrent: true},
+		}
+		dec := Decide(gens, Policy{Count: 1, Age: 0}, now)
+		Expect(dec.Keep).To(Equal([]int{1, 2, 4}))
+		Expect(dec.Remove).To(Equal([]int{3}))
+		Expect(dec.KeptByAge).To(BeEmpty())
+	})
+
+	It("does not let a damaged generation take a --count slot", func() {
+		gens := []Generation{
+			{ID: 1, CommittedAt: now.Add(-48 * time.Hour)},
+			{ID: 2, CommittedAt: now.Add(-24 * time.Hour), IsCurrent: true},
+			{ID: 3, Damaged: true},
+		}
+		dec := Decide(gens, Policy{Count: 2, Age: 0}, now)
+		Expect(dec.Keep).To(Equal([]int{1, 2, 3}))
+		Expect(dec.Remove).To(BeEmpty())
+	})
+})

@@ -1,6 +1,6 @@
 // Package lock provides per-scope advisory file locking for polypkg. It records
-// holder metadata (PID, hostname, epoch) to support stale-lock recovery, which
-// is implemented in a later milestone; M1 is fail-fast with an optional wait.
+// holder metadata (PID, hostname, epoch) for stale-lock recovery, which is not
+// implemented: acquisition fails fast, with an optional wait.
 package lock
 
 import (

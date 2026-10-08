@@ -49,9 +49,7 @@ var _ = Describe("writeBridgeSummary", func() {
 
 var _ = Describe("link command no-generation error", func() {
 	It("returns CLIError with apply hint when no generation exists", func() {
-		dir := GinkgoT().TempDir()
-		GinkgoT().Setenv("XDG_DATA_HOME", dir+"/data")
-		GinkgoT().Setenv("XDG_BIN_HOME", dir+"/bin")
+		sandboxUserEnv(GinkgoTB())
 		root := NewRootCmd()
 		root.SetArgs([]string{"link"})
 		err := root.Execute()

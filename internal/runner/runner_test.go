@@ -105,6 +105,71 @@ var _ = Describe("Run", func() {
 			Expect(found).To(BeTrue(), "expected gc.run event with trigger=opportunistic")
 		})
 
+		It("removes a generation a crashed apply left behind, even inside the age window", func() {
+			tmp := GinkgoT().TempDir()
+			sub, err := substrate.NewOwnStore(tmp)
+			Expect(err).NotTo(HaveOccurred())
+			w := &recordingWriter{}
+			r := New(Options{
+				Substrate: sub, AuditWriter: w, LockPath: filepath.Join(tmp, "apply.lock"),
+				Scope:    "user",
+				GCPolicy: &gc.Policy{Count: 5, Age: 30 * 24 * time.Hour},
+			})
+			mk := func() {
+				m := &schema.Manifest{
+					Schema: "polypkg.manifest/v2", Scope: "user",
+					Entries: []schema.ManifestEntry{},
+					ProducedBy: schema.ProducedBy{Tool: "polypkg", Version: "test", Host: "h",
+						Timestamp: time.Now().UTC()},
+				}
+				_, err := r.Run(context.Background(), m, nil)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			mk() // gen 1
+			// A crashed apply: a transaction begun on another handle and never
+			// committed or aborted leaves generations/2/ without a manifest.
+			crashed, err := substrate.NewOwnStore(tmp)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(crashed.BeginTransaction("tx-crashed")).To(Succeed())
+			mk() // gen 3: opportunistic GC removes the incomplete gen 2
+
+			gens, err := sub.ListGenerations()
+			Expect(err).NotTo(HaveOccurred())
+			ids := make([]int, 0, len(gens))
+			for _, g := range gens {
+				ids = append(ids, g.ID)
+			}
+			sort.Ints(ids)
+			Expect(ids).To(Equal([]int{1, 3}))
+		})
+
+		It("keeps a damaged generation through opportunistic GC", func() {
+			tmp := GinkgoT().TempDir()
+			sub, err := substrate.NewOwnStore(tmp)
+			Expect(err).NotTo(HaveOccurred())
+			r := New(Options{
+				Substrate: sub, AuditWriter: &recordingWriter{}, LockPath: filepath.Join(tmp, "apply.lock"),
+				Scope:    "user",
+				GCPolicy: &gc.Policy{Count: 1, Age: 0},
+			})
+			mk := func() {
+				m := &schema.Manifest{
+					Schema: "polypkg.manifest/v2", Scope: "user",
+					Entries: []schema.ManifestEntry{},
+					ProducedBy: schema.ProducedBy{Tool: "polypkg", Version: "test", Host: "h",
+						Timestamp: time.Now().UTC()},
+				}
+				_, err := r.Run(context.Background(), m, nil)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			mk() // gen 1
+			Expect(os.WriteFile(filepath.Join(tmp, "generations", "1", "manifest.json"), []byte("not json"), 0o600)).To(Succeed())
+			mk() // gen 2: opportunistic GC under --count 1 must keep the damaged gen 1
+
+			_, statErr := os.Stat(filepath.Join(tmp, "generations", "1", "manifest.json"))
+			Expect(statErr).NotTo(HaveOccurred())
+		})
+
 		It("skips GC entirely when GCPolicy is nil", func() {
 			tmp := GinkgoT().TempDir()
 			sub, err := substrate.NewOwnStore(tmp)

@@ -27,6 +27,7 @@ type poolBlob struct {
 type packageWork struct {
 	name        string
 	version     string
+	platform    string // "os/arch" from the package's polypkg.yaml; "" = platform-agnostic
 	contentHash string // "blake3:…" of the artifact
 	artifact    []byte
 	fingerprint string // cache freshness token: SourceFingerprint (source) or contentHash (prebuilt)
@@ -36,12 +37,15 @@ type packageWork struct {
 	pkg         *schema.Package
 }
 
-// nextRevision computes the informational republish ordinal for version/ch,
-// using the build-cache entry (by cacheKey) as the primary source and the
-// published index as the cold-cache floor.
-func nextRevision(cache *BuildCache, pubIdx *schema.Index, cacheKey, name, version, ch string) int {
+// nextRevision computes the informational republish ordinal for one
+// (name, version, platform) at content hash ch, using the build-cache entry (by
+// cacheKey) as the primary source and the published index as the cold-cache
+// floor. platform is "" for a platform-agnostic artifact. The ordinal is per
+// platform: each platform's artifact is republished independently, so
+// rebuilding the linux artifact must not bump the darwin one.
+func nextRevision(cache *BuildCache, pubIdx *schema.Index, cacheKey, name, version, platform, ch string) int {
 	revision := 1
-	if prev, ok := cache.Get(cacheKey); ok && prev.Version == version {
+	if prev, ok := cache.Get(cacheKey); ok && prev.Version == version && prev.Platform == platform {
 		if prev.ContentHash == ch {
 			return prev.Revision
 		}
@@ -49,7 +53,7 @@ func nextRevision(cache *BuildCache, pubIdx *schema.Index, cacheKey, name, versi
 	} else if pubIdx != nil {
 		for i := range pubIdx.Packages[name] {
 			pe := &pubIdx.Packages[name][i]
-			if pe.Version != version {
+			if pe.Version != version || pe.Platform != platform {
 				continue
 			}
 			if pe.ContentHash == ch {
@@ -220,11 +224,28 @@ func (b *Builder) prebuiltAttestations(scratchDir, attDir, name, version, ch str
 // pre-built-ingest paths. outputDir is the repo output root.
 func (b *Builder) emitPackage(outputDir string, w packageWork, revision int) (schema.IndexEntry, CacheEntry, error) {
 	artName := "pool/" + strings.TrimPrefix(w.contentHash, "blake3:") + ".tar.zst"
+	entry := schema.IndexEntry{
+		Version:      w.version,
+		Platform:     w.platform,
+		ContentHash:  w.contentHash,
+		Artifact:     artName,
+		Revision:     revision,
+		Attestations: w.attRefs,
+		Depends:      w.pkg.Depends,
+		Recommends:   w.pkg.Recommends,
+		Suggests:     w.pkg.Suggests,
+		Provides:     w.pkg.Provides,
+		Conflicts:    w.pkg.Conflicts,
+		Obsoletes:    w.pkg.Obsoletes,
+	}
 	artPath := filepath.Join(outputDir, artName)
 	if err := writeAtomic(artPath, w.artifact); err != nil {
 		return schema.IndexEntry{}, CacheEntry{}, &PublishError{Msg: fmt.Sprintf("write artifact %s", artName), Err: err}
 	}
-	sig := b.key.SignArtifact(w.name, w.version, w.artifact)
+	// Sign the platform the entry publishes: the consumer compares the claim
+	// with exactly this field, so deriving both from one value keeps them in
+	// lockstep.
+	sig := b.key.SignArtifact(w.name, w.version, entry.Platform, w.artifact)
 	if err := writeAtomic(artPath+".minisig", []byte(sig)); err != nil {
 		return schema.IndexEntry{}, CacheEntry{}, &PublishError{Msg: fmt.Sprintf("write artifact signature %s.minisig", artName), Err: err}
 	}
@@ -237,24 +258,12 @@ func (b *Builder) emitPackage(outputDir string, w packageWork, revision int) (sc
 			return schema.IndexEntry{}, CacheEntry{}, &PublishError{Msg: fmt.Sprintf("write attestation signature %s.minisig", blob.name), Err: err}
 		}
 	}
-	entry := schema.IndexEntry{
-		Version:      w.version,
-		ContentHash:  w.contentHash,
-		Artifact:     artName,
-		Revision:     revision,
-		Attestations: w.attRefs,
-		Depends:      w.pkg.Depends,
-		Recommends:   w.pkg.Recommends,
-		Suggests:     w.pkg.Suggests,
-		Provides:     w.pkg.Provides,
-		Conflicts:    w.pkg.Conflicts,
-		Obsoletes:    w.pkg.Obsoletes,
-	}
 	ce := CacheEntry{
 		Fingerprint: w.fingerprint,
 		ContentHash: w.contentHash,
 		Artifact:    artName,
 		Version:     w.version,
+		Platform:    w.platform,
 		Revision:    revision,
 		Depends:     w.pkg.Depends,
 		Recommends:  w.pkg.Recommends,

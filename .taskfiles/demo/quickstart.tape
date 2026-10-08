@@ -28,7 +28,7 @@ Type "# describe what should be installed; polypkg makes the system match" Enter
 Sleep 1s
 Type "REPO=~/repo/public" Enter
 Sleep 400ms
-Type "polypkg init --source-name demo --source-url file://$REPO --trust-root-file $REPO/trust_root.pub" Enter
+Type "polypkg init --source-name demo --source-url file://$REPO --trust-root $REPO/trust_root.pub" Enter
 Sleep 2.5s
 
 Hide

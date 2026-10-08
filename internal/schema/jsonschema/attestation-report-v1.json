@@ -11,7 +11,8 @@
       "additionalProperties": false,
       "properties": {
         "scope": { "type": "string", "minLength": 1 },
-        "generations": { "type": "array", "items": { "type": "integer" } }
+        "generations": { "type": "array", "items": { "type": "integer" } },
+        "skipped_incomplete": { "type": "array", "items": { "type": "integer" } }
       }
     },
     "packages": {

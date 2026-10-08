@@ -13,11 +13,10 @@ import (
 
 // e2e_purge_test.go covers the purge confirmation gate: an inactive package
 // must not be purged without --yes when stdin is not a terminal. The command's
-// stdin is wired to a non-*os.File reader so isInteractive() is deterministically
-// false (matching a piped/redirected stdin in production); the test runner's own
-// os.Stdin is a character device, so leaving it as the default would instead take
-// the interactive prompt path. The active-refuse and --yes success paths are
-// already covered by e2e_state_test.go.
+// stdin is wired to a non-*os.File reader so isInteractive() is
+// deterministically false (matching a piped/redirected stdin in production),
+// whatever the test runner's own stdin is. The active-refuse and --yes success
+// paths are already covered by e2e_state_test.go.
 var _ = Describe("purge non-interactive confirmation", func() {
 	It("refuses to purge an inactive package without --yes when stdin is not a terminal", func() {
 		t := GinkgoTB()

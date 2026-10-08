@@ -540,7 +540,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 		Expect(attState.CarriedBindings[0].PredicateType).To(Equal("https://slsa.dev/provenance/v1"))
 	})
 
-	// Sigstore carriage (2c-3b): a dev.sigstore.bundle whose inner in-toto subject
+	// Sigstore carriage: a dev.sigstore.bundle whose inner in-toto subject
 	// digest is the sha256 of the extracted file verifies OFFLINE against the
 	// source's mirrored SigstoreRoot (selected by the bundle's integrated time),
 	// records verified-offline, and captures the Fulcio identity. The fixtures are
@@ -581,7 +581,7 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			bundleBytes := readFixture("bindable-bundle.json")
 			content := readFixture("bindable-content.bin")
 			// unrelated-root.json is a DIFFERENT CA over the same validity window, so
-			// SigstoreRootAt selects it and the kernel genuinely runs — but it never
+			// SigstoreRootsAt selects it and the kernel genuinely runs — but it never
 			// signed this bundle, so verification fails. This is the innermost
 			// verdict.Verified gate a nil bundle can never exercise.
 			var unrelatedRoot schema.SigstoreRoot
@@ -606,6 +606,52 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			Expect(b.CertificateIdentity).To(BeEmpty())
 			Expect(b.CertificateIssuer).To(BeEmpty())
 		})
+
+		// Fulcio CA windows overlap across a rotation, so the first mirrored
+		// root live at the bundle's integrated time need not be the CA that
+		// signed it. Each entry puts a root that cannot verify the bundle FIRST,
+		// sharing the signing root's window; stopping at it would leave the
+		// binding transport-only.
+		DescribeTable("tries every root live at the integrated time: a root that cannot verify ahead of the signing CA still verifies offline",
+			func(leading func(signing schema.SigstoreRoot) schema.SigstoreRoot) {
+				bundleBytes := readFixture("bindable-bundle.json")
+				content := readFixture("bindable-content.bin")
+				var signingRoot schema.SigstoreRoot
+				Expect(json.Unmarshal(readFixture("bindable-root.json"), &signingRoot)).To(Succeed())
+
+				pkgRoot := writeExtracted(map[string][]byte{"bin/app": content})
+				tb := trust.NewBundleForTesting(nil, []schema.SigstoreRoot{leading(signingRoot), signingRoot})
+				attState := &schema.AttestationState{Status: "verified", PolicyAtInstall: "warn"}
+				refs := []carriedRef{{
+					ref: schema.AttestationRef{
+						Kind:     schema.KindCarriedOpaque,
+						Artifact: "pool/sig.att.json",
+						Format:   schema.FormatSigstoreBundle,
+					},
+					bytes: bundleBytes,
+				}}
+				Expect(errOf(bindCarriedRefs(refs, []byte("tarball"), pkgRoot, tb, nil, nil, attState))).To(Succeed())
+				Expect(attState.CarriedBindings).To(HaveLen(1))
+				b := attState.CarriedBindings[0]
+				Expect(b.Tier).To(Equal(schema.CarriedTierVerifiedOffline))
+				Expect(b.CertificateIdentity).NotTo(BeEmpty())
+				Expect(b.CertificateIssuer).NotTo(BeEmpty())
+			},
+			Entry("a different CA", func(schema.SigstoreRoot) schema.SigstoreRoot {
+				var unrelated schema.SigstoreRoot
+				Expect(json.Unmarshal(readFixture("unrelated-root.json"), &unrelated)).To(Succeed())
+				return unrelated
+			}),
+			// An empty Fulcio CA set makes the root unusable: building its
+			// trusted material fails, and the next candidate must still be tried.
+			Entry("an unusable root with no Fulcio CA", func(signing schema.SigstoreRoot) schema.SigstoreRoot {
+				unusable := signing
+				unusable.FulcioCA = nil
+				_, err := attest.SigstoreTrustedMaterial(unusable)
+				Expect(err).To(HaveOccurred())
+				return unusable
+			}),
+		)
 
 		It("falls back to verified-transport-only when the source publishes no sigstore root", func() {
 			bundleBytes := readFixture("bindable-bundle.json")
@@ -744,7 +790,9 @@ var _ = Describe("bindCarriedRefs install-time binding", func() {
 			// The mirror carries the correct in-window root A (would verify on its own),
 			// but the consumer pins root A with a window that excludes the bundle's
 			// integrated time. A set-but-unusable pin must NOT fall back to the mirror —
-			// that fallback would reopen the D-4 G1 asymmetry. Fails closed.
+			// that fallback would let a mirror-supplied root vouch for a sigstore
+			// identity again, reopening the gap the pin closes (threat G1). Fails
+			// closed.
 			var correctMirror schema.SigstoreRoot
 			Expect(json.Unmarshal(readFixture("bindable-root.json"), &correctMirror)).To(Succeed())
 			var pin schema.SigstoreRoot

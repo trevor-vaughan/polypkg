@@ -67,15 +67,29 @@ func DispatchActions(ctx context.Context, pkg *schema.Package, pkgRoot string, s
 				}
 			}
 		}
-		res, err2 := spec.Handler(inv, scope)
-		if err2 != nil {
-			return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, pkg.Name, err2)
+		// A single-result action is the one-element case of a multi-result one,
+		// so both feed the same per-Result recording below.
+		var results []action.Result
+		var herr error
+		if spec.MultiHandler != nil {
+			results, herr = spec.MultiHandler(inv, scope)
+		} else {
+			var res action.Result
+			res, herr = spec.Handler(inv, scope)
+			results = []action.Result{res}
 		}
-		if res.Outcome != "ok" {
-			return nil, fmt.Errorf("action %s (pkg %s) failed: %s", v.Action, pkg.Name, res.ErrorMsg)
+		if herr != nil {
+			return nil, fmt.Errorf("action %s (pkg %s): %w", v.Action, pkg.Name, herr)
 		}
-		out.Warnings = append(out.Warnings, res.Warnings...)
-		if action.IsFilePlacing(v.Action) {
+		for i := range results {
+			res := &results[i]
+			if res.Outcome != "ok" {
+				return nil, fmt.Errorf("action %s (pkg %s) failed: %s", v.Action, pkg.Name, res.ErrorMsg)
+			}
+			out.Warnings = append(out.Warnings, res.Warnings...)
+			if !action.IsFilePlacing(v.Action) {
+				continue
+			}
 			rel, err := filepath.Rel(scope.ActiveRoot, res.Path)
 			if err != nil {
 				return nil, fmt.Errorf("action %s (pkg %s): relativize %q: %w", v.Action, pkg.Name, res.Path, err)
@@ -83,7 +97,7 @@ func DispatchActions(ctx context.Context, pkg *schema.Package, pkgRoot string, s
 			ownPath := filepath.ToSlash(rel)
 			// The action may choose its own drift policy (config does, from its
 			// replacement policy); otherwise fall back to the declared drift or
-			// the notify_heal default (apply-semantics §6.2).
+			// the notify_heal default.
 			policy := res.DriftPolicy
 			if policy == "" {
 				policy = v.Drift

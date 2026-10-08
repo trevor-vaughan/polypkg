@@ -25,10 +25,6 @@ import (
 // symlinks — exactly the path rollback executes — not just dir existence.
 var _ = Describe("same-version republish integrity", Ordered, func() {
 	var (
-		anchor, signer           minisignKeypair
-		repoDir, srvURL          string
-		trustRoot                string
-		artifactA, artifactB     []byte
 		contentADir, contentBDir string
 		dataHome, extractRoot    string
 	)
@@ -47,14 +43,14 @@ var _ = Describe("same-version republish integrity", Ordered, func() {
 		dataHome = os.Getenv("XDG_DATA_HOME")
 		extractRoot = filepath.Join(os.Getenv("XDG_STATE_HOME"), "polypkg", "pkg-extract")
 
-		anchor = newMinisignKeypair(t)
-		signer = newMinisignKeypair(t)
-		repoDir = t.TempDir()
+		anchor := newMinisignKeypair(t)
+		signer := newMinisignKeypair(t)
+		repoDir := t.TempDir()
 
 		// Same name, same version, different placed-file bytes: the exact
 		// same-version-republish shape that exposed the bug.
-		artifactA = buildPkg(t, "widget", "1.0.0", "content-A")
-		artifactB = buildPkg(t, "widget", "1.0.0", "content-B")
+		artifactA := buildPkg(t, "widget", "1.0.0", "content-A")
+		artifactB := buildPkg(t, "widget", "1.0.0", "content-B")
 		contentADir = extractstore.DirName("widget", "1.0.0", blakeHash(artifactA))
 		contentBDir = extractstore.DirName("widget", "1.0.0", blakeHash(artifactB))
 
@@ -62,21 +58,22 @@ var _ = Describe("same-version republish integrity", Ordered, func() {
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 1,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactA})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", artifactA)
-		trustRoot = writeTrustRoot(t, anchor)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", "", artifactA)
+		trustRoot := writeTrustRoot(t, anchor)
 
 		srv := httptest.NewServer(http.FileServer(http.Dir(repoDir)))
 		DeferCleanup(srv.Close)
-		srvURL = srv.URL
 
 		profile := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "polypkg", "profile.yaml")
 		GinkgoT().Setenv("POLYPKG_PROFILE", profile)
-		out, err := runCmd("init", "--source-url", srvURL, "--trust-root-file", trustRoot)
+		out, err := runCmd("init", "--source-url", srv.URL, "--trust-root", trustRoot)
 		Expect(err).NotTo(HaveOccurred(), "init: %s", out)
-	})
 
-	It("installs content A and pins the generation", func() {
-		out, err := runCmd("install", "widget@=1.0.0")
+		// The whole journey up to the republish lives here, not in specs, so
+		// every spec below runs on its own (ginkgo --focus) as well as in
+		// sequence: each one needs generations 1 (content A, pinned) and 3
+		// (content B) to exist.
+		out, err = runCmd("install", "widget@=1.0.0") // generation 1
 		Expect(err).NotTo(HaveOccurred(), "install widget: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
@@ -85,27 +82,24 @@ var _ = Describe("same-version republish integrity", Ordered, func() {
 
 		body, rerr := os.ReadFile(placedFile("1"))
 		Expect(rerr).NotTo(HaveOccurred(), "read gen 1 placed file")
-		Expect(string(body)).To(Equal("content-A"))
-	})
+		Expect(string(body)).To(Equal("content-A"), "baseline: generation 1 places content A")
 
-	It("republishes widget 1.0.0 with different content and reinstalls", func() {
 		// Republish at serial 2 with the SAME anchor+signer (fresh keys would
 		// break the trust chain). Artifact B gets a distinct published path —
 		// mirroring the real publisher's content-addressed pool — so the
 		// client's name-keyed artifact cache cannot serve stale content-A bytes.
-		t := GinkgoTB()
 		poolB := "pool/" + contentBDir + ".tar.zst"
 		publishTrustDoc(t, repoDir, "native", anchor, 2,
 			[]trustKeySpec{{kp: signer, roles: []string{"index", "artifact"}}}, nil)
 		publishIndex(t, repoDir, signer, 2,
 			indexPkg{name: "widget", version: "1.0.0", artifact: artifactB, artifactName: poolB})
-		writeArtifact(t, repoDir, signer, "widget", "1.0.0", poolB, artifactB)
+		writeArtifact(t, repoDir, signer, "widget", "1.0.0", "", poolB, artifactB)
 
-		out, err := runCmd("remove", "widget") // auto-applies generation 2
+		out, err = runCmd("remove", "widget") // generation 2
 		Expect(err).NotTo(HaveOccurred(), "remove widget: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 
-		out, err = runCmd("install", "widget@=1.0.0") // auto-applies generation 3
+		out, err = runCmd("install", "widget@=1.0.0") // generation 3
 		Expect(err).NotTo(HaveOccurred(), "reinstall widget: %s", out)
 		Expect(out).To(ContainSubstring("applied generation"))
 	})

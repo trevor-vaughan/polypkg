@@ -66,7 +66,8 @@ func applyProfileWith(t testing.TB, repoURL, trustRoot string, names ...string) 
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"apply", profilePath})
-	return out.String(), cmd.Execute()
+	err := cmd.Execute()
+	return out.String(), err
 }
 
 // planProfileWith writes a multi-package profile naming the given packages and
@@ -83,7 +84,8 @@ func planProfileWith(t testing.TB, repoURL, trustRoot string, names ...string) (
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"plan", profilePath})
-	return out.String(), cmd.Execute()
+	err := cmd.Execute()
+	return out.String(), err
 }
 
 var _ = Describe("path action and shared-path conflict e2e", func() {

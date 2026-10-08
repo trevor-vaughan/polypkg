@@ -28,7 +28,9 @@
           "pinned":         { "type": "boolean" },
           "pinned_reason":  { "type": "string" },
           "is_current":     { "type": "boolean" },
-          "bytes_on_disk":  { "type": "integer", "minimum": 0 }
+          "bytes_on_disk":  { "type": "integer", "minimum": 0 },
+          "incomplete":     { "type": "boolean" },
+          "damaged":        { "type": "boolean" }
         }
       }
     },
@@ -62,9 +64,10 @@
         "required": ["package", "version", "key_id"],
         "additionalProperties": false,
         "properties": {
-          "package": { "type": "string" },
-          "version": { "type": "string" },
-          "key_id":  { "type": "string" }
+          "package":  { "type": "string" },
+          "version":  { "type": "string" },
+          "platform": { "type": "string", "pattern": "^(any|[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?)$" },
+          "key_id":   { "type": "string" }
         }
       }
     },
@@ -75,8 +78,9 @@
         "additionalProperties": false,
         "required": ["package", "version", "attestation_hash"],
         "properties": {
-          "package": { "type": "string" },
-          "version": { "type": "string" },
+          "package":  { "type": "string" },
+          "version":  { "type": "string" },
+          "platform": { "type": "string", "pattern": "^(any|[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?)$" },
           "attestation_hash": { "type": "string" }
         }
       }

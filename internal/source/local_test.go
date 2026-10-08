@@ -44,18 +44,22 @@ var _ = Describe("localTransport", func() {
 			content := []byte("hello from local repo")
 			Expect(os.WriteFile(filepath.Join(root, "index.json"), content, 0o644)).To(Succeed())
 
-			got, err := lt.get(ctx, "index.json", maxIndexBytes)
+			got, err := lt.get(ctx, "index.json", maxIndexBytes, metadataFetch)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(content))
 		})
 
-		It("returns a FetchError wrapping 404 for a missing file", func() {
-			_, err := lt.get(ctx, "nonexistent.json", maxIndexBytes)
+		It("reports a missing file as not found, naming the source, without a made-up HTTP status", func() {
+			lt.source = "zeta"
+			_, err := lt.get(ctx, "nonexistent.json", maxIndexBytes, metadataFetch)
 			Expect(err).To(HaveOccurred())
 
 			var fe *FetchError
 			Expect(errors.As(err, &fe)).To(BeTrue(), "expected *FetchError, got %T: %v", err, err)
-			Expect(fe.Status).To(Equal(404))
+			Expect(fe.NotFound()).To(BeTrue())
+			Expect(fe.Status).To(Equal(0))
+			Expect(fe.Source).To(Equal("zeta"))
+			Expect(fe.Error()).To(Equal("fetch " + filepath.Join(root, "nonexistent.json") + ": file does not exist"))
 		})
 
 		It("blocks path traversal that would escape root", func() {
@@ -65,7 +69,7 @@ var _ = Describe("localTransport", func() {
 			Expect(os.WriteFile(secret, []byte("secret"), 0o644)).To(Succeed())
 			DeferCleanup(func() { _ = os.Remove(secret) })
 
-			_, err := lt.get(ctx, "../secret.txt", maxIndexBytes)
+			_, err := lt.get(ctx, "../secret.txt", maxIndexBytes, metadataFetch)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("escapes"))
 		})
@@ -74,7 +78,7 @@ var _ = Describe("localTransport", func() {
 			// Write 10 bytes but pass a limit of 5.
 			Expect(os.WriteFile(filepath.Join(root, "big.bin"), make([]byte, 10), 0o644)).To(Succeed())
 
-			_, err := lt.get(ctx, "big.bin", 5)
+			_, err := lt.get(ctx, "big.bin", 5, metadataFetch)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("limit"))
 		})
@@ -109,7 +113,7 @@ var _ = Describe("NativeBackend (local source)", func() {
 	Describe("FetchIndex", func() {
 		It("returns raw index and signature from local dir", func() {
 			root := GinkgoT().TempDir()
-			indexContent := []byte(`{"schema":"polypkg.index/v2","expires":"2099-01-01T00:00:00Z","packages":{}}`)
+			indexContent := []byte(`{"schema":"polypkg.index/v3","expires":"2099-01-01T00:00:00Z","packages":{}}`)
 			sigContent := []byte("untrusted comment: x\nSIGDATA\n")
 			Expect(os.WriteFile(filepath.Join(root, "index.json"), indexContent, 0o644)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(root, "index.json.minisig"), sigContent, 0o644)).To(Succeed())

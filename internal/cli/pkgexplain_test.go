@@ -9,10 +9,15 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/trevor-vaughan/polypkg/internal/action"
+	"github.com/trevor-vaughan/polypkg/internal/platform"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 )
 
 var _ = Describe("pkg explain", func() {
+	It("labels a list-valued parameter as a list", func() {
+		Expect(paramKindName(action.KindStringList)).To(Equal("list"))
+	})
+
 	It("renders the phase lifecycle, path vars, and the build-outside model in text mode", func() {
 		root := NewRootCmd()
 		var out bytes.Buffer
@@ -105,5 +110,105 @@ var _ = Describe("pkg explain", func() {
 		phases, ok := result.Data["phases"].([]any)
 		Expect(ok).To(BeTrue(), "data.phases must be a JSON array")
 		Expect(phases).To(HaveLen(6))
+	})
+
+	It("documents per-platform artifacts before fat !starlark artifacts", func() {
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "explain"})
+		Expect(root.Execute()).To(Succeed())
+
+		text := out.String()
+		Expect(text).To(ContainSubstring("Per-platform artifacts"))
+		Expect(text).To(ContainSubstring(platformExample))
+		Expect(text).To(ContainSubstring(`platform-agnostic ("any")`))
+		Expect(text).To(ContainSubstring("Fat artifact"))
+		Expect(text).NotTo(ContainSubstring("ships a single artifact by default"))
+		Expect(strings.Index(text, platformExample)).To(BeNumerically("<", strings.Index(text, starlarkExample)))
+	})
+
+	It("shows a platform example that the producer grammar accepts", func() {
+		Expect(platform.ValidateProducer(strings.TrimPrefix(platformExample, "platform: "))).To(Succeed())
+	})
+
+	It("adds the platform example to the json envelope without removing existing keys", func() {
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "explain", "--format", "json"})
+		Expect(root.Execute()).To(Succeed())
+
+		var result schema.CLIResult
+		Expect(json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result)).To(Succeed())
+		Expect(result.Data["platform_example"]).To(Equal(platformExample))
+		Expect(result.Data["starlark_example"]).To(Equal(starlarkExample))
+		notes, ok := result.Data["notes"].([]any)
+		Expect(ok).To(BeTrue(), "data.notes must be a JSON array")
+		Expect(notes).To(HaveLen(4))
+		Expect(notes).To(ContainElement(ContainSubstring("platform: <os>/<arch>")))
+	})
+
+	It("lists the extract action with the parameters its registry entry declares", func() {
+		spec, ok := action.Registry["extract"]
+		Expect(ok).To(BeTrue(), "the extract action must be registered")
+
+		root := NewRootCmd()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"pkg", "explain"})
+		Expect(root.Execute()).To(Succeed())
+
+		var row string
+		for _, line := range strings.Split(out.String(), "\n") {
+			if f := strings.Fields(line); len(f) > 0 && f[0] == "extract" {
+				row = line
+			}
+		}
+		Expect(row).NotTo(BeEmpty(), "pkg explain must print an extract row")
+		Expect(row).To(ContainSubstring(formatParams(spec.Params)))
+		Expect(row).To(ContainSubstring("src* (path)"))
+		Expect(row).To(ContainSubstring("dest* (path)"))
+		Expect(row).To(ContainSubstring("strip_components (int)"))
+		Expect(row).To(ContainSubstring("include ("))
+		// drift is an action-level key, not a parameter.
+		Expect(row).NotTo(ContainSubstring("drift"))
+
+		root = NewRootCmd()
+		var jout bytes.Buffer
+		root.SetOut(&jout)
+		root.SetErr(&jout)
+		root.SetArgs([]string{"pkg", "explain", "--format", "json"})
+		Expect(root.Execute()).To(Succeed())
+
+		var result schema.CLIResult
+		Expect(json.Unmarshal([]byte(strings.TrimSpace(jout.String())), &result)).To(Succeed())
+		actions, ok := result.Data["actions"].([]any)
+		Expect(ok).To(BeTrue(), "data.actions must be a JSON array")
+		var params []any
+		for _, a := range actions {
+			m, ok := a.(map[string]any)
+			Expect(ok).To(BeTrue())
+			if m["name"] == "extract" {
+				params, ok = m["params"].([]any)
+				Expect(ok).To(BeTrue(), "extract params must be a JSON array")
+			}
+		}
+		required := map[string]bool{}
+		for _, p := range params {
+			m, ok := p.(map[string]any)
+			Expect(ok).To(BeTrue())
+			name, ok := m["name"].(string)
+			Expect(ok).To(BeTrue())
+			req, ok := m["required"].(bool)
+			Expect(ok).To(BeTrue())
+			required[name] = req
+		}
+		Expect(required).To(Equal(map[string]bool{
+			"src": true, "dest": true, "strip_components": false, "include": false,
+		}))
 	})
 })

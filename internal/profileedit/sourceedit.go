@@ -28,7 +28,9 @@ var ErrReservedSourceName = errors.New(`source name "order" is reserved for the 
 
 // SourceEdit is one mutation of the sources section. When Remove is true the
 // named source (and its order entry) are deleted; otherwise the source is
-// added or updated in place.
+// added or updated in place. An update rewrites type, url and trust_root only:
+// the source keeps its sources.order position, and a source that is not in
+// sources.order is not added to it.
 type SourceEdit struct {
 	Name       string
 	Remove     bool
@@ -36,6 +38,21 @@ type SourceEdit struct {
 	URL        string // must be a valid URI; the schema backstop catches violations
 	TrustRoot  string
 	OrderFirst bool // prepend to sources.order instead of append (add only)
+	// CreateOnly refuses an edit whose source already exists, returning
+	// *SourceExistsError. The check runs on the same parse that is written
+	// back, so a source added concurrently after a caller's own pre-check is
+	// still never overwritten.
+	CreateOnly bool
+}
+
+// SourceExistsError reports a CreateOnly edit of a source the profile already
+// has.
+type SourceExistsError struct {
+	Name string
+}
+
+func (e *SourceExistsError) Error() string {
+	return fmt.Sprintf("source %q already exists", e.Name)
 }
 
 // SourceNotInProfileError reports a remove of a source the profile doesn't have.
@@ -151,31 +168,36 @@ func applyOneSourceYAML(root *yaml.Node, e SourceEdit) error {
 	return upsertSourceYAML(root, e)
 }
 
-// upsertSourceYAML adds or updates the named source under sources:<name> and
-// ensures it appears in sources.order (appended or prepended per OrderFirst).
+// upsertSourceYAML adds or updates the named source under sources:<name>. A
+// new source joins sources.order (appended, or prepended per OrderFirst); an
+// update never touches sources.order.
 func upsertSourceYAML(root *yaml.Node, e SourceEdit) error {
 	sources, err := getOrCreateMap(root, "sources")
 	if err != nil {
 		return err
 	}
 
-	// Upsert the source mapping.
+	// Update an existing source in place, touching only type/url/trust_root so
+	// unmanaged keys (e.g. trust_doc) survive. Its place in sources.order is
+	// the operator's choice, including leaving it out to make it reachable
+	// only through a per-package source pin, so an update leaves order alone.
 	if entry := mapValue(sources, e.Name); entry != nil {
-		// Update existing fields in place; preserve any keys we don't manage
-		// (e.g. trust_doc) by only touching type/url/trust_root.
+		if e.CreateOnly {
+			return &SourceExistsError{Name: e.Name}
+		}
 		setStringField(entry, "type", e.Type)
 		setStringField(entry, "url", e.URL)
 		setStringField(entry, "trust_root", e.TrustRoot)
-	} else {
-		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: e.Name}
-		valNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		setStringField(valNode, "type", e.Type)
-		setStringField(valNode, "url", e.URL)
-		setStringField(valNode, "trust_root", e.TrustRoot)
-		sources.Content = append(sources.Content, keyNode, valNode)
+		return nil
 	}
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: e.Name}
+	valNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setStringField(valNode, "type", e.Type)
+	setStringField(valNode, "url", e.URL)
+	setStringField(valNode, "trust_root", e.TrustRoot)
+	sources.Content = append(sources.Content, keyNode, valNode)
 
-	// Ensure the name is in sources.order.
+	// A new source joins sources.order.
 	orderNode, err := getOrCreateSeq(sources, "order")
 	if err != nil {
 		return fmt.Errorf("sources.order: %w", err)
@@ -327,9 +349,9 @@ func applyOneSourceJSONC(v *hujson.Value, e SourceEdit) error {
 	return upsertSourceJSONC(v, e)
 }
 
-// upsertSourceJSONC adds or updates /sources/<name> and maintains the
-// /sources/order array. It creates /sources if absent (mirroring the package
-// path's parent-creation pattern).
+// upsertSourceJSONC adds or updates /sources/<name>. A new source joins the
+// /sources/order array; an update leaves that array alone. It creates /sources
+// if absent (mirroring the package path's parent-creation pattern).
 //
 // When the source already exists, only the managed fields (type, url,
 // trust_root) are patched individually so that unmanaged keys such as
@@ -351,6 +373,9 @@ func upsertSourceJSONC(v *hujson.Value, e SourceEdit) error {
 	}
 
 	sourceExists := v.Find(leafPtr) != nil
+	if sourceExists && e.CreateOnly {
+		return &SourceExistsError{Name: e.Name}
+	}
 
 	if sourceExists {
 		// Update in place: issue per-field RFC 6902 "add" ops so that unmanaged
@@ -391,9 +416,13 @@ func upsertSourceJSONC(v *hujson.Value, e SourceEdit) error {
 	if err := v.Patch(patch); err != nil {
 		return err
 	}
+	if sourceExists {
+		// As on the YAML path, an update leaves /sources/order alone.
+		return nil
+	}
 
-	// Maintain order array: ensure e.Name is present. We do this after
-	// applying the source patch so the sources object exists.
+	// A new source joins the order array. This runs after the source patch so
+	// the sources object exists.
 	return ensureInOrderJSONC(v, orderPtr, e.Name, e.OrderFirst)
 }
 

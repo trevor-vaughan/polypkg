@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -210,6 +211,37 @@ var _ = Describe("DispatchActions unknown action", func() {
 	})
 })
 
+var _ = Describe("DispatchActions computed mode", func() {
+	It("refuses a !starlark mode that evaluates to an unsafe value", func() {
+		dir := GinkgoT().TempDir()
+		active := filepath.Join(dir, "active")
+		scope := action.Scope{ActiveRoot: active, PackageName: "hello"}
+		pkg := &schema.Package{
+			Schema:  "polypkg.package/v1",
+			Name:    "hello",
+			Version: "1.0.0",
+			Actions: []schema.PackageAction{{
+				Phase:  "post-place",
+				Action: "dir",
+				Params: map[string]any{
+					"path": "$ACTIVE/hello/data",
+					"mode": schema.StarlarkExpr{Source: `return "0o777"`},
+				},
+			}},
+		}
+
+		ev := starlarkeval.NewInProcessEvaluator(starlarkeval.Limits{
+			MaxSteps: 1_000_000, Timeout: time.Second, MaxMemoryBytes: 64 << 20, MaxOutputBytes: 64 << 10,
+		})
+		_, err := DispatchActions(context.Background(), pkg, filepath.Join(dir, "pkg-root"), scope, "post-place", ev, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring(`refusing mode "0o777"`)))
+		Expect(err.Error()).To(ContainSubstring("sets group-write, other-write;"))
+
+		_, statErr := os.Stat(active)
+		Expect(os.IsNotExist(statErr)).To(BeTrue(), "a refused computed mode must not create anything")
+	})
+})
+
 var _ = Describe("substituteParams", func() {
 	It("evaluates a Starlark expression then substitutes template variables", func() {
 		ev := starlarkeval.NewInProcessEvaluator(starlarkeval.Limits{
@@ -232,5 +264,66 @@ var _ = Describe("substituteParams", func() {
 		params := map[string]any{"dest": schema.StarlarkExpr{Source: `return 5`}}
 		_, err := substituteParams(context.Background(), params, "/a", "/p", starlarkeval.Inputs{}, ev)
 		Expect(err).To(MatchError(ContainSubstring("must be a string")))
+	})
+})
+
+var _ = Describe("DispatchActions multi-result actions", func() {
+	// registerMulti installs a throwaway multi-result action for one spec and
+	// removes it afterwards, so the real Registry is unchanged for other specs.
+	registerMulti := func(h func(action.Invocation, action.Scope) ([]action.Result, error)) {
+		action.Registry["test-multi"] = action.Spec{Name: "test-multi", FilePlacing: true, MultiHandler: h}
+		DeferCleanup(func() { delete(action.Registry, "test-multi") })
+	}
+	multiPkg := func() *schema.Package {
+		return &schema.Package{
+			Schema: "polypkg.package/v1", Name: "hello", Version: "1.0.0",
+			Actions: []schema.PackageAction{{Phase: "post-place", Action: "test-multi", Drift: "refuse", Params: map[string]any{}}},
+		}
+	}
+
+	It("records one ownership entry per returned result", func() {
+		warning := action.ConfigWarning{Kind: "test", Fields: map[string]any{"n": 1}}
+		registerMulti(func(_ action.Invocation, s action.Scope) ([]action.Result, error) {
+			base := filepath.Join(s.ActiveRoot, s.PackageName, "tree")
+			return []action.Result{
+				{Action: "test-multi", Path: base, Outcome: "ok",
+					Expected: schema.Expected{FileType: "dir", Mode: "0700"}},
+				{Action: "test-multi", Path: filepath.Join(base, "f"), Outcome: "ok",
+					Expected: schema.Expected{FileType: "regular", ContentHash: "blake3:aa", Mode: "0644"},
+					Warnings: []action.ConfigWarning{warning}},
+			}, nil
+		})
+		scope := action.Scope{ActiveRoot: GinkgoT().TempDir(), PackageName: "hello"}
+		out, err := DispatchActions(context.Background(), multiPkg(), GinkgoT().TempDir(), scope, "post-place", nil, nil, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out.Entries).To(Equal([]schema.OwnershipEntry{
+			{Path: "hello/tree", Package: "hello", Version: "1.0.0", Action: "test-multi",
+				Expected: schema.Expected{FileType: "dir", Mode: "0700"}, DriftPolicy: "refuse"},
+			{Path: "hello/tree/f", Package: "hello", Version: "1.0.0", Action: "test-multi",
+				Expected: schema.Expected{FileType: "regular", ContentHash: "blake3:aa", Mode: "0644"}, DriftPolicy: "refuse"},
+		}))
+		Expect(out.Warnings).To(ConsistOf(warning))
+	})
+
+	It("fails the phase when any returned result is not ok", func() {
+		registerMulti(func(_ action.Invocation, s action.Scope) ([]action.Result, error) {
+			base := filepath.Join(s.ActiveRoot, s.PackageName, "tree")
+			return []action.Result{
+				{Action: "test-multi", Path: base, Outcome: "ok", Expected: schema.Expected{FileType: "dir", Mode: "0700"}},
+				{Action: "test-multi", Path: filepath.Join(base, "f"), Outcome: "error", ErrorMsg: "boom"},
+			}, nil
+		})
+		scope := action.Scope{ActiveRoot: GinkgoT().TempDir(), PackageName: "hello"}
+		_, err := DispatchActions(context.Background(), multiPkg(), GinkgoT().TempDir(), scope, "post-place", nil, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring("action test-multi (pkg hello) failed: boom")))
+	})
+
+	It("wraps a multi-result handler error with the action and package", func() {
+		registerMulti(func(action.Invocation, action.Scope) ([]action.Result, error) {
+			return nil, errors.New("archive refused")
+		})
+		scope := action.Scope{ActiveRoot: GinkgoT().TempDir(), PackageName: "hello"}
+		_, err := DispatchActions(context.Background(), multiPkg(), GinkgoT().TempDir(), scope, "post-place", nil, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring("action test-multi (pkg hello): archive refused")))
 	})
 })

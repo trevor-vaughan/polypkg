@@ -47,7 +47,7 @@ type TrustBundle struct {
 	Source        string         `json:"source"`
 	Serial        uint64         `json:"serial"`
 	IssuedAt      string         `json:"issued_at,omitempty"`
-	Expires       string         `json:"expires"` // RFC3339; consumer rejects stale (D13)
+	Expires       string         `json:"expires"` // RFC3339; consumer rejects stale
 	BuilderKeys   []BuilderKey   `json:"builder_keys,omitempty"`
 	SigstoreRoots []SigstoreRoot `json:"sigstore_roots,omitempty"`
 }
@@ -58,6 +58,9 @@ func ParseTrustBundle(r io.Reader) (*TrustBundle, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("read trust bundle: %w", err)
+	}
+	if err := checkNotNewer(data, trustBundleSchemaV1); err != nil {
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

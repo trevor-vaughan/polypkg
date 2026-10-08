@@ -21,6 +21,7 @@ type Resolved struct {
 	Version       string
 	ContentHash   string
 	Artifact      string
+	Platform      string                  // index entry platform; "" = platform-agnostic
 	Attestations  []schema.AttestationRef // signed attestation refs from the index entry
 	Source        string                  // source the chosen candidate came from
 	Weak          bool                    // present via Recommends, not the hard closure
@@ -75,7 +76,7 @@ func resolveChosen(roots []Requirement, cat *Catalog, budget int) (map[string]*C
 func chosenToResolved(chosen map[string]*Candidate, hardNames map[string]bool, weakBy map[string][]string) []Resolved {
 	out := make([]Resolved, 0, len(chosen))
 	for _, c := range chosen {
-		r := Resolved{Name: c.Name, Version: c.Version, ContentHash: c.ContentHash, Artifact: c.Artifact, Attestations: c.Attestations, Source: c.Source}
+		r := Resolved{Name: c.Name, Version: c.Version, ContentHash: c.ContentHash, Artifact: c.Artifact, Platform: c.Platform, Attestations: c.Attestations, Source: c.Source}
 		if hardNames != nil && !hardNames[c.Name] {
 			r.Weak = true
 			r.RecommendedBy = weakBy[c.Name]
@@ -225,13 +226,18 @@ func (s *solver) recurse(queue []node, chosen map[string]*Candidate) *ResolveErr
 // noCandidateError builds the failure for a requirement that no catalog
 // candidate can satisfy, classifying it so the CLI can speak to the user's two
 // real questions — is the NAME wrong, or the VERSION? When the catalog holds no
-// entry for the name at all it is KindUnknownName; when the name is present but
-// no version matches the constraint it is KindNoVersion carrying the known
+// entry for the name at all it is KindUnknownName; when the name is published
+// only for other platforms, or no host version matches the constraint but
+// another platform's does, it is KindWrongPlatform; when the name is present but no version matches the
+// constraint on any platform it is KindNoVersion carrying the known
 // versions (newest first). The residual case — versions exist in range but are
 // all excluded by the current selection (a pin clash surfaced via forward
 // checking) — stays KindNoCandidate, the pre-existing generic shape.
 func (s *solver) noCandidateError(req Requirement, path []string) *ResolveError {
 	if !s.cat.knownName(req.Name) {
+		if we := s.cat.wrongPlatformError(req, path); we != nil {
+			return we
+		}
 		return &ResolveError{Kind: KindUnknownName, Requirement: req, Path: path}
 	}
 	// KindNoVersion applies only when the constraint itself excludes every
@@ -240,6 +246,9 @@ func (s *solver) noCandidateError(req Requirement, path []string) *ResolveError 
 	// candidate was excluded by the current selection (a pin clash caught by
 	// forward checking); that is a generic no-candidate, not a version mismatch.
 	if len(s.cat.candidatesFor(req)) == 0 {
+		if we := s.cat.wrongPlatformVersionError(req, path); we != nil {
+			return we
+		}
 		if avail := s.cat.availableVersions(req.Name); len(avail) > 0 {
 			return &ResolveError{Kind: KindNoVersion, Requirement: req, Path: path, Available: avail}
 		}

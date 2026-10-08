@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,54 +25,83 @@ func newPkgBuildCmd() *cobra.Command {
 unsigned <name>-<version>.tar.zst, prints its BLAKE3 digest, and writes the
 unsigned in-toto attestation preview <name>-<version>.att.json — the exact
 statement the publisher will sign.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<dir>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPkgBuild(cmd, args[0], outDir)
+			format, ferr := resolveFormat(cmd)
+			if ferr != nil {
+				return ferr
+			}
+			return WrapError(cmd, format, "pkg build", runPkgBuild(cmd, format, args[0], outDir))
 		},
 	}
 	cmd.Flags().StringVarP(&outDir, "output", "o", ".", "Directory to write the artifact and attestation preview")
 	return cmd
 }
 
-func runPkgBuild(cmd *cobra.Command, dir, outDir string) error {
+func runPkgBuild(cmd *cobra.Command, format Format, dir, outDir string) error {
 	// Create the output directory before linting so an unwritable destination
 	// fails fast instead of after the full lint+pack run.
 	if err := os.MkdirAll(outDir, 0o755); err != nil { //nolint:gosec // G301: author-chosen output dir for distributable build products; 0755 is intentional
-		return &CLIError{Msg: fmt.Sprintf("pkg build: create output dir %q", outDir), Err: err}
+		return &CLIError{
+			Msg:  fsFailureMsg("cannot create output directory "+outDir, err),
+			Hint: "pass -o with a directory you can create and write to",
+			Err:  err,
+		}
 	}
 
 	res, err := pkglint.Lint(dir)
 	if err != nil {
-		return &CLIError{Msg: fmt.Sprintf("cannot lint %q", dir), Err: err}
+		return packageSourceError(dir, err)
 	}
 	if res.HasErrors() {
-		pkglint.WriteHuman(cmd.OutOrStdout(), res)
-		return &CLIError{Msg: "pkg build: lint found error-severity issues; not packing"}
+		pkglint.WriteHuman(humanReportWriter(cmd, format), res)
+		return &CLIError{Msg: "lint found error-severity issues; not packing"}
 	}
 
 	artifact, pkg, err := repo.PackArtifact(dir)
+	var refusal *repo.PackRefusal
+	if errors.As(err, &refusal) {
+		return &CLIError{Msg: fmt.Sprintf("cannot pack %q: %s", dir, refusal.Msg), Hint: refusal.Hint, Err: err}
+	}
 	if err != nil {
-		return &CLIError{Msg: "pkg build: pack", Err: err}
+		// Lint has already read and validated polypkg.yaml, so what is left
+		// is reading the files under content/.
+		msg := "cannot pack " + dir
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			msg = fsFailureMsg(fmt.Sprintf("cannot pack %s: cannot read %s", dir, pathErr.Path), err)
+		}
+		return &CLIError{Msg: msg, Hint: fmt.Sprintf("check that every file under %s is readable", dir), Err: err}
 	}
 	base := fmt.Sprintf("%s-%s", pkg.Name, pkg.Version)
+	writeHint := fmt.Sprintf("check that %s is writable, or pass -o with another directory", outDir)
 	artifactPath := filepath.Join(outDir, base+".tar.zst")
 	if err := os.WriteFile(artifactPath, artifact, 0o644); err != nil { //nolint:gosec // G306: the artifact is public distribution material; 0644 is intentional
-		return &CLIError{Msg: "pkg build: write artifact", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot write artifact "+artifactPath, err), Hint: writeHint, Err: err}
 	}
 
+	// Encoding polypkg's own lint report and statement cannot fail on any
+	// input an author controls; an error here is a polypkg bug.
+	encodeErr := func(err error) error {
+		return &CLIError{
+			Msg:  "cannot assemble the attestation preview for " + base,
+			Hint: "this is a bug in polypkg, not in the package; please report it",
+			Err:  err,
+		}
+	}
 	ch := repo.ContentHash(artifact) // "blake3:<hex>"
 	sarifBytes, err := pkglint.SARIF(res)
 	if err != nil {
-		return &CLIError{Msg: "pkg build: render SARIF", Err: err}
+		return encodeErr(err)
 	}
 	st := attest.AssembleStatement(base+".tar.zst", strings.TrimPrefix(ch, "blake3:"), json.RawMessage(sarifBytes))
 	attBytes, err := st.CanonicalJSON()
 	if err != nil {
-		return &CLIError{Msg: "pkg build: canonicalize attestation", Err: err}
+		return encodeErr(err)
 	}
 	attPath := filepath.Join(outDir, base+".att.json")
 	if err := os.WriteFile(attPath, attBytes, 0o644); err != nil { //nolint:gosec // G306: the attestation preview is public metadata a publisher signs; 0644 is intentional
-		return &CLIError{Msg: "pkg build: write attestation preview", Err: err}
+		return &CLIError{Msg: fsFailureMsg("cannot write attestation preview "+attPath, err), Hint: writeHint, Err: err}
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Built %s\n  artifact:    %s\n  digest:      %s\n  attestation: %s\n",

@@ -1,0 +1,41 @@
+{
+  "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
+  "tlogs": [
+    {
+      "hashAlgorithm": "SHA2_256",
+      "publicKey": {
+        "rawBytes": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEQCnbsv+ZtnVqOJ41xD+7Tq37ch0OiBiS/SVOvv4tmudriDWmI17Q9OGnvRl3zqYX/kG/Zy0pnAc7CN0pjiUj0g==",
+        "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+        "validFor": {
+          "start": "2000-01-01T00:00:00Z",
+          "end": "2100-01-01T00:00:00Z"
+        }
+      },
+      "logId": {
+        "keyId": "NG1or+KRRB+PMfuhhy6iIy1J/rpEahi5WPKLrvscb9Q="
+      }
+    }
+  ],
+  "certificateAuthorities": [
+    {
+      "subject": {
+        "organization": "sigstore.dev",
+        "commonName": "sigstore"
+      },
+      "certChain": {
+        "certificates": [
+          {
+            "rawBytes": "MIIBxzCCAW6gAwIBAgIBATAKBggqhkjOPQQDAjAqMRUwEwYDVQQKEwxzaWdzdG9yZS5kZXYxETAPBgNVBAMTCHNpZ3N0b3JlMB4XDTI2MTAwNjE0MjgxMVoXDTI2MTAwNjE2MzAxMVowNzEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MR4wHAYDVQQDExVzaWdzdG9yZS1pbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJgMM2LHz6C35G7nbF4pc1rqaZGVccCEq0dP9WdBKdvAqpSdnlLYNhmt2S9OvGH676IygPHq3ThkFoPJJTZghKo3gwdjAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUHAwMwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUejAM7FWnw2tj/PDsAz5kO9V9UQgwHwYDVR0jBBgwFoAUkjm+AK4NeZ6hdZ6mOIezpZDrHBIwCgYIKoZIzj0EAwIDRwAwRAIgKEcfChkRbVmX9G+Dmrt4DEGj8wCadQx4TS4HZJQMhiUCIAFGM3R/XXDsGaJo5bdXojyWIzafC5wyCkuo+SLOy4uJ"
+          },
+          {
+            "rawBytes": "MIIBhDCCASugAwIBAgIBATAKBggqhkjOPQQDAjAqMRUwEwYDVQQKEwxzaWdzdG9yZS5kZXYxETAPBgNVBAMTCHNpZ3N0b3JlMB4XDTI2MTAwNjA5MzAxMVoXDTI2MTAwNjE5MzAxMVowKjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABE539xHFOcBgue+zoursfJcHd1cdZJqw79aLuTSNWILAJN67nqPZtudtttTgDQcGEzpNEEUaWWlCPOoYXJ4nO4CjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBSSOb4Arg15nqF1nqY4h7OlkOscEjAKBggqhkjOPQQDAgNHADBEAiB7ZGZY33i5UlUHhUDTukJXdUSppX1lGD0FSOKL/AZ6sQIgSmhSOMh2AwXiYhb62BIVA/U0NaeIzmgucVAzUnXIKGk="
+          }
+        ]
+      },
+      "validFor": {
+        "start": "2000-01-01T00:00:00Z",
+        "end": "2100-01-01T00:00:00Z"
+      }
+    }
+  ]
+}

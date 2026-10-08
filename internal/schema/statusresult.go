@@ -48,6 +48,13 @@ type StatusGenSummary struct {
 	PinnedReason string    `json:"pinned_reason,omitempty"`
 	IsCurrent    bool      `json:"is_current,omitempty"`
 	BytesOnDisk  int64     `json:"bytes_on_disk,omitempty"`
+	// Incomplete is true for a generation an interrupted apply left without a
+	// manifest; rollback refuses it and gc removes it.
+	Incomplete bool `json:"incomplete,omitempty"`
+	// Damaged is true for a generation whose manifest is present but does not
+	// parse or names another generation (corruption or tampering); rollback
+	// refuses it and gc keeps it for an operator to inspect.
+	Damaged bool `json:"damaged,omitempty"`
 }
 
 // StatusGCPreview describes what the next opportunistic GC would do under
@@ -58,7 +65,7 @@ type StatusGCPreview struct {
 }
 
 // StatusGraceEntry reports that one source's signed metadata was accepted under
-// freshness grace at its last fetch (phase 2e-1). WindowExpired is computed at
+// freshness grace at its last fetch. WindowExpired is computed at
 // status time: the accept_expiry_until deadline has itself now passed, so the
 // next fetch will refuse unless the operator extends it.
 type StatusGraceEntry struct {
@@ -70,19 +77,23 @@ type StatusGraceEntry struct {
 
 // StatusRevokedBuilder reports one installed package whose builder-verified
 // binding was signed by a builder key that a configured source's revocation list
-// (as of the last fetch) has since revoked.
+// (as of the last fetch) has since revoked. Platform is the installed artifact's
+// platform ("any" when agnostic); it is absent in output from a polypkg that
+// predates per-platform artifacts.
 type StatusRevokedBuilder struct {
-	Package string `json:"package"`
-	Version string `json:"version"`
-	KeyID   string `json:"key_id"`
+	Package  string `json:"package"`
+	Version  string `json:"version"`
+	Platform string `json:"platform,omitempty"`
+	KeyID    string `json:"key_id"`
 }
 
 // StatusRevokedAttestation reports one installed package carrying an attestation
 // whose content-hash a configured source's revocation list (as of the last fetch)
-// has since revoked.
+// has since revoked. Platform is as for StatusRevokedBuilder.
 type StatusRevokedAttestation struct {
 	Package         string `json:"package"`
 	Version         string `json:"version"`
+	Platform        string `json:"platform,omitempty"`
 	AttestationHash string `json:"attestation_hash"`
 }
 

@@ -46,7 +46,7 @@ var _ = Describe("Action path confinement", func() {
 		Expect(os.WriteFile(secret, []byte("x"), 0o600)).To(Succeed())
 		target := filepath.Join(scope.ActiveRoot, scope.PackageName, "evil", "secret")
 
-		inv := Invocation{Action: "perms", Params: map[string]any{"path": target, "mode": "0o777"}}
+		inv := Invocation{Action: "perms", Params: map[string]any{"path": target, "mode": "0o755"}}
 		_, err := Perms(inv, scope)
 		Expect(err).To(HaveOccurred(), "perms must refuse to chmod through an escaping symlink")
 

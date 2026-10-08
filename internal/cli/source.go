@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/trevor-vaughan/polypkg/internal/lock"
 	"github.com/trevor-vaughan/polypkg/internal/profileedit"
 	"github.com/trevor-vaughan/polypkg/internal/schema"
 	"github.com/trevor-vaughan/polypkg/internal/trust"
@@ -21,12 +23,15 @@ func newSourceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "source",
 		Short: "Manage package sources and their trust roots",
-		Long: `List, add, and remove the package sources in your profile.
+		Long: `List, add, and remove the package sources in your profile, and replace
+their trust roots.
 
 'source add' validates the URL (http(s), file://, or an absolute path) and the
 trust root (a local .pub file or a downloaded+confirmed key), then edits the
 profile in place while preserving comments. 'source remove' drops a source and
-its order entry. 'source list' shows all configured sources in preference order.`,
+its order entry. 'source set-trust-root' replaces the key a source is pinned
+to, after confirmation. 'source list' shows all configured sources in
+preference order.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: requireSubcommand(""),
 	}
@@ -43,7 +48,7 @@ its order entry. 'source list' shows all configured sources in preference order.
 			newSourceListCmd(),
 		}},
 		{"modify", "Modify:", []*cobra.Command{
-			newSourceAddCmd(), newSourceRemoveCmd(),
+			newSourceAddCmd(), newSourceRemoveCmd(), newSourceSetTrustRootCmd(),
 		}},
 	} {
 		cmd.AddGroup(&cobra.Group{ID: g.id, Title: g.title})
@@ -202,7 +207,7 @@ func newSourceAddCmd() *cobra.Command {
 		sourceURL    string
 		trustRoot    string
 		trustRootURL string
-		assumeYes    bool
+		fingerprint  string
 		sourceType   string
 		orderFirst   bool
 	)
@@ -211,37 +216,47 @@ func newSourceAddCmd() *cobra.Command {
 		Short: "Add a package source to the profile",
 		Long: `Add a named source to the active profile.
 
+The name must not already be in the profile. To change a source's trust root
+use 'source set-trust-root'; to change anything else, 'source remove' it and
+add it again.
+
 The source URL (--url) must be an http(s) URL, a file:// URL, or an absolute
 local path. Exactly one of --trust-root or --trust-root-url is required:
 
   --trust-root <file>      local minisign .pub file (validated, then copied
                            into the config dir and pinned by content)
-  --trust-root-url <url>   download the public key, show its fingerprint for
-                           out-of-band verification (TOFU), then persist it;
-                           requires --trust-root-yes when not on a TTY
+  --trust-root-url <url>   download the public key (https, file://, or an
+                           absolute path; plain http is refused), confirm it,
+                           then persist it
+
+A downloaded key is confirmed by --trust-root-fingerprint <key id>, the id
+'polypkg repo key show' prints on the repository host, or else by a prompt on
+a TTY that shows the key id (trust on first use). Without a TTY the
+fingerprint is required. With --trust-root the fingerprint is optional and, if
+given, must match.
 
 The default source type is "polypkg-native". Use --order-first to prepend this
 source to the preference list instead of appending it.
 
 Output honors --format json, emitting a cli-result/v2 envelope with the added source fields.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
 				return ferr
 			}
 			return WrapError(cmd, format, "source add",
-				runSourceAdd(cmd, args[0], sourceURL, trustRoot, trustRootURL, assumeYes, sourceType, orderFirst, format))
+				runSourceAdd(cmd, args[0], sourceURL, trustRoot, trustRootURL, fingerprint, sourceType, orderFirst, format))
 		},
 	}
 	addScopeFlags(cmd)
 	cmd.Flags().StringVar(&sourceURL, "url", "", "Source URL: http(s), file://, or an absolute local path (required)")
 	cmd.Flags().StringVar(&trustRoot, "trust-root", "", "Path to the source's minisign .pub file")
-	cmd.Flags().StringVar(&trustRootURL, "trust-root-url", "", "Download the trust root from this URL and confirm it (TOFU)")
-	cmd.Flags().BoolVar(&assumeYes, "trust-root-yes", false, "Trust the downloaded --trust-root-url key without prompting")
+	cmd.Flags().StringVar(&trustRootURL, "trust-root-url", "", "Download the trust root from this URL (https, file://, or absolute path) and confirm it")
+	cmd.Flags().StringVar(&fingerprint, "trust-root-fingerprint", "", "Expected key id of the trust root (hex, as printed by 'polypkg repo key show'); required with --trust-root-url when not on a TTY")
 	cmd.Flags().StringVar(&sourceType, "type", "polypkg-native", "Source backend type")
 	cmd.Flags().BoolVar(&orderFirst, "order-first", false, "Prepend this source to the preference order instead of appending")
-	_ = cmd.MarkFlagRequired("url")
+	requireFlags(cmd, "url")
 	return cmd
 }
 
@@ -270,13 +285,13 @@ func validateSourceName(name string) error {
 	if !sourceNamePattern.MatchString(name) {
 		return &CLIError{
 			Msg:  fmt.Sprintf("source name %q is not a valid slug", name),
-			Hint: "source names must match ^[a-zA-Z0-9_-]+$ (e.g. handtest)",
+			Hint: "source names must match ^[a-zA-Z0-9_-]+$ (e.g. team-mirror)",
 		}
 	}
 	return nil
 }
 
-func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL string, assumeYes bool, sourceType string, orderFirst bool, format Format) error {
+func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL, fingerprint, sourceType string, orderFirst bool, format Format) error {
 	if err := validateSourceName(name); err != nil {
 		return err
 	}
@@ -307,28 +322,63 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 	if err != nil {
 		return err
 	}
+	p, scope, _, release, err := lockSourceProfile(cmd, profilePath, "source add")
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	// An existing name is refused before any trust root is read or fetched.
+	// Re-adding used to update the entry in place, so one `source add` after a
+	// repository compromise silently re-anchored the source to the attacker's
+	// key; replacing a key is now the explicit job of set-trust-root.
+	if _, exists := p.Sources.Sources[name]; exists {
+		return sourceExistsError(name)
+	}
 
 	// Both routes persist the anchor under the scope config dir and record that
 	// copy, so the profile never points at a path someone else could rewrite.
-	scope, _ := cmd.Flags().GetString("scope")
 	cfgDir, err := scopeConfigDir(scope)
 	if err != nil {
 		return err
 	}
-	// Whether the anchor already existed decides what a failed edit may undo,
-	// so it has to be observed before the copy overwrites it.
+	// persistTrustRoot accepts an anchor already on disk only when it holds
+	// the same key (a leftover from an interrupted add, say). A failed edit
+	// must leave such a file alone, so note whether it was there first.
 	_, statErr := os.Stat(managedTrustRootPath(cfgDir, name))
 	anchorPreExisted := statErr == nil
 
 	var trustRootPath string
 	if hasTrustRoot {
-		trustRootPath, err = pinTrustRootFile(trustRoot, cfgDir, name)
+		trustRootPath, err = pinTrustRootFile(trustRoot, cfgDir, name, fingerprint)
 	} else {
-		// --trust-root-url: download and confirm via TOFU before persisting.
-		trustRootPath, err = acquireTrustRoot(cmd, name, trustRootURL, assumeYes, cfgDir)
+		// --trust-root-url: download and confirm (fingerprint or TOFU prompt)
+		// before persisting.
+		trustRootPath, err = acquireTrustRoot(cmd, name, trustRootURL, fingerprint, cfgDir)
 	}
 	if err != nil {
 		return err
+	}
+
+	// The anchor is written before the profile edit, so a source that never
+	// makes it into the profile would leave one behind. Only an anchor this
+	// run created is ours to remove.
+	discardAnchor := func() {
+		if anchorPreExisted {
+			return
+		}
+		if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
+		}
+	}
+
+	warning, err := probeSource(cmd, p, name, sourceType, normalizedURL, trustRootPath)
+	if err != nil {
+		discardAnchor()
+		return err
+	}
+	if warning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
 	}
 
 	_, err = profileedit.ApplySourceEdits(profilePath, []profileedit.SourceEdit{{
@@ -337,28 +387,34 @@ func runSourceAdd(cmd *cobra.Command, name, sourceURL, trustRoot, trustRootURL s
 		URL:        normalizedURL,
 		TrustRoot:  trustRootPath,
 		OrderFirst: orderFirst,
+		// The pre-check above fails fast before any fetch and runs under the
+		// apply lock, but a hand edit of the profile does not take the lock,
+		// so this repeats the check on the parse that is written back.
+		CreateOnly: true,
 	}})
+	var exists *profileedit.SourceExistsError
+	if errors.As(err, &exists) {
+		// The name was added after the pre-check. Its entry may point at the
+		// same managed path, so the anchor is left alone.
+		return sourceExistsError(name)
+	}
 	if err != nil {
-		// The anchor was written before the edit, so a source that never made
-		// it into the profile would leave one behind. Only an anchor this run
-		// created is ours to remove: if one was already there, the profile's
-		// existing entry still points at it.
-		if !anchorPreExisted {
-			if rmErr := os.Remove(trustRootPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not remove unused trust root %s: %v\n", trustRootPath, rmErr)
-			}
-		}
+		discardAnchor()
 		return &CLIError{Msg: fmt.Sprintf("cannot add source %q to profile", name), Err: err}
 	}
 
-	EmitResult(cmd, format, "source add",
-		map[string]any{
-			"name":        name,
-			"type":        sourceType,
-			"url":         normalizedURL,
-			"trust_root":  trustRootPath,
-			"order_first": orderFirst,
-		},
+	data := map[string]any{
+		"name":        name,
+		"type":        sourceType,
+		"url":         normalizedURL,
+		"trust_root":  trustRootPath,
+		"order_first": orderFirst,
+		"verified":    warning == "",
+	}
+	if warning != "" {
+		data["warning"] = warning
+	}
+	EmitResult(cmd, format, "source add", data,
 		func(w *bytes.Buffer, _ map[string]any) {
 			fmt.Fprintf(w, "added source %s\n", name)
 		})
@@ -384,7 +440,7 @@ If the source is not present in the profile a descriptive error is returned
 listing the names that are configured.
 
 Output honors --format json, emitting a cli-result/v2 envelope with the removed source name.`,
-		Args: cobra.ExactArgs(1),
+		Args: needsArgs(1, 1, "<name>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			format, ferr := resolveFormat(cmd)
 			if ferr != nil {
@@ -403,17 +459,14 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 		return err
 	}
 
-	// Pre-check: refuse to remove the last source so we never hit the schema
-	// minItems:1 violation with a raw jsonschema error.
-	f, err := openProfileFile(cmd, profilePath)
+	p, _, stateHome, release, err := lockSourceProfile(cmd, profilePath, "source remove")
 	if err != nil {
 		return err
 	}
-	p, parseErr := schema.ParseProfile(f, profilePath)
-	_ = f.Close()
-	if parseErr != nil {
-		return &CLIError{Msg: fmt.Sprintf("cannot parse profile %s", profilePath), Err: parseErr}
-	}
+	defer release()
+
+	// Pre-check: refuse to remove the last source so we never hit the schema
+	// minItems:1 violation with a raw jsonschema error.
 	if len(p.Sources.Order) == 1 && p.Sources.Order[0] == name {
 		return &CLIError{
 			Msg:  fmt.Sprintf("cannot remove the last source %q", name),
@@ -433,12 +486,7 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 	if err != nil {
 		var notIn *profileedit.SourceNotInProfileError
 		if errors.As(err, &notIn) {
-			hint := "run `polypkg source list` to see configured sources"
-			msg := fmt.Sprintf("source %s is not in the profile", name)
-			if len(notIn.Known) > 0 {
-				msg = fmt.Sprintf("source %s is not in the profile (configured: %s)", name, strings.Join(notIn.Known, ", "))
-			}
-			return &CLIError{Msg: msg, Hint: hint}
+			return sourceNotInProfileError(name, notIn.Known)
 		}
 		return &CLIError{Msg: fmt.Sprintf("cannot remove source %q from profile", name), Err: err}
 	}
@@ -453,14 +501,11 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 	}
 
 	// Clear the source's persisted anti-rollback floors so a later re-add of the
-	// same name re-pins from a clean trust-on-first-use baseline (spec §10.1
-	// recovery). Best-effort: a stale floor file left behind is a latent bug but
-	// not fatal to the removal that already succeeded, so warn rather than fail.
-	if scope, prefix, serr := resolveScope(cmd, p); serr != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not clear trust state for source %q: %v\n", name, serr)
-	} else if _, stateHome, herr := scopeHomes(scope, prefix); herr != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not clear trust state for source %q: %v\n", name, herr)
-	} else if err := trust.ForgetSeen(stateHome, name); err != nil {
+	// same name re-pins from a clean trust-on-first-use baseline (the documented
+	// way to accept a legitimately re-created repository). Best-effort: a stale
+	// floor file left behind is a latent bug but not fatal to the removal that
+	// already succeeded, so warn rather than fail.
+	if err := trust.ForgetSeen(stateHome, name); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not clear trust state for source %q: %v\n", name, err)
 	}
 
@@ -471,6 +516,84 @@ func runSourceRemove(cmd *cobra.Command, name string, format Format) error {
 		})
 	return nil
 
+}
+
+// lockSourceProfile takes the apply lock of the scope the command targets,
+// failing fast if another command holds it, and returns the profile as parsed
+// under the lock together with the resolved scope and state home. The source
+// commands edit the profile and the per-source anti-rollback state that a
+// running apply reads and writes, so they must not interleave with one. The
+// scope is resolved the way apply resolves it, which needs the profile for
+// its scopes.<scope>.prefix; the profile is then read again under the lock,
+// so every check the caller makes is against the profile it goes on to edit.
+// The caller calls release after its last write.
+func lockSourceProfile(cmd *cobra.Command, profilePath, command string) (p *schema.Profile, scope, stateHome string, release func(), err error) {
+	readProfile := func() (*schema.Profile, error) {
+		f, err := openProfileFile(cmd, profilePath)
+		if err != nil {
+			return nil, err
+		}
+		p, parseErr := schema.ParseProfile(f, profilePath)
+		_ = f.Close()
+		if parseErr != nil {
+			return nil, &CLIError{Msg: fmt.Sprintf("cannot parse profile %s", profilePath), Err: parseErr}
+		}
+		return p, nil
+	}
+
+	p, err = readProfile()
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	scope, prefix, err := resolveScope(cmd, p)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	_, stateHome, err = scopeHomes(scope, prefix)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	if err := os.MkdirAll(stateHome, scopeDirMode(scope)); err != nil {
+		return nil, "", "", nil, fmt.Errorf("create state home: %w", err)
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lockPath := filepath.Join(stateHome, "apply.lock")
+	l, err := lock.Acquire(ctx, lockPath, lock.Options{
+		TxID:    strings.ReplaceAll(command, " ", "-"),
+		Command: "polypkg " + command,
+	})
+	if err != nil {
+		return nil, "", "", nil, lockError(lockPath, err)
+	}
+	release = func() { _ = l.Release() }
+
+	if p, err = readProfile(); err != nil {
+		release()
+		return nil, "", "", nil, err
+	}
+	return p, scope, stateHome, release, nil
+}
+
+// sourceExistsError is the user-facing error for `source add` of a name the
+// profile already defines.
+func sourceExistsError(name string) *CLIError {
+	return &CLIError{
+		Msg:  fmt.Sprintf("source %q already exists", name),
+		Hint: fmt.Sprintf("to change its trust root use `polypkg source set-trust-root %s`; to change anything else, `source remove` then `source add`", name),
+	}
+}
+
+// sourceNotInProfileError is the user-facing error for a command naming a
+// source the profile does not define; known lists the configured names, sorted.
+func sourceNotInProfileError(name string, known []string) *CLIError {
+	msg := fmt.Sprintf("source %s is not in the profile", name)
+	if len(known) > 0 {
+		msg = fmt.Sprintf("source %s is not in the profile (configured: %s)", name, strings.Join(known, ", "))
+	}
+	return &CLIError{Msg: msg, Hint: "run `polypkg source list` to see configured sources"}
 }
 
 // managedOrphanTrustRoot returns the absolute path of the trust-root key that

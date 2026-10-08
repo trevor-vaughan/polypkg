@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -46,6 +47,57 @@ var _ = Describe("argument validation", func() {
 		Expect(out.String()).To(ContainSubstring(`"hint":"usage:`))
 	})
 
+	DescribeTable("names a nested command by its path, without the root, in the JSON envelope",
+		func(want string, args ...string) {
+			cmd := NewRootCmd()
+			cmd.SetArgs(append([]string{"--format", "json"}, args...))
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&bytes.Buffer{})
+			Expect(cmd.Execute()).To(HaveOccurred())
+			var env struct {
+				Command string `json:"command"`
+				Status  string `json:"status"`
+			}
+			Expect(json.Unmarshal(out.Bytes(), &env)).To(Succeed(), "stdout must be one JSON envelope, got %q", out.String())
+			Expect(env.Status).To(Equal("error"))
+			Expect(env.Command).To(Equal(want))
+		},
+		Entry("repo remove", "repo remove", "repo", "remove"),
+		Entry("source add", "source add", "source", "add"),
+		Entry("pkg lint", "pkg lint", "pkg", "lint"),
+		Entry("alternatives list", "alternatives list", "alternatives", "list", "a", "b"),
+		Entry("a top-level command", "purge", "purge"),
+		Entry("generation unpin keeps its documented name", "unpin", "generation", "unpin"),
+	)
+
+	DescribeTable("names the operands of every one-operand and optional-operand command",
+		func(want string, args ...string) {
+			cmd := NewRootCmd()
+			cmd.SetArgs(args)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			err := cmd.Execute()
+			var ce *CLIError
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected a CLIError naming the operands, got %T: %v", err, err)
+			Expect(ce.Msg).To(ContainSubstring(want))
+			Expect(ce.Hint).To(HavePrefix("usage: "))
+		},
+		Entry("source add", "polypkg source add needs <name> (got no arguments)", "source", "add"),
+		Entry("source remove", "polypkg source remove expected <name> (got 2 arguments)", "source", "remove", "a", "b"),
+		Entry("source set-trust-root", "polypkg source set-trust-root needs <name> (got no arguments)", "source", "set-trust-root"),
+		Entry("pkg lint", "polypkg pkg lint needs <dir> (got no arguments)", "pkg", "lint"),
+		Entry("pkg build", "polypkg pkg build needs <dir> (got no arguments)", "pkg", "build"),
+		Entry("pkg init", "polypkg pkg init needs <dir> (got no arguments)", "pkg", "init"),
+		Entry("repo init", "polypkg repo init needs <dir> (got no arguments)", "repo", "init"),
+		Entry("repo remove", "polypkg repo remove needs <name>[@<version>] (got no arguments)", "repo", "remove"),
+		Entry("mirror verify", "polypkg mirror verify needs <bundle.tar> (got no arguments)", "mirror", "verify"),
+		Entry("apply", "polypkg apply expected at most one [profile-file] (got 2 arguments)", "apply", "a.yaml", "b.yaml"),
+		Entry("plan", "polypkg plan expected at most one [profile-file] (got 2 arguments)", "plan", "a.yaml", "b.yaml"),
+		Entry("config reset", "polypkg config reset expected at most one [path] (got 2 arguments)", "config", "reset", "/a", "/b"),
+		Entry("alternatives list", "polypkg alternatives list expected at most one [name] (got 2 arguments)", "alternatives", "list", "a", "b"),
+	)
+
 	It("suggests the closest command for a typo", func() {
 		cmd := NewRootCmd()
 		cmd.SetArgs([]string{"stauts"})
@@ -53,8 +105,9 @@ var _ = Describe("argument validation", func() {
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&errOut)
 		err := cmd.Execute()
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("status"))
+		var ce *CLIError
+		Expect(errors.As(err, &ce)).To(BeTrue())
+		Expect(ce.Hint).To(ContainSubstring("did you mean `polypkg status`?"))
 	})
 })
 
@@ -123,6 +176,30 @@ var _ = Describe("flag parse error shaping", func() {
 		Expect(body).To(ContainSubstring(`"status":"error"`))
 		Expect(body).NotTo(ContainSubstring("strconv"))
 	})
+
+	DescribeTable("names the command by its path in a flag error's JSON envelope",
+		func(want string, args ...string) {
+			cmd := NewRootCmd()
+			cmd.SetArgs(append([]string{"--format", "json"}, args...))
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&bytes.Buffer{})
+			Expect(cmd.Execute()).To(HaveOccurred())
+			var env struct {
+				Command string `json:"command"`
+				Status  string `json:"status"`
+			}
+			Expect(json.Unmarshal(out.Bytes(), &env)).To(Succeed(), "stdout must be one JSON envelope, got %q", out.String())
+			Expect(env.Status).To(Equal("error"))
+			Expect(env.Command).To(Equal(want))
+		},
+		Entry("repo remove, unknown flag", "repo remove", "repo", "remove", "--bogus"),
+		Entry("repo key show, unknown flag", "repo key show", "repo", "key", "show", "--bogus"),
+		Entry("pkg lint, unknown flag", "pkg lint", "pkg", "lint", "--bogus", "x"),
+		Entry("gc, malformed value", "gc", "gc", "--count", "abc"),
+		Entry("generation pin keeps its documented name", "pin", "generation", "pin", "1", "--reason"),
+		Entry("a group with an unknown subcommand", "source", "source", "bogus"),
+	)
 
 	It("falls back to text output when --format flag itself fails to parse", func() {
 		cmd := NewRootCmd()

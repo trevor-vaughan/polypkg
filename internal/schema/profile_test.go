@@ -111,8 +111,8 @@ sources:
 	})
 
 	It("does not evaluate Starlark expressions in package fields", func() {
-		// M1 does not support Starlark; expressions in package fields should
-		// be parsed as raw strings, not evaluated.
+		// Package fields are not Starlark: expressions in them are parsed as
+		// raw strings, not evaluated.
 		src := `
 schema: polypkg.spec/v1
 name: starlark-test

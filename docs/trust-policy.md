@@ -15,8 +15,8 @@ the next fetch is refused while the installed package keeps working:
 <sub>Rendered from [`.taskfiles/demo/trust.tape`](../.taskfiles/demo/trust.tape); regenerate with `task demo:render SCENARIO=trust`.</sub>
 
 > **The trust root is pinned by content, not by path.** Whichever way you
-> supply it — `init --trust-root-file`, `init --trust-root-url`, the wizard, or
-> `source add --trust-root` — polypkg copies the key into
+> supply it — `init --trust-root`, `init --trust-root-url`, the wizard,
+> `source add --trust-root`, or `source set-trust-root` — polypkg copies the key into
 > `<config>/trust/<source>.pub` and records *that* path in the profile. Your own
 > copy is read once and never referenced again, so it does not matter if you
 > pointed at a file inside the repository's own published tree (where `repo init`
@@ -31,7 +31,7 @@ Everything a source serves is verified before it installs:
 
 1. **Signed, fresh metadata.** A source's trust document and index are minisign-signed and carry a monotonic serial plus an `expires` bound. Metadata past its `expires` (with a small clock-skew tolerance) is refused; the error names the document and its expiry, then spells out the two ways forward — `set accept_expiry_until to grace a frozen mirror, or the publisher must re-sign`. A mirror cannot pin you to an old-but-validly-signed catalog.
 2. **Artifact signatures.** Every downloaded artifact is verified against the source's signing key and its BLAKE3 content hash from the signed index.
-3. **Attestations.** Publishers sign a per-package [in-toto](https://in-toto.io/) lint attestation and reference it from the signed index (so it cannot be stripped without invalidating the index signature). When an index entry carries attestations, polypkg verifies the whole chain — the attestation signature under the dedicated `attestation` key role, the content-addressed hash bindings, and that the statement's subject digest matches the artifact — in **every** policy mode.
+3. **Attestations.** Publishers sign a per-package [in-toto](https://in-toto.io/) lint attestation and reference it from the signed index (so it cannot be stripped without invalidating the index signature). When an index entry carries attestations, polypkg verifies the whole chain — the attestation signature under the dedicated `attestation` key role, the content-addressed hash bindings, and that the statement's subject digest matches the artifact — in **every** policy mode. The lint attestation's predicate type is `https://polypkg.dev/attestation/sarif/v1`. A package published with carried external provenance (such as the GitHub build attestations `pkg import` keeps) also gets a link attestation, predicate type `https://polypkg.dev/attestation/link/v1`, which the publisher signs to bind the shipped artifact to the digests that provenance covers. `info` names the verified predicate types after `verified`.
 
 **What an attestation proves: provenance, not benignity.** A verified attestation means the package was lint-checked and published by the holder of the source's signing key and has not been substituted or tampered with since. It does not mean the package is safe to run — vet your sources.
 
@@ -122,6 +122,52 @@ Each `require` predicate type must be carried, digest-bound to the installed byt
 
 A `key` allow-list defends against a compromised publisher unconditionally — it pins the actual public-key bytes, and a publisher cannot forge a signature under a key it does not hold. A `sigstore` allow-list is weaker on its own: it pins only issuer/SAN strings, whose authenticity otherwise rests on the source-mirrored Fulcio root, so a fully-compromised source could mint a certificate bearing any SAN. Close that gap by also pinning the source's `sigstore_root` ([§ "Pinning a source's sigstore root"](#pinning-a-sources-sigstore-root)): a consumer-side pin is authoritative, and the source-mirrored root is then never consulted. Prefer `key` entries where you can — they need no second pin.
 
+### Pinning a GitHub Actions identity
+
+Packages made with [`polypkg pkg import`](authoring.md#import-a-github-release-polypkg-pkg-import)
+carry GitHub's artifact attestations: sigstore bundles whose Fulcio
+certificate names the GitHub Actions workflow run that built the asset. Its
+issuer is always `https://token.actions.githubusercontent.com`, and its SAN is
+the workflow file and the ref it ran from:
+
+```
+https://github.com/<owner>/<repo>/.github/workflows/<file>@<ref>
+```
+
+To accept the GitHub CLI only when GitHub's own release workflow built it:
+
+```yaml
+sources:
+  order: [myrepo]
+  myrepo:
+    # type, url, and trust_root as `polypkg init` wrote them
+    attestation:
+      require:
+        - https://slsa.dev/provenance/v1
+      builders:
+        allow:
+          - sigstore:
+              issuer: https://token.actions.githubusercontent.com
+              san: https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk
+```
+
+Read the exact SAN from an installed package rather than guessing it:
+`polypkg --format json info gh` reports it as `certificate_identity`. To
+accept any ref of that workflow, end the SAN with `@*`; a `*` is a wildcard only
+as the last character (anywhere else it matches literally), and a bare `*` is
+refused. The allow-list applies to every package from the
+source, so a source holding several imported tools needs one entry per
+project's workflow.
+
+A project that builds through a reusable workflow in another repository
+carries *that* workflow's path in the SAN, so the entry must name it. The
+import has already required the certificate's source-repository extension to
+name the project itself, but the allow-list here matches only issuer and SAN.
+On its own a `sigstore` entry also rests on the Fulcio root the source
+publishes; pin the root as well
+([Pinning a source's sigstore root](#pinning-a-sources-sigstore-root)) to
+take that trust off the source.
+
 ## Pinning a source's sigstore root
 
 **`sigstore_root`** (optional). A consumer-pinned sigstore trust root for this source: `valid_from` (RFC3339), optional `valid_until` (RFC3339, open-ended if absent), `fulcio_ca` (base64 DER Fulcio CA cert chain), `rekor_keys` (base64 Rekor public keys), optional `ctlog_keys`. When set, it is **authoritative** for verifying this source's sigstore-format carried attestations — the root mirrored in the source's trust bundle is **not** consulted.
@@ -146,7 +192,7 @@ polypkg remembers, per package, which provenance predicate types were verified a
 
 This is a trust-on-first-use ratchet against a silent provenance downgrade (a compromised or swapped source quietly dropping its SLSA provenance), and it is keyed by package name across sources, so moving a package to a lower-provenance source is caught too.
 
-To accept a legitimate drop (a publisher genuinely stopped shipping a predicate), pin the exact version in the profile — the same escape hatch the version anti-downgrade guard takes ([§ "Downgrade guard"](#downgrade-guard)). Note that `upgrade` and `install <pkg>@<version>` write exact pins, so they also waive the floor for the packages they touch.
+To accept a legitimate drop (a publisher genuinely stopped shipping a predicate), pin the exact version in the profile — the same escape hatch the version anti-downgrade guard takes ([§ "Downgrade guard"](#downgrade-guard)). Only an exact pin waives the floor, and only two commands write one: `install <pkg>@<version>` writes `=<version>`, and `upgrade <pkg>` moves a pin that is already exact to `=<newest>`. Bare `install <pkg>` writes a `>=` floor, bare `upgrade` edits nothing, and `upgrade <pkg>` leaves a range constraint unchanged, so none of those waives it.
 
 Moving an already-installed package onto a re-publishing mirror trips this floor
 for a specific, expected reason; [Mirroring a repository](mirroring.md) covers
@@ -248,7 +294,25 @@ A graced revocation list is still fully enforced at its last-known state; only r
 
 polypkg remembers the highest serial it has ever seen for a source's metadata (index, trust document, and — if published — trust bundle and revocation list) and refuses any fetch that looks like a rollback.
 
-If a repository is legitimately rebuilt from scratch (new signing key, serials reset to 0), that protection will correctly but unhelpfully treat the rebuild as a downgrade and refuse it. `polypkg source remove <name>` clears the locally-remembered trust state for that source; re-adding it with `polypkg source add <name> ...` re-pins from scratch against the new trust root.
+If a repository is legitimately rebuilt from scratch (new signing key, serials reset to 0), that protection will correctly but unhelpfully treat the rebuild as a downgrade and refuse it. Re-pin the source to the new key:
+
+```
+polypkg source set-trust-root <name> --trust-root <new trust_root.pub> --trust-root-fingerprint <key id>
+```
+
+Get the key id from the publisher (`polypkg repo key show` on the repository host). On a terminal you can leave out `--trust-root-fingerprint` and answer the prompt instead, which shows the pinned and the new key ids. The command replaces the pinned key, keeps the source's URL and place in the order, and clears the locally-remembered trust state for that source, so the next fetch pins the new serials from scratch. It works on a profile whose only source is the one being re-pinned. `--trust-root-url <https-url>` can stand in for `--trust-root`.
+
+If the repository was re-created with the **same** signing key, the key does not
+change, so `set-trust-root` leaves the source's remembered serials alone. Clear
+them explicitly:
+
+```
+polypkg source set-trust-root <name> --trust-root <path-to-.pub> \
+    --trust-root-fingerprint <key-id> --reset-state
+```
+
+`--reset-state` requires the fingerprint because it lowers rollback protection:
+the next fetch accepts whatever serials the repository now publishes.
 
 Publishers should never need this: always **increase** a serial to fix a bad release or ship an update — never reuse or lower one.
 
@@ -264,6 +328,8 @@ polypkg attestation report --scope system    # audit the system-scope installs
 
 The report is a faithful aggregation of evidence that was already recorded and individually anchored at install time — it is not signed by polypkg. Trust derives from the upstream signatures each recorded hash verifies against, not from any consumer signature. Output is reproducible: identical installed state yields identical bytes (packages are sorted; timestamps are the recorded install times, never the wall clock).
 
+A generation with a missing manifest (an interrupted `apply` left it incomplete) holds no recorded evidence. The report skips it and names it: under `generated_from.skipped_incomplete` in `--format json`, and in a warning on stderr in text mode. `polypkg gc` removes such generations. A manifest that is present but damaged (it does not parse, or names another generation) fails the report with an error naming the generation: a crash cannot cause that, so it points to corruption or tampering, and the report will not leave that generation's evidence out. A manifest that exists but cannot be read also fails the report, and so does one a newer polypkg wrote, with a message to upgrade.
+
 ## Downgrade guard
 
-polypkg remembers the highest version each source has offered for every package. A plan that resolves a package *below* that high-water mark is refused only when the source has **withdrawn** its top — the current signed index no longer offers any version at or above the mark. Picking an older version the index still carries (an upper-bounded range, a dependency constraint, a profile pin) is ordinary constraint resolution and is never refused. To knowingly accept a real withdrawal — say the publisher pulled a broken release — pin the exact version in the profile (`version: "=1.2.3"`).
+polypkg remembers the highest version each source has offered for every package. The marks are kept per host platform in the source's file under `trust/` in the state directory, so machines of different platforms that share one state directory never refuse each other's older builds as downgrades. A plan that resolves a package *below* that high-water mark is refused only when the source has **withdrawn** its top — the current signed index no longer offers any version at or above the mark. Picking an older version the index still carries (an upper-bounded range, a dependency constraint, a profile pin) is ordinary constraint resolution and is never refused. To knowingly accept a real withdrawal — say the publisher pulled a broken release — pin the exact version in the profile (`version: "=1.2.3"`).

@@ -1,0 +1,48 @@
+name: release-snapshot
+
+# Runs the release configuration on every change, so a broken .goreleaser.yaml
+# or a release platform that no longer builds fails here rather than at the
+# tag push. Signing is skipped: keyless cosign needs the OIDC token that only
+# the tag-triggered release workflow is granted. Nothing is published.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Keyed on this file's name, not github.workflow: inside a workflow_call that
+# is the caller's name. Only PR runs cancel, so a release's gates never do.
+concurrency:
+  group: release-snapshot-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # Built without the cache, as the release job is, so the snapshot
+          # rehearses the release build rather than a cached one.
+          cache: false
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Check the GoReleaser config
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version-file: .tool-versions
+          args: check
+      - name: Build an unsigned snapshot
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version-file: .tool-versions
+          args: release --snapshot --clean --skip=sign

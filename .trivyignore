@@ -10,3 +10,12 @@
 # finding carries no source line for an inline directive to attach to, so inline
 # ignores do not suppress it in trivy 0.71.x.
 DS-0026
+
+# GO-2026-5932: golang.org/x/crypto/openpgp is deprecated and the advisory has
+# no fixed version. polypkg never imports it. The only path to it is test code:
+# internal/attest's tests use sigstore-go's test CA, which pulls in rekor's PGP
+# support. The release binary does not link it:
+#   go list -deps ./cmd/polypkg | grep openpgp   # prints nothing
+# Trivy matches advisories against go.mod, not the import graph, so it reports
+# the module anyway.
+GO-2026-5932

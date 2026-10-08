@@ -1,0 +1,28 @@
+# .lycheeignore — URLs lychee should NOT check
+#
+# lychee reads exactly one .lycheeignore, so this file replaces the shared one
+# from megalint-config rather than extending it. The first two entries are
+# copied from the shared file (megalint-config v0.6.0); keep them in sync when
+# re-pinning. One regular expression per line, matched against the URL.
+
+# Shared: URLs assembled at runtime (`${VAR}`, `${{ ... }}`) are never
+# substituted, so lychee requests an address that only exists once expanded.
+^https?://.*(\$\{|\$%7B|\$$)
+
+# Shared: in-toto predicate type URIs are namespace identifiers, not documents.
+^https://cosign\.sigstore\.dev/attestation/
+
+# polypkg's JSON Schema `$id` values are identifiers. polypkg.dev is not a
+# published site; the schemas ship embedded in the binary.
+^https://polypkg\.dev/schemas/
+
+# Loopback addresses, with or without user:password, point at servers that
+# exist only while a test runs: the e2e repository server in task and compose
+# files, and the unreachable endpoints of the credential-redaction tests.
+^https?://([^/@]+@)?(localhost|127\.0\.0\.1)([:/]|$)
+
+# release.yml passes cosign an OIDC issuer (an identifier whose root path is
+# 404) and a certificate-identity regex; lychee cuts the regex's `github\.com`
+# at the backslash and requests `https://github/`.
+^https://token\.actions\.githubusercontent\.com/?$
+^https://github/?$

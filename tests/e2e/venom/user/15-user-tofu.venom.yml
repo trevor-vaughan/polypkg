@@ -1,23 +1,53 @@
 name: User-scope trust-on-first-use
 vars:
   source_url: 'http://repo-server:8080'
-  troot_url: 'http://repo-server:8080/trust_root.pub'
+  # The served tree is also mounted at /repo, so the key can be fetched over
+  # file://: --trust-root-url refuses plain http, and repo-server has no TLS.
+  troot_url: 'file:///repo/public/trust_root.pub'
+  troot_http: 'http://repo-server:8080/trust_root.pub'
+  manifest: '/repo/polypkg-repo.yaml'
+  keys: '/keys'
   home: '/tmp/u15'
   px: 'env HOME={{.home}} XDG_DATA_HOME={{.home}}/data XDG_CONFIG_HOME={{.home}}/cfg XDG_STATE_HOME={{.home}}/state XDG_CACHE_HOME={{.home}}/cache /usr/local/bin/polypkg'
 
 testcases:
-  - name: TOFU without --trust-root-yes refuses on a non-TTY
+  - name: TOFU refuses to download a trust root over plain http
+    steps:
+      - type: exec
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_http}} --scope user </dev/null'
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "plain http"
+      - type: exec
+        script: 'test ! -e {{.home}}/cfg/polypkg/trust/native.pub'
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: TOFU without a fingerprint is refused on a non-interactive stdin
     steps:
       - type: exec
         script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --scope user </dev/null'
         assertions:
           - result.code ShouldNotEqual 0
-          - result.systemerr ShouldContainSubstring "not confirmed"
+          - result.systemerr ShouldContainSubstring "stdin is not a terminal"
 
-  - name: TOFU with --trust-root-yes persists the downloaded key
+  - name: TOFU refuses a fingerprint that does not match the downloaded key
     steps:
       - type: exec
-        script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --trust-root-yes --scope user'
+        script: '{{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --trust-root-fingerprint 0000000000000000 --scope user'
+        assertions:
+          - result.code ShouldNotEqual 0
+          # The operator's fingerprint is quoted in the message (%q).
+          - result.systemerr ShouldContainSubstring "not the expected"
+          - result.systemerr ShouldContainSubstring 0000000000000000
+
+  - name: TOFU with the publisher's fingerprint persists the downloaded key
+    steps:
+      - type: exec
+        script: |
+          kid=$({{.px}} --format json repo key show --manifest {{.manifest}} --key-dir {{.keys}} | sed -n 's/.*"key_id":"\([0-9a-f]*\)".*/\1/p')
+          test -n "$kid" || { echo "repo key show printed no key_id" >&2; exit 1; }
+          {{.px}} init --source-url {{.source_url}} --trust-root-url {{.troot_url}} --trust-root-fingerprint "$kid" --scope user
         assertions:
           - result.code ShouldEqual 0
       - type: exec
@@ -33,3 +63,30 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
           - result.systemout ShouldContainSubstring "applied generation"
+
+  - name: set-trust-root with the key already pinned reports unchanged
+    steps:
+      - type: exec
+        script: '{{.px}} source set-trust-root native --trust-root-url {{.troot_url}} </dev/null'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "unchanged"
+
+  - name: set-trust-root refuses a different key whose fingerprint does not match
+    steps:
+      - type: exec
+        script: '{{.px}} repo init {{.home}}/other-repo --source native --key-dir {{.home}}/other-keys'
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: '{{.px}} source set-trust-root native --trust-root {{.home}}/other-repo/public/trust_root.pub --trust-root-fingerprint 0000000000000000'
+        assertions:
+          - result.code ShouldNotEqual 0
+          # The operator's fingerprint is quoted in the message (%q).
+          - result.systemerr ShouldContainSubstring "not the expected"
+          - result.systemerr ShouldContainSubstring 0000000000000000
+      - type: exec
+        # sha256sum, not cmp: the CentOS base image ships no diffutils.
+        script: 'test "$(sha256sum < {{.home}}/cfg/polypkg/trust/native.pub)" = "$(sha256sum < /repo/public/trust_root.pub)"'
+        assertions:
+          - result.code ShouldEqual 0

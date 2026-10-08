@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/trevor-vaughan/polypkg/internal/planner"
@@ -42,6 +43,14 @@ func planExecError(err error) error {
 			Msg:  ase.Error(),
 			Hint: "the artifact does not match its signature; it may be corrupted in transit or tampered with; retry, and if it persists contact the repository operator",
 			Err:  ase,
+		}
+	}
+	var aie *planner.ArtifactIdentityError
+	if errors.As(err, &aie) {
+		return &CLIError{
+			Msg:  aie.Error(),
+			Hint: "the repository published an artifact whose own package recipe does not match the index entry it is listed under, which is a publishing error or tampering; nothing was installed; contact the repository operator",
+			Err:  aie,
 		}
 	}
 	var pfe *planner.PostureFloorError
@@ -88,24 +97,52 @@ func attestationPolicyCLIError(err error, ape *planner.AttestationPolicyError) *
 	return &CLIError{Msg: err.Error(), Hint: hint, Err: err}
 }
 
-// fetchCLIError frames a source fetch failure for the user. A network failure
-// becomes a single-line unreachable-source message (the http client and the
-// planner together printed the URL three times; here it appears once, with the
-// transport reason reduced to its most specific tail). A status failure keeps
-// the already-clean `fetch <url>: status N` message; only a 404 on a listed
-// artifact gets the mid-update hint.
+// fetchCLIError frames a source fetch failure for the user. A stalled server
+// or a refused https→http redirect keeps the clean `fetch <url>: <reason>`
+// message (the server was reached, so "cannot reach" would mislead) with its
+// own hint. Any other network failure becomes a single-line
+// unreachable-source message (the http client and the planner together
+// printed the URL three times; here it appears once, with the transport reason
+// reduced to its most specific tail).
+// A file the source does not have (an HTTP 404, or a missing file under a
+// local source) is framed by what it is: a listed artifact gets the
+// mid-update hint; a repository file (index, trust document, signatures)
+// names the source and the file and points at the source url. Any other
+// status keeps the already-clean `fetch <url>: status N` message.
 func fetchCLIError(fe *source.FetchError) *CLIError {
+	var se *source.StallError
+	if errors.As(fe, &se) {
+		return &CLIError{
+			Msg:  fe.Error(),
+			Hint: "the server stopped sending data or is sending too slowly; retry later, and if it persists contact the repository operator",
+			Err:  fe,
+		}
+	}
+	if errors.Is(fe, source.ErrInsecureRedirect) {
+		return &CLIError{
+			Msg:  fe.Error(),
+			Hint: "the server redirected an https request to a non-https URL, which would drop transport security; contact the repository operator",
+			Err:  fe,
+		}
+	}
 	if fe.Network {
 		return &CLIError{
-			Msg:  fmt.Sprintf("cannot reach source %q at %s: %s", fe.Source, fe.BaseURL, networkReason(fe.Reason())),
+			Msg:  fmt.Sprintf("cannot reach source %q at %s: %s", fe.Source, source.RedactURL(fe.BaseURL), networkReason(fe.Reason())),
 			Hint: "check the source url in your profile and your network connection",
 			Err:  fe,
 		}
 	}
-	if fe.Status == 404 && fe.IsArtifact() {
+	if fe.NotFound() && fe.IsArtifact() {
 		return &CLIError{
 			Msg:  fe.Error(),
 			Hint: "the source's index lists this artifact but the server does not serve it; the repository may be mid-update",
+			Err:  fe,
+		}
+	}
+	if fe.NotFound() {
+		return &CLIError{
+			Msg:  fmt.Sprintf("source %q at %s does not serve %s", fe.Source, source.RedactURL(fe.BaseURL), path.Base(fe.URL)),
+			Hint: "check the source url in your profile: it must name the directory `polypkg repo build` publishes, the one holding index.json and trust.json",
 			Err:  fe,
 		}
 	}
@@ -141,6 +178,16 @@ func resolveCLIError(re *resolver.ResolveError) *CLIError {
 			Msg:  re.Error(),
 			Hint: "adjust the version constraint in your profile",
 			Err:  re,
+		}
+	case resolver.KindWrongPlatform:
+		return &CLIError{
+			Msg: re.Error(),
+			// Two causes share this kind: the name has no build for this host
+			// at all, or only the constrained version lacks one. info lists the
+			// versions this host can install, which answers the second.
+			Hint: "ask the repository operator to publish a build for this host's platform, " +
+				"or pick a version that is published for it (polypkg info " + re.Requirement.Name + " lists them)",
+			Err: re,
 		}
 	default:
 		// KindConflict, KindNoCandidate, KindTooComplex: no single profile knob

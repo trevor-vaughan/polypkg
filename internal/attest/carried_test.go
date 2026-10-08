@@ -1,7 +1,9 @@
 package attest_test
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"time"
@@ -150,7 +152,7 @@ var _ = Describe("InspectCarried SLSA predicate interpretation", func() {
 		Expect(info.BuildTime).To(Equal(time.Date(2023, 3, 3, 0, 0, 0, 0, time.UTC)))
 	})
 
-	It("reports no timestamp and no builder for a SLSA statement without metadata (F1)", func() {
+	It("reports no timestamp and no builder for a SLSA statement without metadata", func() {
 		env := build("https://slsa.dev/provenance/v1", map[string]any{})
 		info, err := attest.InspectCarried(env)
 		Expect(err).NotTo(HaveOccurred())
@@ -292,6 +294,27 @@ var _ = Describe("InspectCarried sigstore bundle recognition", func() {
 		Expect(info.Subjects).NotTo(BeEmpty())
 		Expect(info.BuildTimeKnown).To(BeTrue())
 		Expect(info.BuildTime).To(Equal(time.Date(2023, 4, 18, 17, 45, 12, 0, time.UTC)))
+	})
+
+	It("recognizes the v0.3 bundle GitHub artifact attestations publish", func() {
+		data, err := os.ReadFile("testdata/github-bundle.json")
+		Expect(err).NotTo(HaveOccurred())
+		var probe struct {
+			MediaType string `json:"mediaType"`
+		}
+		Expect(json.Unmarshal(data, &probe)).To(Succeed())
+		Expect(probe.MediaType).To(Equal("application/vnd.dev.sigstore.bundle.v0.3+json"))
+
+		info, err := attest.InspectCarried(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Format).To(Equal(schema.FormatSigstoreBundle))
+		Expect(info.PredicateType).To(Equal("https://slsa.dev/provenance/v1"))
+		asset, err := os.ReadFile("testdata/github-asset.bin")
+		Expect(err).NotTo(HaveOccurred())
+		sum := sha256.Sum256(asset)
+		Expect(info.Subjects).To(HaveLen(1))
+		Expect(info.Subjects[0].Digest).To(HaveKeyWithValue("sha256", hex.EncodeToString(sum[:])))
+		Expect(info.BuildTimeKnown).To(BeTrue())
 	})
 
 	It("recognizes a bundle by verificationMaterial when mediaType is absent", func() {

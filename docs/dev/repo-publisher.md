@@ -35,7 +35,7 @@ public/
   trust_root.pub          # minisign Ed25519 public key (distributed to clients)
   trust.json              # polypkg.trust/v2 JSON document (serial, expires, key roles)
   trust.json.minisig      # detached minisig over trust.json
-  index.json              # polypkg.index/v2 JSON document (expires, pool refs, attestations)
+  index.json              # polypkg.index/v3 JSON document (expires, pool refs, platforms, attestations)
   index.json.minisig      # detached minisig over index.json
   pool/
     <blake3>.tar.zst           # content-addressed packed artifact (zstd tar)
@@ -81,7 +81,7 @@ rollbacks) keep resolving. The pool grows monotonically until pool GC lands
 (future work).
 
 The index entry's `revision` field is an informational ordinal counting
-republishes of one version. It derives from the build cache, floored against
+republishes of one version on one platform. It derives from the build cache, floored against
 the published index, so a lost cache continues the published ordinal instead of
 resetting to 1 (`content_hash` is the disambiguator, not `revision`).
 
@@ -109,7 +109,7 @@ Public keys and signatures produced here verify with the stock `minisign` CLI.
 
 | File | Trusted comment |
 |---|---|
-| artifact | `name=<name> version=<ver> hash=blake3:<hex>` (hash of the artifact bytes) |
+| artifact | `name=<name> version=<ver> platform=<os>/<arch>\|any hash=blake3:<hex>` (hash of the artifact bytes) |
 | attestation | `name=<name> version=<ver> hash=blake3:<hex>` (hash of the `.att.json` bytes) |
 | `index.json` | `serial=<N> ts=1970-01-01T00:00:00Z` |
 | `trust.json` | `serial=<N>` |
@@ -121,6 +121,18 @@ The consumer constrains only the first three forms. The serial in the last four
 is carried for operator legibility; the authoritative serial is the one inside
 the signed document body, which is what the anti-rollback floor compares.
 
+`platform=` is always present in an artifact comment. A platform-agnostic
+artifact signs `platform=any`, and the consumer refuses an artifact comment
+that has no `platform=` at all. If absence meant "any", a genuinely signed
+artifact from before platforms existed could be replayed under another
+platform's entry: its old signature would bind a darwin artifact to a linux
+entry as readily as to any other. Nothing can strip or edit the claim of a
+signature that does carry it, because minisign's global signature covers the
+trusted comment. `any` cannot collide with a real platform, which always
+contains a `/`. Attestation comments carry no platform, because an
+attestation binds its artifact by digest and the digest already differs per
+platform.
+
 The content hash in the artifact trusted comment is `blake3:` followed by the
 lowercase hex of a 32-byte BLAKE3 digest (`lukechampine.com/blake3`). The
 consumer verifies this hash before using the artifact.
@@ -128,6 +140,58 @@ consumer verifies this hash before using the artifact.
 The build timestamp is fixed to `1970-01-01T00:00:00Z` (not wall time), making
 repeated no-op builds byte-identical. The monotonic serial provides ordering
 for consumers instead.
+
+---
+
+## Per-platform entries
+
+A package version can be published once per platform (`polypkg.index/v3`).
+An index entry's `platform` is `<os>/<arch>` in Go's `GOOS`/`GOARCH`
+vocabulary, or absent for a platform-agnostic artifact:
+
+```json
+"packages": {
+  "jot": [
+    {"version": "1.4.2", "platform": "linux/amd64", "revision": 1,
+     "artifact": "pool/<hex>.tar.zst", "content_hash": "blake3:<hex>"},
+    {"version": "1.4.2", "platform": "darwin/arm64", "revision": 1,
+     "artifact": "pool/<hex>.tar.zst", "content_hash": "blake3:<hex>"}
+  ]
+}
+```
+
+**Where the platform comes from.** From the package, never from the repo
+manifest: the source tree's `polypkg.yaml` for a `source:` entry, and the
+`polypkg.yaml` inside the artifact for a `prebuilt:` entry. A value in the
+manifest would be a second claim that could disagree with the artifact.
+
+**Producer strictness.** `pkg lint` and `repo build` accept exactly two
+segments, and the `<os>/<arch>` pair must be in the allow-list that
+`internal/platform` generates from `go tool dist list`. Each half being
+known is not enough: `darwin/386` is refused because Go has no such port. A test fails when
+the table drifts from the toolchain. Consumers are looser: they accept any
+well-formed two- or three-segment value and skip entries they cannot match.
+A later release can therefore publish architecture variants (`linux/arm/v7`)
+without breaking clients built today.
+
+**Build rules.** Across every entry for one package name:
+
+1. A version has either exactly one entry without a platform or only entries
+   with one. A mix would give a client a platform-agnostic and a host-specific
+   candidate for the same version, so the build fails and names the version.
+2. A `(version, platform)` pair appears at most once.
+3. `nextRevision` (`emit.go`) counts republishes per `(name, version,
+   platform)`, so each platform's revision advances on its own.
+4. Build-cache entries record the platform (cache `v4`, below), so a cache
+   hit cannot replay one platform's artifact for another.
+
+**What the consumer does with it.** The signed comment binds the platform
+(see [Signature format](#signature-format)). The consumer drops every entry
+that is neither platform-agnostic nor for its own host before resolution
+(see [architecture.md](architecture.md#platform-aware-catalogs)). It compares
+the claim with the entry it selected. After extraction, before any action
+runs, it checks that the artifact's own `polypkg.yaml` names the same name,
+version, and platform as that entry.
 
 ---
 
@@ -387,7 +451,7 @@ signatures it produces remain fully minisign-verifiable. Secret key interop with
 
 ---
 
-## Incremental build cache (`polypkg.repo-cache/v3`)
+## Incremental build cache (`polypkg.repo-cache/v4`)
 
 The build cache lives beside the signing key (in `keyDir`, outside the served
 output directory) as `<source>.build-cache.json`, where `<source>` is the
@@ -405,7 +469,7 @@ instead. The file's structure:
 
 ```json
 {
-  "schema": "polypkg.repo-cache/v3",
+  "schema": "polypkg.repo-cache/v4",
   "serial": 5,
   "valid_for": 2592000000000000,
   "entries": {
@@ -414,6 +478,7 @@ instead. The file's structure:
       "content_hash": "blake3:<hex>",
       "artifact": "pool/<hex>.tar.zst",
       "version": "1.2.3",
+      "platform": "linux/amd64",
       "revision": 1,
       "attestations": [
         {
@@ -446,6 +511,13 @@ above is the 720h default.
 [§ "Freshness and expiry renewal"](#freshness-and-expiry-renewal) below is what
 reads it, and why it is recorded here rather than recovered from the published
 documents.
+
+`platform` is the entry's platform, absent for a platform-agnostic package.
+It is the reason for the `v4` schema. `LoadBuildCache` treats a cache with
+any other schema as empty, so the first build after an upgrade repacks and
+re-signs every package. That is safe: the cache only speeds builds up. The
+revision ordinal is floored against the published index, so it does not
+restart at 1.
 
 `attestations` holds `[]schema.AttestationRef` stored verbatim (`cache.go`), so
 a real cache file carries every field the index does — not the three-field
@@ -664,9 +736,9 @@ has no `--valid-for` flag of its own, would have nothing to measure with at all.
 **Where the published window comes from.** The build cache records it as
 `valid_for`, and `effectiveWindow` resolves a zero back to the 720h default.
 That fallback is exactly the assumption the rule made before the field existed,
-which is why adding it needed no cache schema bump: an old
-`polypkg.repo-cache/v3` file reads back zero, keeps its previous behaviour, and
-no operator's cache is invalidated.
+which is why adding it needed no cache schema bump: a cache written before the
+field existed read back zero, kept its previous behaviour, and no operator's
+cache was invalidated.
 
 **Why the window is not recovered from the published documents.** A window is
 `expires - issued_at`, and neither signed document can supply that pair.
@@ -742,7 +814,11 @@ served output dir — through `source.ExtractTarZst`, which confines every
 filesystem operation to an `os.Root` (kernel-enforced via
 `openat2`/`RESOLVE_BENEATH` on Linux) and bounds total size and entry count
 against decompression bombs. The extracted tree is then parsed for its inner
-`polypkg.yaml`, and the package name inside must match the manifest key.
+`polypkg.yaml`, and the package name inside must match the manifest key. Its
+`platform` key, when present, becomes the index entry's platform. A
+`prebuilt:` block has no platform field because the artifact describes
+itself, and a second claim could only disagree with it. A cache hit replays
+the platform from the cache entry without extracting.
 
 **3. Re-bind every carried attestation against the extracted bytes.** This is
 the substantive difference from trusting the upstream's word.

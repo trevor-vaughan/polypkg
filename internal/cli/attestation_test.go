@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -46,7 +51,7 @@ var _ = Describe("buildAttestationReport", func() {
 
 		sub, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
-		rep, err := buildAttestationReport(sub, "user")
+		rep, err := buildAttestationReport(sub, "user", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rep.Schema).To(Equal(schema.AttestationReportSchemaV1))
 		Expect(rep.GeneratedFrom.Scope).To(Equal("user"))
@@ -74,7 +79,7 @@ var _ = Describe("buildAttestationReport", func() {
 
 		b1, err := json.Marshal(rep)
 		Expect(err).NotTo(HaveOccurred())
-		rep2, err := buildAttestationReport(sub, "user")
+		rep2, err := buildAttestationReport(sub, "user", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
 		b2, err := json.Marshal(rep2)
 		Expect(err).NotTo(HaveOccurred())
@@ -94,7 +99,7 @@ var _ = Describe("buildAttestationReport", func() {
 		Expect(os.Symlink(filepath.Join("generations", "1", "active"), filepath.Join(storeRoot, "active"))).To(Succeed())
 		sub, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
-		rep, err := buildAttestationReport(sub, "user")
+		rep, err := buildAttestationReport(sub, "user", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rep.Packages).To(HaveLen(2))
 		Expect(rep.Packages[0].ContentHash).To(Equal("blake3:aaa"))
@@ -106,7 +111,7 @@ var _ = Describe("buildAttestationReport", func() {
 		Expect(os.MkdirAll(filepath.Join(storeRoot, "generations"), 0o700)).To(Succeed())
 		sub, err := substrate.New("store", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
-		rep, err := buildAttestationReport(sub, "user")
+		rep, err := buildAttestationReport(sub, "user", storeRoot)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rep.GeneratedFrom.Generations).To(Equal([]int{}))
 		Expect(rep.Packages).To(Equal([]schema.PackageEvidence{}))
@@ -114,5 +119,104 @@ var _ = Describe("buildAttestationReport", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(b)).To(ContainSubstring(`"packages":[]`))
 		Expect(string(b)).To(ContainSubstring(`"generations":[]`))
+	})
+
+	// A generation an interrupted apply left without a manifest holds no
+	// recorded evidence. The report skips it and names it, rather than failing
+	// the whole audit until gc removes it.
+	Context("with an incomplete or damaged generation", func() {
+		const complete = `{
+  "schema":"polypkg.manifest/v2","generation":%d,"scope":"user",
+  "produced_by":{"tool":"polypkg","version":"0.1.0","timestamp":"2026-01-01T00:00:00Z","host":"test"},
+  "entries":[{"name":"alpha","version":"1.0.0","content_hash":"blake3:a"}]}`
+		var storeRoot string
+
+		BeforeEach(func() {
+			dir := sandboxUserEnv(GinkgoTB())
+			storeRoot = filepath.Join(dir, "data", "polypkg")
+			writeReportGen(storeRoot, 1, fmt.Sprintf(complete, 1))
+			// generations/2: the skeleton BeginTransaction leaves, no manifest.
+			Expect(os.MkdirAll(filepath.Join(storeRoot, "generations", "2", "active"), 0o700)).To(Succeed())
+			writeReportGen(storeRoot, 3, fmt.Sprintf(complete, 3))
+			Expect(os.Symlink(filepath.Join("generations", "3", "active"), filepath.Join(storeRoot, "active"))).To(Succeed())
+		})
+
+		runReport := func(args ...string) (string, string, error) {
+			var stdout, stderr bytes.Buffer
+			root := NewRootCmd()
+			root.SetArgs(append([]string{"attestation", "report"}, args...))
+			root.SetOut(&stdout)
+			root.SetErr(&stderr)
+			err := root.Execute()
+			return stdout.String(), stderr.String(), err
+		}
+
+		It("skips it, reports the others, and records it as skipped", func() {
+			sub, err := substrate.New("store", storeRoot)
+			Expect(err).NotTo(HaveOccurred())
+			rep, err := buildAttestationReport(sub, "user", storeRoot)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rep.GeneratedFrom.Generations).To(Equal([]int{1, 3}))
+			Expect(rep.GeneratedFrom.SkippedIncomplete).To(Equal([]int{2}))
+			Expect(rep.Packages).To(HaveLen(2))
+
+			b, err := json.Marshal(rep)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = schema.ParseAttestationReport(bytes.NewReader(b))
+			Expect(err).NotTo(HaveOccurred(), "the report must satisfy its own schema: %s", b)
+		})
+
+		It("lists skipped generations in the JSON document", func() {
+			stdout, _, err := runReport("--format", "json")
+			Expect(err).NotTo(HaveOccurred())
+			got, err := schema.ParseAttestationReport(strings.NewReader(stdout))
+			Expect(err).NotTo(HaveOccurred(), stdout)
+			Expect(got.GeneratedFrom.SkippedIncomplete).To(Equal([]int{2}))
+		})
+
+		It("notes skipped generations on stderr in text mode", func() {
+			stdout, stderr, err := runReport()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring("2 generation(s)"))
+			Expect(stdout).NotTo(ContainSubstring("skipped"))
+			Expect(stderr).To(ContainSubstring("warning: skipped incomplete generation(s) 2"))
+			Expect(stderr).To(ContainSubstring("polypkg gc"))
+		})
+
+		It("still fails when a manifest exists but cannot be read", func() {
+			if os.Getuid() == 0 {
+				Skip("root reads a mode-000 file, so the read error cannot be provoked")
+			}
+			manifest := filepath.Join(storeRoot, "generations", "1", "manifest.json")
+			Expect(os.Chmod(manifest, 0)).To(Succeed())
+			DeferCleanup(func() { _ = os.Chmod(manifest, 0o600) })
+
+			sub, err := substrate.New("store", storeRoot)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = buildAttestationReport(sub, "user", storeRoot)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, substrate.ErrIncompleteGeneration)).To(BeFalse())
+			Expect(errors.Is(err, fs.ErrPermission)).To(BeTrue(), "got %v", err)
+			var cliErr *CLIError
+			Expect(errors.As(err, &cliErr)).To(BeTrue(), "expected *CLIError, got %T: %v", err, err)
+			Expect(cliErr.Msg).To(Equal("cannot read generation 1's manifest"))
+		})
+
+		// A damaged manifest means corruption or tampering, not a crash.
+		// Skipping it would let tampering hide a generation from the audit.
+		It("fails, naming the generation, when a manifest is damaged", func() {
+			Expect(os.WriteFile(filepath.Join(storeRoot, "generations", "1", "manifest.json"), []byte("garbage"), 0o600)).To(Succeed())
+
+			for _, args := range [][]string{{}, {"--format", "json"}} {
+				stdout, _, err := runReport(args...)
+				Expect(err).To(HaveOccurred(), "args %v: the report must not succeed: %s", args, stdout)
+				var cliErr *CLIError
+				Expect(errors.As(err, &cliErr)).To(BeTrue(), "args %v: expected *CLIError, got %T: %v", args, err, err)
+				Expect(cliErr.Msg).To(ContainSubstring("generation 1's manifest is damaged"), "args %v", args)
+				Expect(cliErr.Hint).To(ContainSubstring(filepath.Join(storeRoot, "generations", "1")), "args %v", args)
+				Expect(cliErr.Hint).NotTo(ContainSubstring("polypkg gc"), "args %v", args)
+				Expect(errors.Is(cliErr.Err, substrate.ErrDamagedGeneration)).To(BeTrue(), "args %v", args)
+			}
+		})
 	})
 })

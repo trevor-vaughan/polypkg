@@ -21,15 +21,25 @@ import (
 // is true only when sigstore-go cryptographically verified the full chain (Fulcio
 // cert to root, SCT when CT keys are present, Rekor inclusion proof + SET against
 // the mirrored Rekor key, and the inner DSSE signature) against the supplied
-// trust material. Identity is RECORDED, not gated — the SAN/issuer allow-list is
-// phase 2d. Digests in Subjects are advisory; the caller binds them against
-// installed bytes (P6, phase 2c-3b).
+// trust material. Identity is RECORDED, not gated here — a source's SAN/issuer
+// allow-list gates it. Digests in Subjects are advisory; the caller binds them
+// against installed bytes (author-supplied digests are never trusted).
 type SigstoreVerdict struct {
 	Verified            bool
 	CertificateIdentity string // Fulcio SAN
 	CertificateIssuer   string // OIDC issuer
+	// SourceRepositoryURI is the Fulcio Source Repository URI extension (OID
+	// 1.3.6.1.4.1.57264.1.12): the repository whose code the signing workflow
+	// built. A build that signs through a reusable workflow carries that
+	// workflow's repository in the SAN, but this always names the built
+	// repository. "" when the certificate does not carry it.
+	SourceRepositoryURI string
 	Subjects            []Subject
 	IntegratedTime      time.Time
+	// FailureReason is sigstore-go's explanation when Verified is false
+	// because verification failed; "" otherwise. It can echo bundle
+	// contents, so quote it when displaying it.
+	FailureReason string
 }
 
 // SigstoreTrustedMaterial adapts polypkg's mirrored SigstoreRoot (base64-DER
@@ -50,32 +60,9 @@ func SigstoreTrustedMaterial(r schema.SigstoreRoot) (root.TrustedMaterial, error
 		}
 	}
 
-	certs, err := parseDERCerts(r.FulcioCA)
+	rootCert, intermediates, err := FulcioRoot(r.FulcioCA)
 	if err != nil {
 		return nil, err
-	}
-	if len(certs) == 0 {
-		return nil, fmt.Errorf("sigstore root has no Fulcio CA certificates")
-	}
-	// Anchor on the self-signed root, not chain position: FulcioCA is documented
-	// as "root + intermediates", but relying on ordering silently mis-anchors the
-	// trust pool if a mirror emits the chain in another order. Identify the root
-	// by self-signature (subject == issuer and it verifies against itself); every
-	// other cert is an intermediate.
-	var rootCert *x509.Certificate
-	var intermediates []*x509.Certificate
-	for _, c := range certs {
-		if bytes.Equal(c.RawSubject, c.RawIssuer) && c.CheckSignatureFrom(c) == nil {
-			if rootCert != nil {
-				return nil, fmt.Errorf("sigstore root has multiple self-signed Fulcio certificates")
-			}
-			rootCert = c
-			continue
-		}
-		intermediates = append(intermediates, c)
-	}
-	if rootCert == nil {
-		return nil, fmt.Errorf("sigstore root has no self-signed Fulcio root certificate")
 	}
 	fca := &root.FulcioCertificateAuthority{
 		Root:                rootCert,
@@ -99,6 +86,37 @@ func SigstoreTrustedMaterial(r schema.SigstoreRoot) (root.TrustedMaterial, error
 		return nil, fmt.Errorf("assemble trusted root: %w", err)
 	}
 	return tr, nil
+}
+
+// FulcioRoot parses a sigstore root's base64-DER fulcio_ca chain and splits it
+// into its root certificate and the intermediates. It anchors on the
+// self-signed root, not chain position: FulcioCA is documented as "root +
+// intermediates", but a carried bundle keeps its upstream's order, and relying
+// on ordering would silently mis-anchor the trust pool. The root is the one
+// certificate whose subject is its issuer and that verifies against itself;
+// every other certificate is an intermediate.
+func FulcioRoot(fulcioCA []string) (rootCert *x509.Certificate, intermediates []*x509.Certificate, err error) {
+	certs, err := parseDERCerts(fulcioCA)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(certs) == 0 {
+		return nil, nil, fmt.Errorf("sigstore root has no Fulcio CA certificates")
+	}
+	for _, c := range certs {
+		if bytes.Equal(c.RawSubject, c.RawIssuer) && c.CheckSignatureFrom(c) == nil {
+			if rootCert != nil {
+				return nil, nil, fmt.Errorf("sigstore root has multiple self-signed Fulcio certificates")
+			}
+			rootCert = c
+			continue
+		}
+		intermediates = append(intermediates, c)
+	}
+	if rootCert == nil {
+		return nil, nil, fmt.Errorf("sigstore root has no self-signed Fulcio root certificate")
+	}
+	return rootCert, intermediates, nil
 }
 
 // transparencyLogs builds Rekor/CT log verifiers keyed by hex log id (SHA-256 of
@@ -148,8 +166,9 @@ func parseDERCerts(b64Certs []string) ([]*x509.Certificate, error) {
 // VerifySignedEntity runs sigstore-go's OFFLINE verifier over a SignedEntity
 // (a parsed bundle, or a test entity) against tm, with identity and artifact
 // matching intentionally NOT enforced here (WithoutIdentitiesUnsafe records the
-// identity for phase 2d; WithoutArtifactUnsafe leaves the subject→bytes binding
-// to polypkg's BindSubjects, P6). Any verification error is fail-closed:
+// identity for the allow-list gate; WithoutArtifactUnsafe leaves the
+// subject→bytes binding to polypkg's BindSubjects). Any verification error is
+// fail-closed:
 // Verified=false, nil error (the caller records verified-transport-only).
 func VerifySignedEntity(entity verify.SignedEntity, tm root.TrustedMaterial) (SigstoreVerdict, error) {
 	v, err := verify.NewVerifier(tm,
@@ -164,7 +183,7 @@ func VerifySignedEntity(entity verify.SignedEntity, tm root.TrustedMaterial) (Si
 		verify.WithoutIdentitiesUnsafe(),
 	))
 	if verr != nil {
-		return SigstoreVerdict{Verified: false}, nil // fail closed: unverifiable ⇒ transport-only
+		return SigstoreVerdict{Verified: false, FailureReason: verr.Error()}, nil // fail closed: unverifiable ⇒ transport-only
 	}
 	verdict := SigstoreVerdict{Verified: true}
 	if result.Signature != nil && result.Signature.Certificate != nil {
@@ -174,6 +193,7 @@ func VerifySignedEntity(entity verify.SignedEntity, tm root.TrustedMaterial) (Si
 		// issuer DN (e.g. "CN=sigstore-intermediate,O=sigstore.dev"), not the OIDC
 		// issuer — do not use it here.
 		verdict.CertificateIssuer = result.Signature.Certificate.Issuer
+		verdict.SourceRepositoryURI = result.Signature.Certificate.SourceRepositoryURI
 	}
 	if result.Statement != nil {
 		for _, s := range result.Statement.Subject {

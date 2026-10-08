@@ -1,0 +1,48 @@
+{
+  "note": "Representative fixture: asset names reconstructed from the release naming of bat 0.24.0 (sharkdp/bat), not recorded from the GitHub API.",
+  "assets": [
+    "bat-musl_0.24.0_amd64.deb",
+    "bat-musl_0.24.0_i686.deb",
+    "bat-v0.24.0-aarch64-unknown-linux-gnu.tar.gz",
+    "bat-v0.24.0-arm-unknown-linux-gnueabihf.tar.gz",
+    "bat-v0.24.0-arm-unknown-linux-musleabihf.tar.gz",
+    "bat-v0.24.0-i686-pc-windows-msvc.zip",
+    "bat-v0.24.0-i686-unknown-linux-gnu.tar.gz",
+    "bat-v0.24.0-i686-unknown-linux-musl.tar.gz",
+    "bat-v0.24.0-x86_64-apple-darwin.tar.gz",
+    "bat-v0.24.0-x86_64-pc-windows-gnu.zip",
+    "bat-v0.24.0-x86_64-pc-windows-msvc.zip",
+    "bat-v0.24.0-x86_64-unknown-linux-gnu.tar.gz",
+    "bat-v0.24.0-x86_64-unknown-linux-musl.tar.gz",
+    "bat_0.24.0_amd64.deb",
+    "bat_0.24.0_arm64.deb",
+    "bat_0.24.0_armhf.deb",
+    "bat_0.24.0_i686.deb"
+  ],
+  "cases": [
+    {
+      "name": "heuristics only",
+      "chosen": {
+        "darwin/amd64": "bat-v0.24.0-x86_64-apple-darwin.tar.gz",
+        "linux/386": "bat-v0.24.0-i686-unknown-linux-musl.tar.gz",
+        "linux/amd64": "bat-v0.24.0-x86_64-unknown-linux-musl.tar.gz",
+        "linux/arm64": "bat-v0.24.0-aarch64-unknown-linux-gnu.tar.gz"
+      },
+      "skipped": {
+        "bat-musl_0.24.0_amd64.deb": "OS package",
+        "bat-musl_0.24.0_i686.deb": "OS package",
+        "bat-v0.24.0-arm-unknown-linux-gnueabihf.tar.gz": "32-bit ARM (platform variants are not supported)",
+        "bat-v0.24.0-arm-unknown-linux-musleabihf.tar.gz": "32-bit ARM (platform variants are not supported)",
+        "bat-v0.24.0-i686-pc-windows-msvc.zip": "Windows asset",
+        "bat-v0.24.0-i686-unknown-linux-gnu.tar.gz": "bat-v0.24.0-i686-unknown-linux-musl.tar.gz preferred for linux/386",
+        "bat-v0.24.0-x86_64-pc-windows-gnu.zip": "Windows asset",
+        "bat-v0.24.0-x86_64-pc-windows-msvc.zip": "Windows asset",
+        "bat-v0.24.0-x86_64-unknown-linux-gnu.tar.gz": "bat-v0.24.0-x86_64-unknown-linux-musl.tar.gz preferred for linux/amd64",
+        "bat_0.24.0_amd64.deb": "OS package",
+        "bat_0.24.0_arm64.deb": "OS package",
+        "bat_0.24.0_armhf.deb": "OS package",
+        "bat_0.24.0_i686.deb": "OS package"
+      }
+    }
+  ]
+}

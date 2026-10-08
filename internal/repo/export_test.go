@@ -185,3 +185,92 @@ func TestExportBundleIsDeterministic(t *testing.T) {
 		t.Fatal("export is not byte-for-byte deterministic across runs")
 	}
 }
+
+// buildTwoPlatformRepoForExport builds a repo publishing hello 1.0.0 for
+// linux/amd64 and darwin/arm64 and returns (manifest path, keyDir, published
+// outputDir), like buildTestRepoForExport.
+func buildTwoPlatformRepoForExport(t *testing.T) (string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	keyDir := t.TempDir()
+	for _, p := range []struct{ dir, platform string }{
+		{"hello-linux", "linux/amd64"},
+		{"hello-darwin", "darwin/arm64"},
+	} {
+		dir := filepath.Join(root, "pkgs", p.dir)
+		if err := os.MkdirAll(filepath.Join(dir, "content", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pm := "schema: polypkg.package/v1\nname: hello\nversion: 1.0.0\nplatform: " + p.platform + "\nactions: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "polypkg.yaml"), []byte(pm), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "content", "bin", "hello"), []byte("#!/bin/sh\necho "+p.dir+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kp, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(keyDir, "example.key")
+	if err := SaveKey(keyPath, kp, "pw", KDFScrypt); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema: polypkg.repo/v1\nsource: example\noutput: ./public\n" +
+		"key:\n  path: " + keyPath + "\n  kdf: scrypt\n" +
+		"packages:\n  hello:\n    - source: ./pkgs/hello-linux\n    - source: ./pkgs/hello-darwin\n"
+	mPath := filepath.Join(root, "polypkg-repo.yaml")
+	if err := os.WriteFile(mPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewBuilder(mPath, keyDir, "pw")
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	if _, err := b.Build(BuildOptions{}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return mPath, keyDir, filepath.Join(root, "public")
+}
+
+// TestExportBundleCarriesEveryPlatformBuild proves that every selection form
+// that names hello 1.0.0 (the whole repo, the bare name, the exact version)
+// exports both platform builds' artifacts and signatures, each listed in the
+// signed pool manifest.
+func TestExportBundleCarriesEveryPlatformBuild(t *testing.T) {
+	mPath, keyDir, pub := buildTwoPlatformRepoForExport(t)
+	entries := readIndex(t, pub).Packages["hello"]
+	if len(entries) != 2 || entries[0].Platform == entries[1].Platform || entries[0].Artifact == entries[1].Artifact {
+		t.Fatalf("fixture: want two hello builds on distinct platforms and pool blobs, got %+v", entries)
+	}
+	for _, selectors := range [][]string{nil, {"hello"}, {"hello@1.0.0"}} {
+		b, err := NewBuilder(mPath, keyDir, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle := filepath.Join(t.TempDir(), "bundle.tar")
+		if _, err := b.ExportBundle(selectors, bundle); err != nil {
+			t.Fatalf("selectors %v: ExportBundle: %v", selectors, err)
+		}
+		files := readBundle(t, bundle)
+		m, err := schema.ParsePoolManifest(bytes.NewReader(files["pool-manifest.json"]))
+		if err != nil {
+			t.Fatalf("selectors %v: parse pool manifest: %v", selectors, err)
+		}
+		listed := map[string]bool{}
+		for _, e := range m.Entries {
+			listed[e.Path] = true
+		}
+		for _, e := range entries {
+			for _, want := range []string{e.Artifact, e.Artifact + ".minisig"} {
+				if _, ok := files[want]; !ok {
+					t.Errorf("selectors %v: bundle is missing the %s build's %q", selectors, e.Platform, want)
+				}
+				if !listed[want] {
+					t.Errorf("selectors %v: pool manifest does not list the %s build's %q", selectors, e.Platform, want)
+				}
+			}
+		}
+	}
+}

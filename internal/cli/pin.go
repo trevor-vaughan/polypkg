@@ -41,8 +41,10 @@ Subcommands: pin, unpin.`,
 func newGenerationPinCmd() *cobra.Command {
 	var reason string
 	cmd := &cobra.Command{
-		Use:   "pin <generation-id>",
-		Short: "Pin a generation so it is exempt from automatic GC",
+		Use: "pin <generation-id>",
+		// The JSON result has always named this command "pin".
+		Annotations: map[string]string{resultCommandAnnotation: "pin"},
+		Short:       "Pin a generation so it is exempt from automatic GC",
 		Long: `Marks a generation so that GC never removes it, regardless of how many newer
 generations accumulate. Pinning is useful before a risky change (so there is a
 known-good generation to roll back to) or to preserve a baseline for auditing.
@@ -77,8 +79,10 @@ so that the purpose is visible when reviewing pinned generations later.`,
 
 func newGenerationUnpinCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "unpin <generation-id>",
-		Short: "Remove a generation pin",
+		Use: "unpin <generation-id>",
+		// The JSON result has always named this command "unpin".
+		Annotations: map[string]string{resultCommandAnnotation: "unpin"},
+		Short:       "Remove a generation pin",
 		Long: `Removes the pin from a generation so it is eligible for garbage collection
 again. Once unpinned, the generation will be pruned by the next GC pass if it
 falls outside the retention policy.`,
@@ -130,7 +134,30 @@ func runPin(cmd *cobra.Command, id int, reason string, format Format) error {
 	}
 	defer func() { _ = w.Close() }()
 
+	// Check the target here, as rollback does, rather than only through
+	// sub.PinGeneration, whose error cannot tell a manifest read failure from
+	// a failed pin write.
+	genDir := filepath.Join(dataHome, "generations", strconv.Itoa(id))
+	if _, serr := os.Stat(genDir); serr != nil {
+		if errors.Is(serr, fs.ErrNotExist) {
+			return &CLIError{
+				Msg:  fmt.Sprintf("generation %d does not exist", id),
+				Hint: "run `polypkg status -v` to list retained generations",
+				Err:  serr,
+			}
+		}
+		return fmt.Errorf("pin generation %d: %w", id, serr)
+	}
+	if _, merr := sub.ReadManifest(id); merr != nil {
+		return generationManifestError(id, genDir, "pinned", merr)
+	}
 	if err := sub.PinGeneration(id, reason); err != nil {
+		// The checks above ran under the apply lock, so only a change made
+		// outside polypkg can still land here. Test the manifest states first:
+		// a missing manifest also wraps fs.ErrNotExist.
+		if errors.Is(err, substrate.ErrIncompleteGeneration) || errors.Is(err, substrate.ErrDamagedGeneration) {
+			return generationManifestError(id, genDir, "pinned", err)
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return &CLIError{
 				Msg:  fmt.Sprintf("generation %d does not exist", id),

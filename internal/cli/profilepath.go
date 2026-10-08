@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -48,7 +49,22 @@ func resolveProfilePath(cmd *cobra.Command, args []string) (string, error) {
 	}
 	return "", &CLIError{
 		Msg:  fmt.Sprintf("no profile found at %s", filepath.Join(dir, "profile.yaml")),
-		Hint: fmt.Sprintf("run `polypkg init` to create a profile, or pass a path: %s <profile-file>", cmd.CommandPath()),
+		Hint: "run `polypkg init` to create a profile, or point at one: " + profileArgForm(cmd),
+	}
+}
+
+// profileArgForm is how cmd lets the operator name a profile file, for a
+// hint: its --profile flag (install, remove, upgrade), its [profile-file]
+// positional (apply, plan), or, for a command with neither (search, info,
+// list, source), the POLYPKG_PROFILE environment variable.
+func profileArgForm(cmd *cobra.Command) string {
+	switch {
+	case cmd.Flags().Lookup("profile") != nil:
+		return "--profile <path>"
+	case strings.Contains(cmd.Use, "[profile-file]"):
+		return cmd.CommandPath() + " <profile-file>"
+	default:
+		return "POLYPKG_PROFILE=<path>"
 	}
 }
 
@@ -86,13 +102,13 @@ func openProfileError(cmd *cobra.Command, profilePath string, err error) error {
 	case errors.Is(err, syscall.EISDIR):
 		return &CLIError{
 			Msg:  fmt.Sprintf("%s is a directory, not a profile file", profilePath),
-			Hint: fmt.Sprintf("pass the profile file itself: %s <profile-file>", cmd.CommandPath()),
+			Hint: "point at the profile file itself, not its directory: " + profileArgForm(cmd),
 			Err:  err,
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		return &CLIError{
 			Msg:  fmt.Sprintf("profile %s does not exist", profilePath),
-			Hint: fmt.Sprintf("run `polypkg init` to create a profile, or pass a path: %s <profile-file>", cmd.CommandPath()),
+			Hint: "run `polypkg init` to create a profile, or point at one: " + profileArgForm(cmd),
 			Err:  err,
 		}
 	case errors.Is(err, fs.ErrPermission):
