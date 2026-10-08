@@ -16,7 +16,7 @@ require (
 	github.com/onsi/gomega v1.44.0
 	github.com/owenrumney/go-sarif/v3 v3.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	github.com/secure-systems-lab/go-securesystemslib v0.11.0
+	github.com/secure-systems-lab/go-securesystemslib v0.11.1
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
